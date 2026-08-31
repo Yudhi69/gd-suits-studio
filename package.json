@@ -1,0 +1,110 @@
+{
+  "name": "gd-suits-studio",
+  "productName": "GD Suits Studio",
+  "version": "0.1.0",
+  "description": "Offline-first suit consultation, capture and AI preview tool for GD Suits.",
+  "main": "electron/main.js",
+  "author": "GD Suits",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "dev": "concurrently -k -n VITE,ELECTRON -c cyan,magenta \"npm:dev:vite\" \"npm:dev:electron\"",
+    "dev:vite": "vite",
+    "dev:electron": "wait-on tcp:5173 && cross-env NODE_ENV=development electron .",
+    "build": "vite build",
+    "start": "npm run build && electron .",
+    "postinstall": "electron-builder install-app-deps",
+    "dist:mac": "npm run build && electron-builder --mac --arm64 && electron-builder --mac --x64 && electron-builder install-app-deps",
+    "dist:win": "npm run build && electron-builder --win --x64 && electron-builder install-app-deps",
+    "dist:all": "npm run dist:mac && npm run dist:win",
+    "test:render": "cross-env DATA_DIR=.testdata/render electron scripts/test-render-pipeline.js",
+    "test:tour": "cross-env DATA_DIR=.testdata/tour SHOT_DIR=.testdata/shots electron scripts/screenshot-tour.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^6.0.11",
+    "wait-on": "^8.0.2"
+  },
+  "build": {
+    "appId": "za.co.gdsuits.studio",
+    "productName": "GD Suits Studio",
+    "copyright": "GD Suits",
+    "afterPack": "build/afterPack.js",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      "!**/*.map",
+      "!**/*.tmp.js"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**"
+    ],
+    "mac": {
+      "category": "public.app-category.business",
+      "icon": "build/icon.png",
+      "target": [
+        "dmg"
+      ],
+      "darkModeSupport": false,
+      "extendInfo": {
+        "NSCameraUsageDescription": "GD Suits Studio uses the camera to photograph clients, fabric swatches and fittings.",
+        "NSMicrophoneUsageDescription": "Not used by GD Suits Studio."
+      },
+      "hardenedRuntime": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "gatekeeperAssess": false,
+      "identity": null
+    },
+    "dmg": {
+      "title": "${productName} ${arch}",
+      "contents": [
+        {
+          "x": 140,
+          "y": 200,
+          "type": "file"
+        },
+        {
+          "x": 400,
+          "y": 200,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "GD Suits Studio"
+    }
+  }
+}
