@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from './lib/api.js';
+import brandLogo from './assets/logo-light.png';
 import { ToastProvider } from './components/ui.jsx';
 import Dashboard from './screens/Dashboard.jsx';
 import ProjectView from './screens/ProjectView.jsx';
@@ -28,11 +29,7 @@ export default function App() {
       <div className="app">
         <aside className="sidebar">
           <div className="brand">
-            <div className="brand-mark">
-              <span className="brand-gd">GD</span>
-              <span style={{ letterSpacing: '.14em' }}>SUITS</span>
-            </div>
-            <div className="brand-tag">A style tailored for you</div>
+            <img className="brand-logo" src={brandLogo} alt="GD Suits - A style tailored for you" />
           </div>
 
           <nav className="nav">

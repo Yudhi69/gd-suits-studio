@@ -74,31 +74,29 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 
 .brand {
-  padding: 46px 20px 20px;
+  padding: 44px 20px 22px;
   border-bottom: 1px solid var(--ink-line);
 }
-.brand-mark {
-  font-family: var(--serif);
-  font-size: 22px;
-  letter-spacing: .12em;
-  display: flex;
-  align-items: baseline;
-  gap: 2px;
+/* The supplied logo already carries the wordmark and the tagline, so it is
+   used whole rather than rebuilt in type. */
+.brand-logo {
+  display: block;
+  width: 100%;
+  max-width: 176px;
+  height: auto;
 }
-.brand-gd {
-  background: linear-gradient(135deg, var(--gold-bright), var(--gold-deep));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  font-weight: 700;
+
+/* Password and API-key fields: room for the reveal button inside the field. */
+.secret-field { position: relative; flex: 1; display: flex; }
+.secret-field .input { padding-right: 40px; }
+.secret-reveal {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  width: 30px; height: 30px; padding: 0;
+  display: grid; place-items: center;
+  background: none; border: 0; border-radius: 6px;
+  color: var(--text-faint); cursor: pointer;
 }
-.brand-tag {
-  font-size: 9px;
-  letter-spacing: .22em;
-  text-transform: uppercase;
-  color: var(--on-dark-soft);
-  margin-top: 6px;
-}
+.secret-reveal:hover { background: rgba(20,18,15,.06); color: var(--text-soft); }
 
 .nav { padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; }
 .nav-item {

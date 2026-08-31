@@ -346,6 +346,17 @@ handle('project:export', async ({ projectId, html }) => {
     }
   }
 
+  // The letterhead for the spec sheet travels with the export, so the folder
+  // the client is sent is self-contained.
+  try {
+    fs.copyFileSync(
+      path.join(__dirname, 'assets', 'gd-suits-logo.png'),
+      path.join(imagesDir, 'gd-suits-logo.png')
+    );
+  } catch {
+    /* the sheet still reads fine without the letterhead */
+  }
+
   fs.writeFileSync(
     path.join(filePath, 'client-file.json'),
     JSON.stringify({ ...project, references: refRows }, null, 2)

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api, messageFor } from '../lib/api.js';
 import { priceCatalogEntries, formatMoney } from '../lib/pricing.js';
 import { CURRENCY } from '../lib/catalog.js';
-import { Banner, DebouncedInput, Spinner, useToast } from '../components/ui.jsx';
+import { Banner, DebouncedInput, SecretInput, Spinner, useToast } from '../components/ui.jsx';
 
 export default function Settings({ overrides, onOverridesChanged, keyState, onKeyChanged }) {
   const [keyInput, setKeyInput] = useState('');
@@ -100,13 +100,11 @@ export default function Settings({ overrides, onOverridesChanged, keyState, onKe
                 <div className="field">
                   <label>{keyState?.present ? 'Replace key' : 'Paste key'}</label>
                   <div className="inline">
-                    <input
-                      className="input mono"
-                      type="password"
+                    <SecretInput
                       placeholder="AIza..."
                       value={keyInput}
-                      onChange={(e) => setKeyInput(e.target.value)}
-                      style={{ flex: 1 }}
+                      onChange={setKeyInput}
+                      onEnter={() => keyInput.trim() && saveKey()}
                     />
                     <button className="btn btn-primary" onClick={saveKey} disabled={!keyInput.trim()}>Save</button>
                     {keyState?.present && (
@@ -129,7 +127,7 @@ export default function Settings({ overrides, onOverridesChanged, keyState, onKe
                 </div>
 
                 <button className="btn" onClick={loadModels} disabled={!keyState?.present || testing}>
-                  {testing ? <><Spinner /> Testing...</> : 'Test connection &amp; list models'}
+                  {testing ? <><Spinner /> Testing...</> : 'Test connection & list models'}
                 </button>
               </div>
             </div>

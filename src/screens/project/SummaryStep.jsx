@@ -66,7 +66,8 @@ export default function SummaryStep({ ctx, overrides }) {
     return `<!doctype html><html><head><meta charset="utf-8"><title>${project.name} ${project.surname} - ${project.title}</title>
 <style>
  body{font-family:Georgia,serif;max-width:820px;margin:40px auto;padding:0 24px;color:#14120f}
- h1{font-size:28px;margin:0 0 4px} h2{font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:#8a6d14;margin:0 0 28px;font-family:system-ui}
+ h1{font-size:28px;margin:0 0 4px}
+ .letterhead{width:260px;max-width:60%;display:block;margin:0 0 26px}
  h3{font-size:15px;margin:26px 0 6px;border-bottom:2px solid #c9a227;padding-bottom:4px;display:inline-block}
  table{width:100%;border-collapse:collapse;font-family:system-ui;font-size:13.5px}
  td{padding:6px 0;border-bottom:1px solid #eeebe4} .k{color:#5d574c;width:55%} .num{text-align:right;font-variant-numeric:tabular-nums}
@@ -74,8 +75,8 @@ export default function SummaryStep({ ctx, overrides }) {
  img{max-width:100%;border-radius:6px;margin:10px 0}
  .meta{font-family:system-ui;font-size:13px;color:#5d574c;margin-bottom:22px}
 </style></head><body>
+<img class="letterhead" src="images/gd-suits-logo.png" alt="GD Suits" onerror="this.style.display='none'">
 <h1>${project.name} ${project.surname}</h1>
-<h2>GD Suits &middot; A style tailored for you</h2>
 <div class="meta">
  <strong>${project.title}</strong><br>
  ${EVENT_TYPES.find((e) => e.key === project.event_type)?.label ?? ''} ${project.event_date ? `&middot; ${project.event_date}` : ''}<br>

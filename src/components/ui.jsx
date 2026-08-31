@@ -99,6 +99,56 @@ export function Banner({ kind = 'info', children }) {
   return <div className={`banner banner-${kind}`}>{children}</div>;
 }
 
+/* --------------------------------------------------------------- secrets */
+
+const EyeIcon = ({ off }) => (
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M1.6 12S5.3 5.2 12 5.2 22.4 12 22.4 12 18.7 18.8 12 18.8 1.6 12 1.6 12Z" />
+    <circle cx="12" cy="12" r="3.1" />
+    {off && <line x1="3.2" y1="20.8" x2="20.8" y2="3.2" />}
+  </svg>
+);
+
+/**
+ * A secret field that can be revealed.
+ *
+ * Keys get pasted, mistyped and re-checked, and a masked field gives no way to
+ * confirm what actually landed - so the value can be shown deliberately. It
+ * re-masks whenever the field loses focus, so a revealed key is never left
+ * sitting on screen in a shop.
+ */
+export function SecretInput({ value, onChange, placeholder, autoFocus, onEnter }) {
+  const [revealed, setRevealed] = useState(false);
+
+  return (
+    <div className="secret-field">
+      <input
+        className="input mono"
+        type={revealed ? 'text' : 'password'}
+        placeholder={placeholder}
+        value={value}
+        autoFocus={autoFocus}
+        spellCheck={false}
+        autoComplete="off"
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={() => setRevealed(false)}
+        onKeyDown={(e) => e.key === 'Enter' && onEnter?.()}
+      />
+      <button
+        type="button"
+        className="secret-reveal"
+        title={revealed ? 'Hide' : 'Show'}
+        aria-label={revealed ? 'Hide the value' : 'Show the value'}
+        aria-pressed={revealed}
+        onMouseDown={(e) => e.preventDefault()} /* keep focus in the input */
+        onClick={() => setRevealed((v) => !v)}
+      >
+        <EyeIcon off={revealed} />
+      </button>
+    </div>
+  );
+}
+
 /** Text input that commits on blur, so typing does not hit the database on every keystroke. */
 export function DebouncedInput({ value, onCommit, as = 'input', ...rest }) {
   const [local, setLocal] = useState(value ?? '');
