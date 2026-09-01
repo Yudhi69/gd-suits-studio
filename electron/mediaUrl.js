@@ -1,0 +1,38 @@
+'use strict';
+
+/**
+ * The one place the gdmedia:// URL shape is defined.
+ *
+ * It lives on its own because it did not always: the main process and the
+ * preload each had their own copy, they drifted, and every client photograph
+ * silently failed to load for weeks while the tests kept passing - because
+ * the tests exercised the main-process copy and the interface used the
+ * preload's. Both now import this.
+ *
+ * The scope is a path segment rather than the host for a reason: a bare
+ * numeric host (`gdmedia://1/...`) is parsed as an IP address and resolves to
+ * 0.0.0.1.
+ */
+
+const SCHEME = 'gdmedia';
+const HOST = 'media';
+
+/** `project-12` / `client-3` - never a bare number. */
+const scopeForProject = (projectId) => `project-${projectId}`;
+const scopeForClient = (clientId) => `client-${clientId}`;
+
+function mediaUrl(scope, filename) {
+  if (!filename) return null;
+  return `${SCHEME}://${HOST}/${scope}/${encodeURIComponent(filename)}`;
+}
+
+const projectMedia = (projectId, filename) => mediaUrl(scopeForProject(projectId), filename);
+const clientMedia = (clientId, filename) => mediaUrl(scopeForClient(clientId), filename);
+
+/** Splits a request path back into scope and filename for the protocol handler. */
+function parseMediaPath(pathname) {
+  const [scope, ...rest] = String(pathname).replace(/^\//, '').split('/');
+  return { scope, filename: decodeURIComponent(rest.join('/')) };
+}
+
+module.exports = { SCHEME, HOST, mediaUrl, projectMedia, clientMedia, scopeForProject, scopeForClient, parseMediaPath };

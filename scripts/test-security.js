@@ -24,6 +24,7 @@ app.whenReady().then(async () => {
     const projectId = (await call(gd.projects.create({ clientId, title: 'Sec' }))).data;
     const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mP8z8BQz0AEYBxVSF+FAP5FDvcfRYWgAAAAAElFTkSuQmCC';
     const photo = (await call(gd.photos.add({ projectId, slot: 'front', dataUrl: png }))).data;
+    const ref = (await call(gd.references.add({ clientId, projectId, dataUrl: png, kind: 'style', title: 'Ref' }))).data;
 
     // --- IPC input validation -------------------------------------------
     out.badId       = await call(gd.projects.get({ id: '1 OR 1=1' }));
@@ -44,6 +45,30 @@ app.whenReady().then(async () => {
     out.modelInjection = await call(gd.ai.render({
       projectId, prompt: 'x', view: 'front', refs: [], model: '../../../v1/evil',
     }));
+
+    // --- a legitimate image must actually load ---------------------------
+    // Built through the same helpers the interface uses, not the URL the IPC
+    // handler happens to return. Those two drifted apart once and every client
+    // photograph silently failed to load while the traversal check below kept
+    // passing - because a broken scheme also fails to return 200.
+    const uiPhotoUrl = gd.projectMedia(projectId, photo.filename);
+    const uiRefUrl = gd.clientMedia(clientId, ref.filename);
+    out.uiPhotoUrl = uiPhotoUrl;
+    try {
+      const r = await fetch(uiPhotoUrl);
+      out.photoLoads = 'HTTP ' + r.status + '/' + (await r.arrayBuffer()).byteLength;
+    } catch (e) { out.photoLoads = 'THREW ' + e.message; }
+    try {
+      const r = await fetch(uiRefUrl);
+      out.refLoads = 'HTTP ' + r.status + '/' + (await r.arrayBuffer()).byteLength;
+    } catch (e) { out.refLoads = 'THREW ' + e.message; }
+    out.imgTag = await new Promise((resolve) => {
+      const im = new Image();
+      im.onload = () => resolve('loaded ' + im.naturalWidth + 'x' + im.naturalHeight);
+      im.onerror = () => resolve('ERROR');
+      im.src = uiPhotoUrl;
+      setTimeout(() => resolve('timeout'), 3000);
+    });
 
     // --- the media protocol must not escape its folder -------------------
     try {
@@ -79,6 +104,12 @@ app.whenReady().then(async () => {
   check(!results.badSlot.ok, 'photo slot outside the allowlist rejected');
   check(!results.htmlDataUrl.ok, 'text/html disguised as a photo rejected');
   check(!results.badSetting.ok, 'unknown settings key rejected');
+
+  log('\n=== stored media actually loads ===');
+  check(/^gdmedia:\/\/media\//.test(results.uiPhotoUrl ?? ''), 'the interface builds the same URL shape as the main process', results.uiPhotoUrl);
+  check(/^HTTP 200\/\d+$/.test(results.photoLoads ?? ''), 'a client photograph loads through gdmedia://', results.photoLoads);
+  check(/^HTTP 200\/\d+$/.test(results.refLoads ?? ''), 'a client reference image loads through gdmedia://', results.refLoads);
+  check((results.imgTag ?? '').startsWith('loaded'), 'and renders in an <img> tag, which is what the UI does', results.imgTag);
 
   log('\n=== path traversal ===');
   check(!results.traversalRef.ok, 'traversal in a reference filename rejected');

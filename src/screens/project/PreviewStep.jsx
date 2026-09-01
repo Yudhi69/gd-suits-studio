@@ -21,6 +21,11 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
   const [busy, setBusy] = useState(false);
   const [activeId, setActiveId] = useState(null);
   const [showPrompt, setShowPrompt] = useState(false);
+  // A hand-edited prompt replaces the generated one until it is reset. Kept
+  // separate from the generated text so the spec can carry on driving that,
+  // and the tailor can always see what they diverged from.
+  const [promptOverride, setPromptOverride] = useState(null);
+  const [promptDraft, setPromptDraft] = useState('');
   const [pickingRefs, setPickingRefs] = useState(false);
   const toast = useToast();
 
@@ -85,13 +90,15 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
 
   const clauses = describeGarment(spec, steps);
   const missingBase = !spec.suitType;
+  const effectivePrompt = promptOverride ?? prompt;
+  const promptEdited = promptOverride !== null && promptOverride !== prompt;
 
-  async function render() {
+  async function render(overridePrompt) {
     setBusy(true);
     try {
       const result = await api.ai.render({
         projectId: project.id,
-        prompt,
+        prompt: overridePrompt ?? effectivePrompt,
         view,
         refs: renderRefs.map((r) => ({
           filename: r.filename,
@@ -200,13 +207,19 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
               )}
 
               <div className="inline" style={{ marginTop: 12 }}>
-                <button className="btn btn-gold" onClick={render} disabled={busy || !hasKey || missingBase}>
-                  {active ? 'Render again' : 'Render preview'}
+                <button className="btn btn-gold" onClick={() => render()} disabled={busy || !hasKey || missingBase}>
+                  {active ? `Render again${renders.length ? ` (${renders.length + 1})` : ''}` : 'Render preview'}
                 </button>
                 <button className="btn" onClick={() => setPickingRefs(true)}>
                   Reference images{selectedRefs.length ? ` (${selectedRefs.length})` : ''}
                 </button>
-                <button className="btn btn-ghost btn-sm" onClick={() => setShowPrompt(true)}>See the prompt</button>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => { setPromptDraft(effectivePrompt); setShowPrompt(true); }}
+                >
+                  {promptEdited ? 'Edit the prompt ·' : 'See the prompt'}
+                </button>
+                {promptEdited && <span className="pill" title="This render uses your edited prompt">edited</span>}
                 <div style={{ flex: 1 }} />
                 {active && (
                   <>
@@ -334,14 +347,62 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
       )}
 
       {showPrompt && (
-        <Modal title="Prompt sent to the model" onClose={() => setShowPrompt(false)} wide>
+        <Modal
+          title="The prompt"
+          onClose={() => setShowPrompt(false)}
+          wide
+          footer={
+            <>
+              <button
+                className="btn"
+                disabled={promptDraft === prompt}
+                onClick={() => { setPromptDraft(prompt); setPromptOverride(null); }}
+                title="Go back to the prompt built from the spec"
+              >
+                Reset to generated
+              </button>
+              <div className="spacer" />
+              <button className="btn" onClick={() => setShowPrompt(false)}>Close</button>
+              <button
+                className="btn btn-primary"
+                onClick={() => { setPromptOverride(promptDraft); setShowPrompt(false); }}
+              >
+                Keep edits
+              </button>
+              <button
+                className="btn btn-gold"
+                disabled={busy || !hasKey || missingBase}
+                onClick={() => { setPromptOverride(promptDraft); setShowPrompt(false); render(promptDraft); }}
+              >
+                Render with this
+              </button>
+            </>
+          }
+        >
           <p className="small muted" style={{ marginTop: 0 }}>
-            Built from the spec, the measured skin tone and the reference photos. Shown so you can see exactly what
-            the model was told - if a render is wrong, this is where to look first.
+            Built from the spec, the measured skin tone and the reference photos - and editable. If a render is
+            wrong, this is where to look first, and where to fix it. Edits stay until you reset, so you can render,
+            adjust the wording, and render again until it is right.
           </p>
-          <pre className="mono" style={{ whiteSpace: 'pre-wrap', background: '#fbfaf7', padding: 14, borderRadius: 9, border: '1px solid var(--line)', maxHeight: '52vh', overflow: 'auto' }}>
-            {prompt}
-          </pre>
+          {promptEdited && (
+            <Banner kind="warn">
+              You are using an edited prompt, so changes to the spec no longer update it. Reset to pick them up
+              again.
+            </Banner>
+          )}
+          <textarea
+            className="textarea mono"
+            style={{ minHeight: '46vh', lineHeight: 1.5 }}
+            value={promptDraft}
+            spellCheck={false}
+            onChange={(e) => setPromptDraft(e.target.value)}
+          />
+          <div className="inline" style={{ justifyContent: 'space-between', marginTop: 6 }}>
+            <span className="tiny faint">{promptDraft.length} characters</span>
+            <span className="tiny faint">
+              The reference photos are attached separately - describing them here does not replace them.
+            </span>
+          </div>
         </Modal>
       )}
     </div>

@@ -1,6 +1,7 @@
 'use strict';
 
 const { contextBridge, ipcRenderer } = require('electron');
+const media = require('./mediaUrl');
 
 /**
  * The renderer gets exactly these channels and nothing else - no node, no fs,
@@ -47,8 +48,8 @@ for (const channel of CHANNELS) {
 }
 
 /** Media URL helpers, so the UI never hand-builds a gdmedia:// string. */
-api.mediaUrl = (scope, filename) => (filename ? `gdmedia://${scope}/${encodeURIComponent(filename)}` : null);
-api.projectMedia = (projectId, filename) => api.mediaUrl(projectId, filename);
-api.clientMedia = (clientId, filename) => api.mediaUrl(`client-${clientId}`, filename);
+api.mediaUrl = media.mediaUrl;
+api.projectMedia = media.projectMedia;
+api.clientMedia = media.clientMedia;
 
 contextBridge.exposeInMainWorld('gd', api);

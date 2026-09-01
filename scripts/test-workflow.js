@@ -119,6 +119,27 @@ app.whenReady().then(async () => {
   check(fit.headings.includes('Final fitting'), 'a second session is labelled Final fitting', fit.headings.join(','));
   check(fit.statusAfter === 'Final fitting', 'the order status follows to Final fitting', fit.statusAfter);
 
+  /* ------------------------------------------------ prompt editing ---- */
+  log('\n=== the render prompt is editable ===');
+  const promptUi = JSON.parse(await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    [...document.querySelectorAll('.step-tab')].find(t=>t.textContent.includes('Preview')).click(); await wait(800);
+    [...document.querySelectorAll('button')].find(b=>b.textContent.includes('See the prompt')).click(); await wait(700);
+    const ta = document.querySelector('.modal textarea');
+    const buttons = [...document.querySelectorAll('.modal button')].map(b=>b.textContent.trim());
+    return JSON.stringify({
+      editable: !!ta && !ta.readOnly && !ta.disabled,
+      mentionsSpec: !!ta && ta.value.includes('two-piece suit'),
+      mentionsCustomOption: !!ta && ta.value.includes('cravat-notch'),
+      buttons,
+    });
+  })()`));
+  check(promptUi.editable, 'the prompt opens in an editable field');
+  check(promptUi.mentionsSpec, 'it contains the spec built so far');
+  check(promptUi.mentionsCustomOption, "it carries the shop's own option wording");
+  check(promptUi.buttons.some(b=>b.includes('Render with this')), 'it can be rendered directly from the editor', promptUi.buttons.join(' | '));
+  check(promptUi.buttons.some(b=>b.includes('Reset to generated')), 'and reset back to the generated prompt');
+
   log(`\n${fail === 0 ? 'ALL WORKFLOW CHECKS PASSED' : 'FAILED'} — ${pass} passed, ${fail} failed`);
   app.exit(fail === 0 ? 0 : 1);
 }).catch((e) => { log('HARNESS FAIL', e.stack); app.exit(1); });

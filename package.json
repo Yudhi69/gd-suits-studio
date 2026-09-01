@@ -11,10 +11,10 @@
   "scripts": {
     "dev": "concurrently -k -n VITE,ELECTRON -c cyan,magenta \"npm:dev:vite\" \"npm:dev:electron\"",
     "dev:vite": "vite",
-    "dev:electron": "wait-on tcp:5173 && cross-env NODE_ENV=development electron .",
-    "build": "vite build",
+    "dev:electron": "npm run build:preload && wait-on tcp:5173 && cross-env NODE_ENV=development electron .",
+    "build": "npm run build:preload && vite build",
     "start": "npm run build && electron .",
-    "postinstall": "electron-builder install-app-deps",
+    "postinstall": "electron-builder install-app-deps && npm run build:preload",
     "dist:mac": "npm run build && electron-builder --mac --arm64 && electron-builder --mac --x64 && electron-builder install-app-deps",
     "dist:win": "npm run build && electron-builder --win --x64 && electron-builder install-app-deps",
     "dist:all": "npm run dist:mac && npm run dist:win",
@@ -24,7 +24,8 @@
     "test": "npm run test:security && npm run test:updates && npm run test:catalog && npm run test:workflow && npm run test:render",
     "test:updates": "cross-env DATA_DIR=.testdata/updates electron scripts/test-updates.js",
     "test:catalog": "cross-env DATA_DIR=.testdata/catalog electron scripts/test-catalog.js",
-    "test:workflow": "cross-env DATA_DIR=.testdata/workflow electron scripts/test-workflow.js"
+    "test:workflow": "cross-env DATA_DIR=.testdata/workflow electron scripts/test-workflow.js",
+    "build:preload": "esbuild electron/preload.js --bundle --platform=node --format=cjs --external:electron --outfile=electron/preload.build.js --log-level=warning"
   },
   "dependencies": {
     "better-sqlite3": "^12.2.0"

@@ -10,6 +10,7 @@ const storage = require('./storage');
 const secrets = require('./secrets');
 const gemini = require('./ai/gemini');
 const security = require('./security');
+const media = require('./mediaUrl');
 const updater = require('./updater');
 const v = require('./validate');
 
@@ -26,8 +27,8 @@ protocol.registerSchemesAsPrivileged([
 
 let mainWindow = null;
 
-/** Single place that builds a media URL, matching the protocol handler above. */
-const mediaUrl = (scope, filename) => `gdmedia://media/${scope}/${encodeURIComponent(filename)}`;
+/** Defined once in ./mediaUrl so the preload cannot drift from it again. */
+const mediaUrl = media.mediaUrl;
 
 /**
  * The window paints its background before the renderer has loaded, so it is
@@ -50,7 +51,9 @@ function createWindow() {
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     show: false,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      // The bundled preload: sandboxed preloads cannot require relative
+      // files, so it is built with its imports inlined (npm run build:preload).
+      preload: path.join(__dirname, 'preload.build.js'),
       // The renderer is treated as untrusted: no Node, isolated context, and
       // run inside the OS sandbox. The preload only needs `electron`, which
       // sandboxed preloads still get, so nothing here depends on Node access.
@@ -155,9 +158,7 @@ function startup() {
   protocol.handle('gdmedia', async (request) => {
     try {
       // gdmedia://media/<scope>/<filename>
-      const url = new URL(request.url);
-      const [scope, ...rest] = url.pathname.replace(/^\//, '').split('/');
-      const filename = decodeURIComponent(rest.join('/'));
+      const { scope, filename } = media.parseMediaPath(new URL(request.url).pathname);
       const buffer = storage.readImage(scope, filename);
       return new Response(buffer, {
         headers: { 'content-type': storage.mimeForFile(filename), 'cache-control': 'no-store' },
