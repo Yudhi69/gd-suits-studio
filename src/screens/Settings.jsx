@@ -5,12 +5,13 @@ import { CURRENCY } from '../lib/catalog.js';
 import { Banner, Collapsible, ConfirmButton, DebouncedInput, Modal, SecretInput, Spinner, Switch, useToast } from '../components/ui.jsx';
 
 export default function Settings({ catalog, overrides, onOverridesChanged, keyState, onKeyChanged }) {
-  const [keyInput, setKeyInput] = useState('');
-  const [testing, setTesting] = useState(false);
-  const [models, setModels] = useState(null);
-  const [modelsError, setModelsError] = useState(null);
-  const [imageModel, setImageModel] = useState('');
-  const [visionModel, setVisionModel] = useState('');
+  const [providers, setProviders] = useState([]);
+  const [config, setConfig] = useState({
+    image: { provider: 'gemini', model: '' },
+    vision: { provider: 'gemini', model: '' },
+    customBaseUrl: '',
+  });
+  const [modelsByProvider, setModelsByProvider] = useState({});
   const [info, setInfo] = useState(null);
   const [posture, setPosture] = useState(null);
   const [update, setUpdate] = useState(null);
@@ -26,10 +27,10 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
   const [tab, setTab] = useState('ai');
   const toast = useToast();
 
+  const modelsFor = (id) => modelsByProvider[id] ?? null;
+
   useEffect(() => {
     (async () => {
-      setImageModel(await api.settings.get({ key: 'imageModel', fallback: 'gemini-2.5-flash-image' }));
-      setVisionModel(await api.settings.get({ key: 'visionModel', fallback: 'gemini-2.5-flash' }));
       setInfo(await api.app.info());
       setPosture(await api.app.security().catch(() => null));
       const fallback = await api.updates.defaultFeed().catch(() => '');
@@ -40,87 +41,75 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
     })();
   }, []);
 
-  // The list is fetched as soon as there is a key, rather than waiting for the
-  // tailor to press a button they have no reason to know about. Without it the
-  // model fields fall back to free text, which is how an unavailable model
-  // gets saved in the first place.
-  useEffect(() => {
-    if (!keyState?.present) { setModels(null); return; }
-    let cancelled = false;
-    api.ai
-      .models()
-      .then((list) => { if (!cancelled) { setModels(list); setModelsError(null); } })
-      .catch((err) => { if (!cancelled) { setModels(null); setModelsError(messageFor(err)); } });
-    return () => { cancelled = true; };
-  }, [keyState?.present]);
+  const reloadProviders = React.useCallback(async () => {
+    const result = await api.ai.providers();
+    setProviders(result.providers);
+    setConfig(result.config);
+    onKeyChanged?.(result.providers.find((p) => p.id === result.config.image.provider)?.key ?? null);
+    return result;
+  }, [onKeyChanged]);
+
+  useEffect(() => { reloadProviders().catch(() => {}); }, [reloadProviders]);
 
   /**
-   * If the saved model is not on this key, fall back to one that is rather
-   * than leaving the tailor with a render button that always fails.
+   * Model lists are fetched per provider as soon as that provider has a key,
+   * rather than waiting for a button the tailor has no reason to press. It is
+   * the free-text fallback that lets an unusable model get saved.
    */
-  useEffect(() => {
-    if (!models) return;
-    const available = new Set(models.all.map((m) => m.name));
-    const imageCapable = new Set(models.image.map((m) => m.name));
-
-    // Being on the key is not enough for the image slot. A text model like
-    // gemini-2.5-flash lists fine and accepts the request, then answers with a
-    // 404 because it cannot return an image - so the check is whether it can
-    // do the job, not whether it exists.
-    const imageUnusable = imageModel && !imageCapable.has(imageModel);
-    if (imageUnusable && models.image.length) {
-      const replacement = models.image[0].name;
-      setImageModel(replacement);
-      api.settings.set({ key: 'imageModel', value: replacement }).catch(() => {});
-      toast(
-        available.has(imageModel)
-          ? `${imageModel} cannot produce images - switched to ${replacement}`
-          : `${imageModel} is not on this key - switched to ${replacement}`,
-        'info'
-      );
-    }
-
-    if (visionModel && !available.has(visionModel) && models.vision.length) {
-      const replacement = models.vision[0].name;
-      setVisionModel(replacement);
-      api.settings.set({ key: 'visionModel', value: replacement }).catch(() => {});
-    }
-  }, [models]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function saveKey() {
+  const loadModels = React.useCallback(async (providerId, announce = false) => {
     try {
-      const state = await api.secrets.set({ name: 'gemini', value: keyInput.trim() });
-      setKeyInput('');
-      onKeyChanged(state);
-      toast(state.present ? 'API key saved' : 'API key removed', 'ok');
-      if (state.present) loadModels();
+      const list = await api.ai.models({ provider: providerId });
+      setModelsByProvider((cur) => ({ ...cur, [providerId]: list }));
+      if (announce) toast(`${list.all.length} models on that key`, 'ok');
+      return list;
+    } catch (err) {
+      setModelsByProvider((cur) => ({ ...cur, [providerId]: null }));
+      if (announce) toast(messageFor(err), 'err');
+      return null;
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    for (const provider of providers) {
+      if (provider.key?.present && modelsByProvider[provider.id] === undefined) loadModels(provider.id);
+    }
+  }, [providers, modelsByProvider, loadModels]);
+
+  async function saveAiConfig(patch) {
+    const next = {
+      ...config,
+      ...patch,
+      image: { ...config.image, ...(patch.image ?? {}) },
+      vision: { ...config.vision, ...(patch.vision ?? {}) },
+    };
+    try {
+      setConfig(await api.ai.setConfig(next));
     } catch (err) {
       toast(messageFor(err), 'err');
     }
   }
 
-  async function loadModels() {
-    setTesting(true);
-    setModelsError(null);
-    try {
-      const list = await api.ai.models();
-      setModels(list);
-      toast(`Connected - ${list.image.length} image and ${list.vision.length} vision models on this key`, 'ok');
-    } catch (err) {
-      const message = messageFor(err);
-      setModelsError(message);
-      toast(message, 'err');
-      setModels(null);
-    } finally {
-      setTesting(false);
-    }
-  }
-
-  async function setModel(key, value, setter) {
-    setter(value);
-    await api.settings.set({ key, value });
-    toast('Model saved', 'ok');
-  }
+  /**
+   * A saved model that the provider cannot actually use is repaired rather
+   * than left to fail on every render. For the image slot "usable" means it
+   * can return an image - a text model lists fine, accepts the request, then
+   * answers 404.
+   */
+  useEffect(() => {
+    const list = modelsByProvider[config.image.provider];
+    if (!list || !list.image.length) return;
+    const capable = list.image.some((m) => m.name === config.image.model);
+    if (capable) return;
+    const replacement = list.image[0].name;
+    const existed = list.all.some((m) => m.name === config.image.model);
+    saveAiConfig({ image: { model: replacement } });
+    toast(
+      config.image.model
+        ? `${config.image.model} ${existed ? 'cannot produce images' : 'is not on this key'} - switched to ${replacement}`
+        : `Image model set to ${replacement}`,
+      'info'
+    );
+  }, [modelsByProvider, config.image.provider]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function checkForUpdates() {
     setChecking(true);
@@ -171,119 +160,72 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
           <div className="stack">
             <div className="card">
               <div className="card-head">
-                <h3>Gemini API key</h3>
+                <h3>Where each job runs</h3>
                 <div className="spacer" />
-                {keyState?.present
-                  ? <span className="pill pill-ok">Key saved</span>
-                  : <span className="pill pill-warn">Not set</span>}
+                <span className="tiny faint">Renders and reads can use different providers</span>
               </div>
               <div className="card-pad">
                 <p className="small muted" style={{ marginTop: 0 }}>
-                  The app works fully offline without this - capture, spec, measurements, notes, pricing and export.
-                  A key is only needed to render previews and run the AI reads.
+                  The app works fully offline without any of this - capture, spec, measurements, notes, pricing
+                  and export. A provider is only needed to render previews and run the AI reads.
                 </p>
 
-                {keyState?.present && (
-                  <p className="small">
-                    Current key: <span className="mono">{keyState.hint}</span>
-                    {keyState.encrypted
-                      ? <span className="pill pill-ok" style={{ marginLeft: 8 }}>Encrypted by the OS keychain</span>
-                      : <span className="pill pill-warn" style={{ marginLeft: 8 }}>Stored unencrypted - no OS keychain available</span>}
-                  </p>
-                )}
-
-                <div className="field">
-                  <label>{keyState?.present ? 'Replace key' : 'Paste key'}</label>
-                  <div className="inline">
-                    <SecretInput
-                      placeholder="AIza..."
-                      value={keyInput}
-                      onChange={setKeyInput}
-                      onEnter={() => keyInput.trim() && saveKey()}
-                    />
-                    <button className="btn btn-primary" onClick={saveKey} disabled={!keyInput.trim()}>Save</button>
-                    {keyState?.present && (
-                      <button
-                        className="btn btn-danger"
-                        onClick={async () => {
-                          const state = await api.secrets.set({ name: 'gemini', value: '' });
-                          onKeyChanged(state);
-                          toast('API key removed');
-                        }}
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                  <div className="hint">
-                    Get one free at aistudio.google.com. It is stored on this machine only and never leaves it
-                    except in calls to Google.
-                  </div>
+                <div className="row">
+                  <JobPicker
+                    title="Image renders"
+                    job="image"
+                    config={config}
+                    providers={providers}
+                    models={modelsFor(config.image.provider)}
+                    onChange={saveAiConfig}
+                  />
+                  <JobPicker
+                    title="Photo &amp; measurement reads"
+                    job="vision"
+                    config={config}
+                    providers={providers}
+                    models={modelsFor(config.vision.provider)}
+                    onChange={saveAiConfig}
+                  />
                 </div>
-
-                <button className="btn" onClick={loadModels} disabled={!keyState?.present || testing}>
-                  {testing ? <><Spinner /> Testing...</> : 'Test connection & list models'}
-                </button>
               </div>
             </div>
 
             <div className="card">
               <div className="card-head">
-                <h3>Models</h3>
+                <h3>Providers &amp; keys</h3>
                 <div className="spacer" />
-                {models
-                  ? <span className="pill pill-ok">{models.all.length} available on this key</span>
-                  : keyState?.present
-                    ? <span className="pill pill-warn">List not loaded</span>
-                    : <span className="pill pill-quiet">Add a key first</span>}
+                <span className="tiny faint">
+                  {providers.filter((p) => p.key?.present).length} of {providers.length} configured
+                </span>
               </div>
               <div className="card-pad">
-                {!keyState?.present && (
-                  <Banner kind="info">Add an API key above and the models on it will be listed here.</Banner>
-                )}
+                <p className="small muted" style={{ marginTop: 0 }}>
+                  Each key is encrypted with the OS keychain and stays on this machine - it never leaves except in
+                  calls to that provider.
+                </p>
 
-                {keyState?.present && modelsError && (
-                  <Banner kind="warn">
-                    <div>
-                      Could not load the model list: {modelsError}
-                      <div style={{ marginTop: 8 }}>
-                        <button className="btn btn-sm" onClick={loadModels} disabled={testing}>Try again</button>
-                      </div>
-                    </div>
-                  </Banner>
-                )}
-
-                <div className="row">
-                  <ModelPicker
-                    label="Image model (renders)"
-                    hint="Only models that can return an image will produce a render."
-                    value={imageModel}
-                    models={models}
-                    preferred="image"
-                    requireCapable
-                    onChange={(val) => setModel('imageModel', val, setImageModel)}
-                  />
-                  <ModelPicker
-                    label="Vision model (body read, sanity checks)"
-                    hint="Reads the client photographs and the measurements."
-                    value={visionModel}
-                    models={models}
-                    preferred="vision"
-                    onChange={(val) => setModel('visionModel', val, setVisionModel)}
-                  />
-                </div>
-
-                {models && models.image.length === 0 && (
-                  <Banner kind="warn">
-                    This key has no image-generation models on it, so renders will not work. Image models are
-                    enabled per Google account - check that billing is set up in Google AI Studio, then reload
-                    the list.
-                  </Banner>
-                )}
-
-                <button className="btn btn-sm" onClick={loadModels} disabled={!keyState?.present || testing}>
-                  {testing ? <><Spinner /> Loading...</> : 'Reload the model list'}
-                </button>
+                {providers.map((provider) => (
+                  <Collapsible
+                    key={provider.id}
+                    title={provider.label}
+                    defaultOpen={!providers.some((p) => p.key?.present) && provider.id === 'gemini'}
+                    summary={[
+                      provider.key?.present ? 'key saved' : 'no key',
+                      provider.supportsImage ? 'renders' : 'reads only',
+                      modelsFor(provider.id) ? `${modelsFor(provider.id).all.length} models` : null,
+                    ].filter(Boolean).join(' · ')}
+                  >
+                    <ProviderCard
+                      provider={provider}
+                      models={modelsFor(provider.id)}
+                      config={config}
+                      onKeyChanged={reloadProviders}
+                      onBaseUrlChanged={(url) => saveAiConfig({ customBaseUrl: url })}
+                      onLoadModels={() => loadModels(provider.id, true)}
+                    />
+                  </Collapsible>
+                ))}
               </div>
             </div>
           </div>
@@ -611,6 +553,145 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
 }
 
 /**
+ * Which provider and model does one job. Providers that cannot do the job are
+ * not offered - Claude reads photographs but cannot draw a suit, so it is
+ * absent from the image list rather than present and failing.
+ */
+function JobPicker({ title, job, config, providers, models, onChange }) {
+  const usable = providers.filter((p) => (job === 'image' ? p.supportsImage : p.supportsVision));
+  const chosen = config[job];
+  const provider = providers.find((p) => p.id === chosen.provider);
+  const noKey = provider && !provider.key?.present;
+
+  return (
+    <div>
+      <div className="price-group-title">{title}</div>
+
+      <div className="field">
+        <label>Provider</label>
+        <select
+          className="select"
+          value={chosen.provider}
+          onChange={(e) => {
+            const next = providers.find((p) => p.id === e.target.value);
+            onChange({
+              [job]: {
+                provider: e.target.value,
+                // Reset to that provider's default; the old model name almost
+                // never means anything to a different provider.
+                model: (job === 'image' ? next?.defaultImageModel : next?.defaultVisionModel) ?? '',
+              },
+            });
+          }}
+        >
+          {usable.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}{p.key?.present ? '' : ' - no key yet'}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <ModelPicker
+        label="Model"
+        hint={job === 'image' ? 'Only models that can return an image will produce a render.' : 'Reads the client photographs and the measurements.'}
+        value={chosen.model}
+        models={models}
+        preferred={job}
+        requireCapable={job === 'image'}
+        onChange={(model) => onChange({ [job]: { model } })}
+      />
+
+      {noKey && (
+        <Banner kind="warn">
+          {provider.label} has no API key yet - add one below before this can run.
+        </Banner>
+      )}
+      {job === 'image' && models && models.image.length === 0 && (
+        <Banner kind="warn">
+          This key has no image-generation models on it, so renders will not work.
+        </Banner>
+      )}
+    </div>
+  );
+}
+
+/** One provider's key, endpoint and connection state. */
+function ProviderCard({ provider, models, config, onKeyChanged, onBaseUrlChanged, onLoadModels }) {
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+
+  async function save(value) {
+    setBusy(true);
+    try {
+      await api.secrets.set({ name: provider.id, value: value.trim() });
+      setInput('');
+      await onKeyChanged();
+      toast(value.trim() ? `${provider.label} key saved` : `${provider.label} key removed`, 'ok');
+    } catch (err) {
+      toast(messageFor(err), 'err');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ paddingTop: 10 }}>
+      <div className="inline" style={{ marginBottom: 10 }}>
+        {provider.key?.present
+          ? <span className="pill pill-ok">Key saved {provider.key.hint}</span>
+          : <span className="pill pill-warn">No key</span>}
+        {provider.key?.present && !provider.key.encrypted && (
+          <span className="pill pill-warn">Not encrypted - no OS keychain</span>
+        )}
+        {!provider.supportsImage && <span className="pill pill-quiet">Reads only - cannot render</span>}
+        {models && <span className="pill pill-quiet">{models.all.length} models</span>}
+      </div>
+
+      {provider.needsBaseUrl && (
+        <div className="field">
+          <label>Endpoint address</label>
+          <DebouncedInput
+            className="input mono"
+            placeholder="https://openrouter.ai/api/v1"
+            value={config.customBaseUrl}
+            onCommit={onBaseUrlChanged}
+          />
+          <div className="hint">
+            Anything that speaks the OpenAI format - OpenRouter, Together, an Azure deployment, a local server
+            behind https. Must be https.
+          </div>
+        </div>
+      )}
+
+      <div className="field">
+        <label>{provider.key?.present ? 'Replace key' : 'API key'}</label>
+        <div className="inline">
+          <SecretInput
+            placeholder={provider.keyHint}
+            value={input}
+            onChange={setInput}
+            onEnter={() => input.trim() && save(input)}
+          />
+          <button className="btn btn-primary" onClick={() => save(input)} disabled={busy || !input.trim()}>Save</button>
+          {provider.key?.present && (
+            <button className="btn btn-danger" onClick={() => save('')} disabled={busy}>Remove</button>
+          )}
+        </div>
+        {provider.docsUrl && (
+          <div className="hint">Keys are issued at {provider.docsUrl.replace(/^https?:\/\//, '')}</div>
+        )}
+      </div>
+
+      <button className="btn btn-sm" onClick={onLoadModels} disabled={!provider.key?.present}>
+        Test the key &amp; load its models
+      </button>
+    </div>
+  );
+}
+
+/**
  * A model chooser that only ever offers models the key actually has.
  *
  * Free text is what let an unavailable model get saved, so it is only offered
@@ -632,7 +713,7 @@ function ModelPicker({ label, hint, value, models, preferred, onChange, requireC
 
   const capable = models[preferred] ?? [];
   const groups = [
-    { title: preferred === 'image' ? 'Image models' : 'Vision models', items: capable },
+    { title: preferred === 'image' ? 'Image models' : 'Reading models', items: capable },
     {
       // Kept selectable because the naming of these families changes often and
       // a picker that hides a working model is worse than one that warns - but

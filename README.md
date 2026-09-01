@@ -33,15 +33,30 @@ npm start        # production bundle, run locally
 
 ## Turning on AI rendering
 
-1. Get a free API key at [aistudio.google.com](https://aistudio.google.com).
-2. Open **Settings → AI rendering**, paste it, press **Save**.
-3. The model dropdowns fill themselves from your key. Only models this app can
-   actually call are offered, so nothing is hard-coded to a name that may be
-   retired — and if a saved model is no longer on the key, it is swapped for
-   one that is rather than left to fail on every render.
+**Settings → AI rendering.** Add a key for any provider, then choose which one
+does which job — renders and reads can use different providers.
 
-The key is encrypted with the OS keychain (Keychain on macOS, DPAPI on
-Windows) and never leaves the machine except in calls to Google.
+| Provider | Renders | Reads | Key from |
+| --- | --- | --- | --- |
+| Google Gemini | yes | yes | aistudio.google.com |
+| OpenAI | yes | yes | platform.openai.com |
+| Anthropic (Claude) | **no** | yes | console.anthropic.com |
+| Custom (OpenAI-compatible) | yes | yes | your own endpoint |
+
+Claude cannot generate images, so it is simply absent from the image provider
+list rather than offered and then failing. The custom option covers anything
+speaking the OpenAI wire format — OpenRouter, Together, an Azure deployment, a
+local server — and its endpoint must be https.
+
+Model dropdowns fill themselves from whichever key is set. Only models the app
+can actually call are offered, so nothing is hard-coded to a name that may be
+retired — and if a saved model can no longer do the job, it is swapped for one
+that can rather than left to fail on every render. A text model in the image
+slot is the specific trap that catches people: it lists fine, accepts the
+request, then answers 404.
+
+Every key is encrypted with the OS keychain (Keychain on macOS, DPAPI on
+Windows) and never leaves the machine except in calls to that provider.
 
 Without a key the app still does: client capture, skin-tone sampling, fabric
 colour extraction, the full suit builder, measurements, fittings, notes,

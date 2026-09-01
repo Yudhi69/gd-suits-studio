@@ -22,7 +22,7 @@ const CHANNELS = [
   'catalog:addOption', 'catalog:updateOption', 'catalog:deleteOption',
   'settings:get', 'settings:set',
   'secrets:describe', 'secrets:set',
-  'ai:test', 'ai:models', 'ai:render', 'ai:analyse',
+  'ai:test', 'ai:models', 'ai:render', 'ai:analyse', 'ai:providers', 'ai:setConfig',
   'renders:approve', 'renders:delete',
   'project:export',
   'app:info', 'app:openDataFolder', 'app:security',

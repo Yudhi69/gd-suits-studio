@@ -56,7 +56,11 @@ app.whenReady().then(async () => {
   // A TEXT model saved in the image slot. This is the real-world failure: it
   // is on the key and lists fine, so a naive "is it available?" check passes,
   // then every render 404s because it cannot return an image.
-  await js(`window.gd.settings.set({ key: 'imageModel', value: 'gemini-2.5-flash' })`);
+  await js(`window.gd.ai.setConfig({
+    image: { provider: 'gemini', model: 'gemini-2.5-flash' },
+    vision: { provider: 'gemini', model: 'gemini-2.5-flash' },
+    customBaseUrl: '',
+  })`);
   win.webContents.reload();
   await wait(2000);
 
@@ -64,8 +68,9 @@ app.whenReady().then(async () => {
     const wait = ms => new Promise(r => setTimeout(r, ms));
     [...document.querySelectorAll('.nav-item')].find(b=>b.textContent.includes('Settings')).click();
     await wait(2000);
+    // The first select is the image *provider*; the model picker follows it.
     const selects = [...document.querySelectorAll('.card select')];
-    const imageSelect = selects[0];
+    const imageSelect = selects[1];
     const groups = imageSelect ? [...imageSelect.querySelectorAll('optgroup')].map(g => g.label) : [];
     const options = imageSelect ? [...imageSelect.querySelectorAll('option')].map(o => o.value).filter(Boolean) : [];
     return JSON.stringify({
@@ -88,7 +93,7 @@ app.whenReady().then(async () => {
   check(ui.options.includes('nano-banana-pro-preview'), 'an image model without "image" in its name is still found', ui.options.join(', '));
 
   log('\n=== a text model in the image slot heals itself ===');
-  const saved = await js(`window.gd.settings.get({ key: 'imageModel', fallback: '' }).then(r => r.data)`);
+  const saved = await js(`window.gd.ai.providers().then(r => r.data.config.image.model)`);
   check(saved !== 'gemini-2.5-flash', 'the text model was replaced rather than left to 404', String(saved));
   check(/image|banana/.test(String(saved)), 'and replaced with one that can return an image', String(saved));
   check(ui.selected === saved, 'the dropdown shows what was saved', `${ui.selected} vs ${saved}`);
@@ -99,6 +104,24 @@ app.whenReady().then(async () => {
     return r.ok ? 'unexpectedly succeeded' : r.error.message;
   })()`);
   check(/cannot produce images/i.test(errText), 'asking a text model for an image explains why', errText.slice(0, 90));
+
+  log('\n=== providers ===');
+  const provs = JSON.parse(await js(`window.gd.ai.providers().then(r => JSON.stringify(r.data.providers.map(p => ({ id: p.id, image: p.supportsImage, vision: p.supportsVision, key: !!p.key.present }))))`));
+  check(provs.length >= 4, 'more than one provider is offered', provs.map(p=>p.id).join(', '));
+  check(provs.find(p=>p.id==='openai')?.image === true, 'OpenAI can render');
+  check(provs.find(p=>p.id==='anthropic')?.image === false, 'Claude is marked as unable to render');
+  check(provs.find(p=>p.id==='anthropic')?.vision === true, 'Claude is offered for reads');
+  check(provs.every(p => !('apiKey' in p)), 'no provider row carries key material');
+
+  const imageProviders = JSON.parse(await js(`(async () => {
+    const selects = [...document.querySelectorAll('.card select')];
+    return JSON.stringify([...selects[0].options].map(o => o.value));
+  })()`));
+  check(!imageProviders.includes('anthropic'), 'Claude is absent from the image provider list', imageProviders.join(', '));
+
+  log('\n=== a custom endpoint must be https ===');
+  const bad = await js(`window.gd.ai.setConfig({ image:{provider:'custom',model:'x'}, vision:{provider:'gemini',model:'gemini-2.5-flash'}, customBaseUrl: 'http://insecure.example' }).then(r => r.ok ? 'ALLOWED' : r.error.message)`);
+  check(bad !== 'ALLOWED' && /https/i.test(bad), 'a plain http endpoint is refused', bad);
 
   log(`\n${fail === 0 ? 'ALL MODEL CHECKS PASSED' : 'FAILED'} — ${pass} passed, ${fail} failed`);
   app.exit(fail === 0 ? 0 : 1);

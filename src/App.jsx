@@ -22,7 +22,15 @@ export default function App() {
     (async () => {
       setOverrides((await api.settings.get({ key: 'priceOverrides', fallback: {} })) ?? {});
       setUnit((await api.settings.get({ key: 'measureUnit', fallback: 'cm' })) ?? 'cm');
-      setKeyState(await api.secrets.describe({ name: 'gemini' }));
+      // Readiness follows whichever provider is configured for renders, not
+      // whichever one happens to be first.
+      try {
+        const { providers, config } = await api.ai.providers();
+        const active = providers.find((p) => p.id === config.image.provider);
+        setKeyState({ ...(active?.key ?? { present: false }), providerLabel: active?.label ?? '' });
+      } catch {
+        setKeyState({ present: false });
+      }
 
       // Only if the tailor asked for it. Nothing about them is sent - it is a
       // plain GET for the latest published version number.
@@ -79,7 +87,11 @@ export default function App() {
                 Version {updateReady.version} available
               </button>
             )}
-            <div>{keyState?.present ? 'AI rendering ready' : 'Offline mode - no API key'}</div>
+            <div>
+              {keyState?.present
+                ? `AI rendering ready${keyState.providerLabel ? ` · ${keyState.providerLabel}` : ''}`
+                : 'Offline mode - no API key'}
+            </div>
             <div style={{ opacity: .6 }}>Local data, on this machine</div>
           </div>
         </aside>

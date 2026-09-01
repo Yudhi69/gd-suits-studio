@@ -9,6 +9,7 @@ const db = require('./db');
 const storage = require('./storage');
 const secrets = require('./secrets');
 const gemini = require('./ai/gemini');
+const aiProviders = require('./ai/registry');
 const security = require('./security');
 const media = require('./mediaUrl');
 const updater = require('./updater');
@@ -367,6 +368,28 @@ handle('fittings:update', ({ id, tailorNotes, clientNotes, kind }) => db.updateF
 }));
 handle('fittings:delete', ({ id }) => db.deleteFitting(v.id(id)));
 
+/**
+ * Which provider and model handles each job.
+ *
+ * Falls back to the older single-provider settings so an existing install
+ * keeps working without the tailor reconfiguring anything.
+ */
+function getAiConfig() {
+  const stored = db.getSetting('aiConfig', null);
+  const customBaseUrl = stored?.customBaseUrl ?? '';
+  return {
+    customBaseUrl,
+    image: {
+      provider: stored?.image?.provider ?? 'gemini',
+      model: stored?.image?.model ?? db.getSetting('imageModel', gemini.DEFAULTS.imageModel),
+    },
+    vision: {
+      provider: stored?.vision?.provider ?? 'gemini',
+      model: stored?.vision?.model ?? db.getSetting('visionModel', gemini.DEFAULTS.visionModel),
+    },
+  };
+}
+
 /* the tailor's own catalog */
 const ITEM_KINDS = ['toggle', 'choice'];
 
@@ -444,7 +467,7 @@ handle('catalog:updateItem', ({ id, ...patch }) =>
 handle('catalog:deleteItem', ({ id }) => db.deleteCustomItem(v.id(id)));
 
 /* settings + secrets */
-const SETTING_KEYS = ['priceOverrides', 'imageModel', 'visionModel', 'theme', 'updateFeed', 'autoCheckUpdates', 'measureUnit'];
+const SETTING_KEYS = ['priceOverrides', 'imageModel', 'visionModel', 'theme', 'updateFeed', 'autoCheckUpdates', 'measureUnit', 'aiConfig'];
 handle('settings:get', ({ key, fallback }) => db.getSetting(v.oneOf(key, SETTING_KEYS, 'setting'), fallback ?? null));
 handle('settings:set', ({ key, value }) => {
   const name = v.oneOf(key, SETTING_KEYS, 'setting');
@@ -453,18 +476,61 @@ handle('settings:set', ({ key, value }) => {
   if (name === 'updateFeed') return db.setSetting(name, v.str(value, 'update address', 500).trim());
   if (name === 'autoCheckUpdates') return db.setSetting(name, !!value);
   if (name === 'measureUnit') return db.setSetting(name, v.oneOf(value, ['cm', 'in'], 'unit'));
+  if (name === 'aiConfig') return db.setSetting(name, v.jsonBlob(value, 'ai config', 8 * 1024));
   return db.setSetting(name, v.jsonBlob(value, 'value', 128 * 1024));
 });
-handle('secrets:describe', ({ name }) => secrets.describe(v.oneOf(name, ['gemini', 'updateToken'], 'secret')));
+const SECRET_NAMES = [...aiProviders.SECRET_NAMES, 'updateToken'];
+handle('secrets:describe', ({ name }) => secrets.describe(v.oneOf(name, SECRET_NAMES, 'secret')));
 handle('secrets:set', ({ name, value }) => {
-  const secret = v.oneOf(name, ['gemini', 'updateToken'], 'secret');
+  const secret = v.oneOf(name, SECRET_NAMES, 'secret');
   secrets.set(secret, v.str(value, 'key', 400).trim());
   return secrets.describe(secret);
 });
 
 /* AI */
-handle('ai:test', () => gemini.testKey(secrets.get('gemini')));
-handle('ai:models', () => gemini.listModels(secrets.get('gemini')));
+handle('ai:providers', () => {
+  const config = getAiConfig();
+  return {
+    providers: aiProviders.describe(config.customBaseUrl).map((p) => ({
+      ...p,
+      key: secrets.describe(p.id),
+    })),
+    config,
+  };
+});
+
+handle('ai:test', ({ provider = 'gemini' } = {}) => {
+  const config = getAiConfig();
+  return aiProviders.get(v.oneOf(provider, aiProviders.PROVIDER_IDS, 'provider'), config.customBaseUrl)
+    .testKey(secrets.get(provider));
+});
+
+handle('ai:models', ({ provider = 'gemini' } = {}) => {
+  const config = getAiConfig();
+  return aiProviders.get(v.oneOf(provider, aiProviders.PROVIDER_IDS, 'provider'), config.customBaseUrl)
+    .listModels(secrets.get(provider));
+});
+
+handle('ai:setConfig', ({ image, vision, customBaseUrl }) => {
+  const clean = {
+    customBaseUrl: v.str(customBaseUrl, 'address', 400).trim(),
+    image: {
+      provider: v.oneOf(image?.provider ?? 'gemini', aiProviders.PROVIDER_IDS, 'image provider'),
+      model: v.modelName(image?.model ?? ''),
+    },
+    vision: {
+      provider: v.oneOf(vision?.provider ?? 'gemini', aiProviders.PROVIDER_IDS, 'vision provider'),
+      model: v.modelName(vision?.model ?? ''),
+    },
+  };
+  // A custom endpoint is the one address the tailor supplies, so it gets the
+  // same https-only treatment as the update feed.
+  if (clean.customBaseUrl && !/^https:\/\//i.test(clean.customBaseUrl)) {
+    throw new Error('A custom AI endpoint must be an https address.');
+  }
+  db.setSetting('aiConfig', clean);
+  return clean;
+});
 
 /**
  * Reference images are read here in main so file bytes never round-trip
@@ -485,12 +551,13 @@ function loadRefImages(refs, defaultScope) {
 handle('ai:render', async ({ projectId, prompt, view, refs = [], referenceIds = [], parentId, instruction, model }) => {
   const pid = v.id(projectId, 'projectId');
   const scope = storage.scopeForProject(pid);
-  const apiKey = secrets.get('gemini');
-  const imageModel = model ? v.modelName(model) : db.getSetting('imageModel', gemini.DEFAULTS.imageModel);
+  const config = getAiConfig();
+  const adapter = aiProviders.get(config.image.provider, config.customBaseUrl);
+  const imageModel = model ? v.modelName(model) : config.image.model;
 
   const images = loadRefImages(refs, scope);
-  const result = await gemini.generateImage({
-    apiKey,
+  const result = await adapter.generateImage({
+    apiKey: secrets.get(config.image.provider),
     model: imageModel,
     prompt: v.str(prompt, 'prompt', 20000),
     images,
@@ -501,8 +568,8 @@ handle('ai:render', async ({ projectId, prompt, view, refs = [], referenceIds = 
     projectId: pid,
     parentId: v.optionalId(parentId, 'parentId'),
     view: v.str(view, 'view', 40),
-    provider: 'gemini',
-    model: result.model,
+    provider: config.image.provider,
+    model: result.model ?? imageModel,
     prompt,
     instruction: v.str(instruction, 'instruction', 4000),
     filename,
@@ -518,12 +585,12 @@ handle('ai:render', async ({ projectId, prompt, view, refs = [], referenceIds = 
 
 handle('ai:analyse', async ({ projectId, prompt, refs = [], schema, model }) => {
   const pid = v.id(projectId, 'projectId');
-  const apiKey = secrets.get('gemini');
-  const visionModel = model ? v.modelName(model) : db.getSetting('visionModel', gemini.DEFAULTS.visionModel);
+  const config = getAiConfig();
+  const adapter = aiProviders.get(config.vision.provider, config.customBaseUrl);
   const images = loadRefImages(refs, storage.scopeForProject(pid));
-  return gemini.analyse({
-    apiKey,
-    model: visionModel,
+  return adapter.analyse({
+    apiKey: secrets.get(config.vision.provider),
+    model: model ? v.modelName(model) : config.vision.model,
     prompt: v.str(prompt, 'prompt', 20000),
     images,
     schema: v.jsonBlob(schema, 'schema', 32 * 1024),
@@ -640,6 +707,14 @@ handle('app:security', () => ({
   sandboxed: true,
   networkHosts: [
     ...security.ALLOWED_HOSTS,
+    ...(() => {
+      const config = getAiConfig();
+      const hosts = [];
+      if (config.image.provider === 'openai' || config.vision.provider === 'openai') hosts.push('api.openai.com');
+      if (config.image.provider === 'anthropic' || config.vision.provider === 'anthropic') hosts.push('api.anthropic.com');
+      if (config.customBaseUrl) { try { hosts.push(new URL(config.customBaseUrl).host); } catch { /* ignore */ } }
+      return hosts;
+    })(),
     (() => {
       try { return new URL(db.getSetting('updateFeed', DEFAULT_FEED) || DEFAULT_FEED).host; }
       catch { return null; }
