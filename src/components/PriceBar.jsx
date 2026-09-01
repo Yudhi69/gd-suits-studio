@@ -17,12 +17,12 @@ export default function PriceBar({ spec, overrides, right }) {
     <>
       <div className="price-bar">
         <div>
-          <div className="tiny" style={{ color: 'var(--on-dark-soft)', textTransform: 'uppercase', letterSpacing: '.08em' }}>
+          <div className="tiny" style={{ color: 'var(--sidebar-soft)', textTransform: 'uppercase', letterSpacing: '.08em' }}>
             Running total
           </div>
           <div className="price-total">{formatMoney(total)}</div>
         </div>
-        <button className="btn btn-sm" onClick={() => setOpen(true)} style={{ background: 'transparent', borderColor: 'var(--ink-line)', color: 'var(--on-dark)' }}>
+        <button className="btn btn-sm" onClick={() => setOpen(true)} style={{ background: 'transparent', borderColor: 'var(--sidebar-line)', color: 'var(--sidebar-text)' }}>
           {lines.length} line{lines.length === 1 ? '' : 's'} - view breakdown
         </button>
         <div style={{ flex: 1 }} />

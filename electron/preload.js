@@ -21,7 +21,7 @@ const CHANNELS = [
   'ai:test', 'ai:models', 'ai:render', 'ai:analyse',
   'renders:approve', 'renders:delete',
   'project:export',
-  'app:info', 'app:openDataFolder',
+  'app:info', 'app:openDataFolder', 'app:security',
 ];
 
 /**

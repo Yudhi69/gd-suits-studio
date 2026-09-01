@@ -67,7 +67,7 @@ export default function ColourSampler({ src, mode = 'skin', value, onPick, radiu
     <div className="stack">
       {error && <div className="banner banner-warn">{error}</div>}
 
-      <div style={{ position: 'relative' }}>
+      <div className="sampler-stage" style={{ position: 'relative' }}>
         <canvas
           ref={canvasRef}
           className="sampler-canvas"

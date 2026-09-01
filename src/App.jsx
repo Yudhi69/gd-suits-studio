@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from './lib/api.js';
+import { useTheme, THEMES } from './lib/useTheme.js';
 import brandLogo from './assets/logo-light.png';
 import { ToastProvider } from './components/ui.jsx';
 import Dashboard from './screens/Dashboard.jsx';
@@ -11,6 +12,7 @@ export default function App() {
   const [route, setRoute] = useState({ name: 'dashboard' });
   const [overrides, setOverrides] = useState({});
   const [keyState, setKeyState] = useState(null);
+  const theme = useTheme();
 
   useEffect(() => {
     (async () => {
@@ -46,6 +48,18 @@ export default function App() {
           </nav>
 
           <div className="sidebar-foot">
+            <div className="theme-switch" role="group" aria-label="Appearance">
+              {THEMES.map((t) => (
+                <button
+                  key={t.key}
+                  className={theme.preference === t.key ? 'active' : ''}
+                  aria-pressed={theme.preference === t.key}
+                  onClick={() => theme.choose(t.key)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
             <div>{keyState?.present ? 'AI rendering ready' : 'Offline mode - no API key'}</div>
             <div style={{ opacity: .6 }}>Local data, on this machine</div>
           </div>

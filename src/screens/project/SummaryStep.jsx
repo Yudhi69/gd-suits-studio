@@ -6,6 +6,21 @@ import { EVENT_TYPES, MEASUREMENTS } from '../../lib/catalog.js';
 import { useToast, Spinner } from '../../components/ui.jsx';
 
 /**
+ * The spec sheet is assembled as raw HTML and then written to disk, so every
+ * value that goes into it has to be escaped. A client name, a fitting note or
+ * an order title is free text typed by a person - without this, a name
+ * containing markup would execute when the exported file is opened in a
+ * browser.
+ */
+const esc = (value) =>
+  String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+/**
  * The client-facing summary: the full breakdown the brief asks the tailor to
  * be able to send over for approval, plus the export that writes the whole
  * client file out to a folder.
@@ -37,14 +52,14 @@ export default function SummaryStep({ ctx, overrides }) {
   function specSheetHtml() {
     const rows = sections
       .map(
-        (s) => `<h3>${s.title}</h3><table>${s.rows
-          .map((r) => `<tr><td class="k">${r.label}</td><td>${r.value}</td></tr>`)
+        (s) => `<h3>${esc(s.title)}</h3><table>${s.rows
+          .map((r) => `<tr><td class="k">${esc(r.label)}</td><td>${esc(r.value)}</td></tr>`)
           .join('')}</table>`
       )
       .join('');
 
     const priceRows = lines
-      .map((l) => `<tr><td class="k">${l.label}</td><td class="num">${formatMoney(l.amount)}</td></tr>`)
+      .map((l) => `<tr><td class="k">${esc(l.label)}</td><td class="num">${esc(formatMoney(l.amount))}</td></tr>`)
       .join('');
 
     const measureRows = Object.entries(MEASUREMENTS)
@@ -52,18 +67,18 @@ export default function SummaryStep({ ctx, overrides }) {
         const taken = group.fields
           .map((f) => {
             const m = project.measurements.find((x) => x.garment === key && x.field_id === f.id && x.value !== null);
-            return m ? `<tr><td class="k">${f.label}</td><td class="num">${m.value} cm</td></tr>` : '';
+            return m ? `<tr><td class="k">${esc(f.label)}</td><td class="num">${esc(m.value)} cm</td></tr>` : '';
           })
           .join('');
-        return taken ? `<h3>${group.label} measurements</h3><table>${taken}</table>` : '';
+        return taken ? `<h3>${esc(group.label)} measurements</h3><table>${taken}</table>` : '';
       })
       .join('');
 
     const images = approved
-      .map((r) => `<img src="images/${r.filename}" alt="Approved render" />`)
+      .map((r) => `<img src="images/${encodeURIComponent(r.filename)}" alt="Approved render" />`)
       .join('');
 
-    return `<!doctype html><html><head><meta charset="utf-8"><title>${project.name} ${project.surname} - ${project.title}</title>
+    return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(project.name)} ${esc(project.surname)} - ${esc(project.title)}</title>
 <style>
  body{font-family:Georgia,serif;max-width:820px;margin:40px auto;padding:0 24px;color:#14120f}
  h1{font-size:28px;margin:0 0 4px}
@@ -76,11 +91,11 @@ export default function SummaryStep({ ctx, overrides }) {
  .meta{font-family:system-ui;font-size:13px;color:#5d574c;margin-bottom:22px}
 </style></head><body>
 <img class="letterhead" src="images/gd-suits-logo.png" alt="GD Suits" onerror="this.style.display='none'">
-<h1>${project.name} ${project.surname}</h1>
+<h1>${esc(project.name)} ${esc(project.surname)}</h1>
 <div class="meta">
- <strong>${project.title}</strong><br>
- ${EVENT_TYPES.find((e) => e.key === project.event_type)?.label ?? ''} ${project.event_date ? `&middot; ${project.event_date}` : ''}<br>
- ${project.delivery_date ? `Delivery: ${project.delivery_date}` : ''}
+ <strong>${esc(project.title)}</strong><br>
+ ${esc(EVENT_TYPES.find((e) => e.key === project.event_type)?.label ?? '')} ${project.event_date ? `&middot; ${esc(project.event_date)}` : ''}<br>
+ ${project.delivery_date ? `Delivery: ${esc(project.delivery_date)}` : ''}
 </div>
 ${images ? `<h3>Approved design</h3>${images}` : ''}
 ${rows}

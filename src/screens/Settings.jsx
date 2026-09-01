@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api, messageFor } from '../lib/api.js';
 import { priceCatalogEntries, formatMoney } from '../lib/pricing.js';
 import { CURRENCY } from '../lib/catalog.js';
-import { Banner, DebouncedInput, SecretInput, Spinner, useToast } from '../components/ui.jsx';
+import { Banner, Collapsible, DebouncedInput, SecretInput, Spinner, useToast } from '../components/ui.jsx';
 
 export default function Settings({ overrides, onOverridesChanged, keyState, onKeyChanged }) {
   const [keyInput, setKeyInput] = useState('');
@@ -11,6 +11,7 @@ export default function Settings({ overrides, onOverridesChanged, keyState, onKe
   const [imageModel, setImageModel] = useState('');
   const [visionModel, setVisionModel] = useState('');
   const [info, setInfo] = useState(null);
+  const [posture, setPosture] = useState(null);
   const [tab, setTab] = useState('ai');
   const toast = useToast();
 
@@ -19,6 +20,7 @@ export default function Settings({ overrides, onOverridesChanged, keyState, onKe
       setImageModel(await api.settings.get({ key: 'imageModel', fallback: 'gemini-2.5-flash-image' }));
       setVisionModel(await api.settings.get({ key: 'visionModel', fallback: 'gemini-2.5-flash' }));
       setInfo(await api.app.info());
+      setPosture(await api.app.security().catch(() => null));
     })();
   }, []);
 
@@ -180,34 +182,44 @@ export default function Settings({ overrides, onOverridesChanged, keyState, onKe
               <p className="small muted" style={{ marginTop: 0 }}>
                 Every quote in the app is built from these numbers. Change one and every order recalculates.
               </p>
-              {Object.entries(grouped).map(([step, rows]) => (
-                <div key={step}>
-                  <div className="price-group-title">{step}</div>
-                  {rows.map((entry) => (
-                    <div className="measure-row" key={entry.key}>
-                      <div>
-                        <div style={{ fontWeight: 600 }}>{entry.label}</div>
-                        <div className="tiny faint">
-                          {entry.isBase ? 'Base garment price' : 'Added when selected'} · default {formatMoney(entry.defaultAmount)}
+              {Object.entries(grouped).map(([step, rows]) => {
+                const changed = rows.filter((r) => typeof overrides[r.key] === 'number').length;
+                return (
+                  <Collapsible
+                    key={step}
+                    title={step}
+                    summary={
+                      changed
+                        ? `${rows.length} items · ${changed} changed`
+                        : `${rows.length} items`
+                    }
+                  >
+                    {rows.map((entry) => (
+                      <div className="measure-row" key={entry.key}>
+                        <div>
+                          <div style={{ fontWeight: 600 }}>{entry.label}</div>
+                          <div className="tiny faint">
+                            {entry.isBase ? 'Base garment price' : 'Added when selected'} · default {formatMoney(entry.defaultAmount)}
+                          </div>
                         </div>
+                        <DebouncedInput
+                          type="number"
+                          className="input measure-input"
+                          placeholder={String(entry.defaultAmount)}
+                          value={overrides[entry.key] ?? ''}
+                          onCommit={async (v) => {
+                            const next = { ...overrides };
+                            if (v === '') delete next[entry.key];
+                            else next[entry.key] = Number(v);
+                            await api.settings.set({ key: 'priceOverrides', value: next });
+                            onOverridesChanged(next);
+                          }}
+                        />
                       </div>
-                      <DebouncedInput
-                        type="number"
-                        className="input measure-input"
-                        placeholder={String(entry.defaultAmount)}
-                        value={overrides[entry.key] ?? ''}
-                        onCommit={async (v) => {
-                          const next = { ...overrides };
-                          if (v === '') delete next[entry.key];
-                          else next[entry.key] = Number(v);
-                          await api.settings.set({ key: 'priceOverrides', value: next });
-                          onOverridesChanged(next);
-                        }}
-                      />
-                    </div>
-                  ))}
-                </div>
-              ))}
+                    ))}
+                  </Collapsible>
+                );
+              })}
             </div>
           </div>
         )}
@@ -226,6 +238,34 @@ export default function Settings({ overrides, onOverridesChanged, keyState, onKe
                 Back the folder up and the whole shop's history travels with it.
               </p>
               <button className="btn" onClick={() => api.app.openDataFolder()}>Open data folder</button>
+
+              <hr className="divider" />
+              <h3 style={{ fontSize: 15, marginBottom: 8 }}>Security</h3>
+              <div className="price-line">
+                <span className="muted">API key storage</span>
+                <span className={`pill ${posture?.keyEncrypted ? 'pill-ok' : 'pill-warn'}`}>
+                  {posture?.keyEncrypted ? 'Encrypted by the OS keychain' : 'Not encrypted - no OS keychain'}
+                </span>
+              </div>
+              <div className="price-line">
+                <span className="muted">Interface isolation</span>
+                <span className="pill pill-ok">Sandboxed, no system access</span>
+              </div>
+              <div className="price-line">
+                <span className="muted">Outbound connections</span>
+                <span className="small mono">{(posture?.networkHosts ?? []).join(', ') || 'none'}</span>
+              </div>
+              <Banner kind="warn">
+                <div>
+                  <strong>Client photographs and contact details are personal information.</strong>
+                  <div className="small" style={{ marginTop: 4 }}>
+                    They are held unencrypted in the data folder, so the machine's own disk encryption is what
+                    protects them if it is lost or stolen - turn on FileVault on a Mac, or BitLocker on Windows.
+                    Pressing Render sends the client's photo and the fabric image to Google; get the client's
+                    agreement before you do, and delete their file when you no longer need it.
+                  </div>
+                </div>
+              </Banner>
             </div>
           </div>
         )}

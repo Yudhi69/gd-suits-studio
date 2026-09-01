@@ -149,6 +149,31 @@ export function SecretInput({ value, onChange, placeholder, autoFocus, onEnter }
   );
 }
 
+/**
+ * A collapsible section. The price list runs to dozens of rows across six
+ * garment areas, so it opens collapsed with a summary on each header - the
+ * tailor finds the one category they came to change instead of scrolling past
+ * everything else.
+ */
+export function Collapsible({ title, summary, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <div className={`collapsible ${open ? 'open' : ''}`}>
+      <button className="collapsible-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        <span className="collapsible-caret" aria-hidden="true">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="9 5 16 12 9 19" />
+          </svg>
+        </span>
+        <span className="collapsible-title">{title}</span>
+        {summary && <span className="collapsible-summary">{summary}</span>}
+      </button>
+      {open && <div className="collapsible-body">{children}</div>}
+    </div>
+  );
+}
+
 /** Text input that commits on blur, so typing does not hit the database on every keystroke. */
 export function DebouncedInput({ value, onCommit, as = 'input', ...rest }) {
   const [local, setLocal] = useState(value ?? '');

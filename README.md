@@ -145,16 +145,100 @@ scripts/           headless tests (see below)
 
 ---
 
+## Appearance
+
+Light, dark, or follow the system — the switch is at the bottom of the sidebar.
+"System" keeps following: the OS media query is watched, so a machine that
+flips to dark at sunset takes the app with it.
+
+One deliberate exception runs through both themes. The surfaces used to **judge
+colour** — the photo frames, the swatch previews and the colour sampler — are
+held to a strictly neutral grey rather than the warm off-white used everywhere
+else. A warm ground behind a fabric swatch or a client's face biases exactly
+the judgement this app exists to support.
+
+---
+
 ## Tests
 
 ```bash
+npm test              # security checks, then the render pipeline
+npm run test:security # proves the hardening actually blocks attacks
 npm run test:render   # drives the whole render pipeline with the network stubbed
 npm run test:tour     # boots the UI, walks every step, writes screenshots
 ```
 
-`test:render` needs no API key — it intercepts the outbound call and checks the
-request shape, that the returned image is stored and served back, that a tweak
-chains to its parent, and that reference usage is recorded.
+Neither needs an API key. `test:render` intercepts the outbound call and checks
+the request shape, that the returned image is stored and served back, that a
+tweak chains to its parent, and that reference usage is recorded.
+`test:security` attempts real attacks — path traversal, id injection, a
+disguised HTML payload, renderer network egress — and fails if any succeeds.
+
+---
+
+## Security
+
+The renderer is treated as untrusted. The realistic threat is not a targeted
+attacker; it is a hostile string arriving through a client name, a fitting note
+or — most plausibly — text returned by the AI. These controls are what stop
+that becoming access to the tailor's machine or their client files.
+
+**Process isolation**
+- `sandbox: true`, `contextIsolation: true`, `nodeIntegration: false`. There are
+  no Node primitives in the renderer at all.
+- The preload exposes one explicit channel list and nothing else. Results cross
+  as plain objects, so no live object graph is shared.
+
+**Network** — the renderer has none. The single outbound call lives in the main
+process, so *any* request originating in the renderer is either a bug or
+exfiltration, and is blocked outright. `generativelanguage.googleapis.com` is
+the only host the app ever contacts.
+
+**Navigation and devices** — navigation away from the bundled app is refused,
+`<webview>` is blocked, links open in the real browser only after their scheme
+is checked, and every device permission is denied except the camera.
+
+**Content Security Policy** — production runs `default-src 'none'` with no
+inline script and no `eval`. The looser policy Vite's HMR needs applies only in
+development, which is why the two are kept separate.
+
+**Input validation** — every value crossing IPC is checked in `electron/validate.js`:
+ids must be positive integers, filenames must match the generated shape,
+media scopes must be `project-<n>` or `client-<n>`, uploads must really be
+images and under 12 MB, and model names cannot contain path characters.
+Path traversal is impossible before it reaches the filesystem.
+
+**SQL** — every query is parameterised. The two places that build a statement
+dynamically assemble it from a fixed allowlist of column names, never from
+input.
+
+**Exported spec sheets** — the export is assembled as raw HTML, so every
+interpolated value is escaped. Without that, a client whose name contained
+markup would produce a file that executed it when opened.
+
+**Secrets** — the API key is encrypted with the OS keychain (Keychain /
+DPAPI), written `0600`, and never crosses into the renderer; the UI only ever
+sees a masked hint.
+
+### What is *not* covered
+
+- **Client data is not encrypted at rest.** Photographs, measurements and
+  contact details sit in a plain SQLite database and image files, with the
+  folder restricted to the owner. If a laptop is lost, **full-disk encryption
+  is what protects that data** — turn on FileVault (Mac) or BitLocker
+  (Windows). This is stated in Settings → About & data as well.
+- **Rendering sends client photographs to Google.** That is the point of the
+  feature, but it is personal information leaving the country, so get the
+  client's agreement first. Under POPIA that consent should be informed and
+  recorded, and a client's file should be deleted once there is no longer a
+  reason to keep it — deleting a client removes their orders, photos,
+  references and renders.
+- **Builds are ad-hoc signed, not notarised** (see *Signing*).
+- `npm audit` reports **0 vulnerabilities in what ships**. There are advisories
+  in `electron-builder`'s own dependency tree — build tooling only, mostly in
+  `electron-updater`, which this app does not use. Clearing them needs a major
+  `electron-builder` upgrade; the build chain here is verified working, so that
+  is a deliberate deferral rather than an oversight.
 
 ---
 

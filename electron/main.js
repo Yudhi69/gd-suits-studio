@@ -3,12 +3,14 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
-const { app, BrowserWindow, protocol, ipcMain, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, protocol, ipcMain, dialog, shell, Menu, nativeTheme } = require('electron');
 
 const db = require('./db');
 const storage = require('./storage');
 const secrets = require('./secrets');
 const gemini = require('./ai/gemini');
+const security = require('./security');
+const v = require('./validate');
 
 const isDev = process.env.NODE_ENV === 'development';
 const DEV_URL = 'http://localhost:5173';
@@ -26,20 +28,41 @@ let mainWindow = null;
 /** Single place that builds a media URL, matching the protocol handler above. */
 const mediaUrl = (scope, filename) => `gdmedia://media/${scope}/${encodeURIComponent(filename)}`;
 
+/**
+ * The window paints its background before the renderer has loaded, so it is
+ * set from the saved preference. Without this a tailor on the light theme gets
+ * a black flash on every launch.
+ */
+function startupBackground() {
+  const preference = db.getSetting('theme', 'system');
+  const dark = preference === 'dark' || (preference === 'system' && nativeTheme.shouldUseDarkColors);
+  return dark ? '#121110' : '#f4f2ee';
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 940,
     minWidth: 1080,
     minHeight: 720,
-    backgroundColor: '#12100e',
+    backgroundColor: startupBackground(),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      // The renderer is treated as untrusted: no Node, isolated context, and
+      // run inside the OS sandbox. The preload only needs `electron`, which
+      // sandboxed preloads still get, so nothing here depends on Node access.
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      nodeIntegrationInWorker: false,
+      nodeIntegrationInSubFrames: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      experimentalFeatures: false,
+      webviewTag: false,
+      spellcheck: true,
     },
   });
 
@@ -51,11 +74,7 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 
-  // Anything that tries to open a new window goes to the real browser instead.
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/.test(url)) shell.openExternal(url);
-    return { action: 'deny' };
-  });
+  security.hardenWindow(mainWindow, isDev);
 }
 
 function buildMenu() {
@@ -113,10 +132,23 @@ function logLine(message) {
 function startup() {
   const userData = app.getPath('userData');
   logLine(`startup begin - userData=${userData} packaged=${app.isPackaged}`);
+
+  security.hardenSession(isDev);
+
   db.open(userData);
   logLine('database opened');
   storage.init(userData);
   secrets.init(userData);
+
+  // Client photographs, measurements and contact details are personal data.
+  // Keep the whole store owner-only rather than relying on the default umask.
+  for (const dir of [path.join(userData, 'data'), path.join(userData, 'media')]) {
+    try {
+      fs.chmodSync(dir, 0o700);
+    } catch {
+      /* best effort - Windows ACLs do not map onto POSIX modes */
+    }
+  }
   logLine('storage and secrets ready');
 
   protocol.handle('gdmedia', async (request) => {
@@ -187,128 +219,245 @@ function handle(channel, fn) {
 
 /* clients + projects */
 handle('clients:list', () => db.listClients());
-handle('clients:save', (c) => db.upsertClient(c));
-handle('clients:delete', ({ id }) => db.deleteClient(id));
+handle('clients:get', ({ id }) => db.getClient(v.id(id)));
+handle('clients:save', (c) => db.upsertClient({
+  id: v.optionalId(c.id),
+  name: v.str(c.name, 'name', 120),
+  surname: v.str(c.surname, 'surname', 120),
+  contact: v.str(c.contact, 'contact number', 60),
+  email: v.str(c.email, 'email', 200),
+  profile: v.jsonBlob(c.profile, 'profile', 64 * 1024),
+}));
+handle('clients:delete', ({ id }) => {
+  const clientId = v.id(id);
+  // Media is filed per project and per client, so both have to go for a
+  // deletion to actually be a deletion.
+  for (const project of db.listProjects(clientId)) {
+    storage.deleteScopeMedia(storage.scopeForProject(project.id));
+  }
+  storage.deleteScopeMedia(storage.scopeForClient(clientId));
+  db.deleteClient(clientId);
+});
 
-handle('projects:list', ({ clientId } = {}) => db.listProjects(clientId));
-handle('projects:get', ({ id }) => db.getProject(id));
-handle('projects:create', (p) => db.createProject(p));
-handle('projects:update', ({ id, patch }) => db.updateProject(id, patch));
+handle('projects:list', ({ clientId } = {}) => db.listProjects(v.optionalId(clientId, 'clientId')));
+handle('projects:get', ({ id }) => db.getProject(v.id(id)));
+handle('projects:create', (p) => db.createProject({
+  clientId: v.id(p.clientId, 'clientId'),
+  title: v.str(p.title, 'title', 160),
+  eventType: v.str(p.eventType, 'eventType', 40),
+  eventOther: v.str(p.eventOther, 'eventOther', 200),
+  eventDate: v.str(p.eventDate, 'eventDate', 40),
+  deliveryDate: v.str(p.deliveryDate, 'deliveryDate', 40),
+}));
+handle('projects:update', ({ id, patch = {} }) => {
+  const clean = {};
+  if (patch.title !== undefined) clean.title = v.str(patch.title, 'title', 160);
+  if (patch.event_type !== undefined) clean.event_type = v.str(patch.event_type, 'event type', 40);
+  if (patch.event_other !== undefined) clean.event_other = v.str(patch.event_other, 'event detail', 200);
+  if (patch.event_date !== undefined) clean.event_date = v.str(patch.event_date, 'event date', 40);
+  if (patch.delivery_date !== undefined) clean.delivery_date = v.str(patch.delivery_date, 'delivery date', 40);
+  if (patch.status !== undefined) clean.status = v.oneOf(patch.status, v.PROJECT_STATUSES, 'status');
+  if (patch.spec !== undefined) clean.spec = v.jsonBlob(patch.spec, 'spec');
+  if (patch.analysis !== undefined) clean.analysis = v.jsonBlob(patch.analysis, 'analysis');
+  return db.updateProject(v.id(id), clean);
+});
 handle('projects:delete', ({ id }) => {
-  db.deleteProject(id);
-  storage.deleteScopeMedia(storage.scopeForProject(id));
+  const projectId = v.id(id);
+  db.deleteProject(projectId);
+  storage.deleteScopeMedia(storage.scopeForProject(projectId));
 });
 
 /* photos */
 handle('photos:add', ({ projectId, slot, dataUrl, garment, fittingId, meta }) => {
-  const scope = storage.scopeForProject(projectId);
-  const { filename, mime } = storage.saveDataUrl(scope, dataUrl, slot);
-  const id = db.addPhoto({ projectId, slot, filename, mime, garment, fittingId, meta });
-  return { id, filename, mime, scope, url: mediaUrl(scope, filename) };
+  const pid = v.id(projectId, 'projectId');
+  const scope = storage.scopeForProject(pid);
+  const saved = storage.saveDataUrl(scope, v.dataUrl(dataUrl), v.oneOf(slot, v.PHOTO_SLOTS, 'slot'));
+  const id = db.addPhoto({
+    projectId: pid,
+    slot: v.oneOf(slot, v.PHOTO_SLOTS, 'slot'),
+    filename: saved.filename,
+    mime: saved.mime,
+    garment: v.oneOf(garment, v.GARMENTS, 'garment'),
+    fittingId: v.optionalId(fittingId, 'fittingId'),
+    meta: v.jsonBlob(meta, 'meta', 8 * 1024) ?? {},
+  });
+  return { id, filename: saved.filename, mime: saved.mime, scope, url: mediaUrl(scope, saved.filename) };
 });
 handle('photos:delete', ({ id }) => {
-  const row = db.deletePhoto(id);
+  const row = db.deletePhoto(v.id(id));
   if (row) storage.deleteImage(storage.scopeForProject(row.project_id), row.filename);
 });
-handle('photos:meta', ({ id, meta }) => db.updatePhotoMeta(id, meta));
+handle('photos:meta', ({ id, meta }) => db.updatePhotoMeta(v.id(id), v.jsonBlob(meta, 'meta', 8 * 1024) ?? {}));
 
 /* client style-reference library - lives on the client, not the order */
 handle('references:add', ({ clientId, projectId, dataUrl, kind, title, notes, tags }) => {
-  const scope = storage.scopeForClient(clientId);
-  const { filename, mime } = storage.saveDataUrl(scope, dataUrl, 'ref');
-  const id = db.addReference({ clientId, projectId, filename, mime, kind, title, notes, tags });
-  return { id, filename, mime, scope, url: mediaUrl(scope, filename) };
+  const cid = v.id(clientId, 'clientId');
+  const scope = storage.scopeForClient(cid);
+  const saved = storage.saveDataUrl(scope, v.dataUrl(dataUrl), 'ref');
+  const id = db.addReference({
+    clientId: cid,
+    projectId: v.optionalId(projectId, 'projectId'),
+    filename: saved.filename,
+    mime: saved.mime,
+    kind: v.oneOf(kind, v.REFERENCE_KINDS, 'kind') || 'style',
+    title: v.str(title, 'title', 160),
+    notes: v.str(notes, 'notes', 4000),
+    tags: v.str(tags, 'tags', 400),
+  });
+  return { id, filename: saved.filename, mime: saved.mime, scope, url: mediaUrl(scope, saved.filename) };
 });
 handle('references:list', ({ clientId }) => {
-  const scope = storage.scopeForClient(clientId);
-  return db.listReferences(clientId).map((r) => ({ ...r, scope, url: mediaUrl(scope, r.filename) }));
+  const cid = v.id(clientId, 'clientId');
+  const scope = storage.scopeForClient(cid);
+  return db.listReferences(cid).map((r) => ({ ...r, scope, url: mediaUrl(scope, r.filename) }));
 });
-handle('references:update', ({ id, ...patch }) => db.updateReference(id, patch));
+handle('references:update', ({ id, title, notes, tags, kind, favourite }) => db.updateReference(v.id(id), {
+  title: title === undefined ? undefined : v.str(title, 'title', 160),
+  notes: notes === undefined ? undefined : v.str(notes, 'notes', 4000),
+  tags: tags === undefined ? undefined : v.str(tags, 'tags', 400),
+  kind: kind === undefined ? undefined : v.oneOf(kind, v.REFERENCE_KINDS, 'kind'),
+  favourite,
+}));
 handle('references:delete', ({ id }) => {
-  const row = db.deleteReference(id);
+  const row = db.deleteReference(v.id(id));
   if (row) storage.deleteImage(storage.scopeForClient(row.client_id), row.filename);
 });
-handle('references:history', ({ clientId }) => db.styleHistory(clientId));
+handle('references:history', ({ clientId }) => db.styleHistory(v.id(clientId, 'clientId')));
 
 /* client-level body measurements, carried between orders */
-handle('clients:get', ({ id }) => db.getClient(id));
-handle('clientMeasurements:save', (m) => db.saveClientMeasurement(m));
-handle('clientMeasurements:list', ({ clientId }) => db.listClientMeasurements(clientId));
-handle('measurements:seedFromClient', ({ projectId, clientId }) => db.seedMeasurementsFromClient(projectId, clientId));
+handle('clientMeasurements:save', (m) => db.saveClientMeasurement({
+  clientId: v.id(m.clientId, 'clientId'),
+  garment: v.oneOf(m.garment, v.GARMENTS, 'garment'),
+  fieldId: v.str(m.fieldId, 'fieldId', 60),
+  value: v.num(m.value, 'measurement', { min: 0, max: 500 }),
+  unit: v.oneOf(m.unit ?? 'cm', ['cm', 'in'], 'unit'),
+}));
+handle('clientMeasurements:list', ({ clientId }) => db.listClientMeasurements(v.id(clientId, 'clientId')));
+handle('measurements:seedFromClient', ({ projectId, clientId }) =>
+  db.seedMeasurementsFromClient(v.id(projectId, 'projectId'), v.id(clientId, 'clientId')));
 
 /* notes, measurements, fittings */
-handle('notes:add', (n) => db.addNote(n));
-handle('notes:delete', ({ id }) => db.deleteNote(id));
-handle('measurements:save', (m) => db.saveMeasurement(m));
-handle('fittings:add', (f) => db.addFitting(f));
-handle('fittings:update', ({ id, ...rest }) => db.updateFitting(id, rest));
-handle('fittings:delete', ({ id }) => db.deleteFitting(id));
+handle('notes:add', (n) => db.addNote({
+  projectId: v.id(n.projectId, 'projectId'),
+  step: v.str(n.step, 'step', 40),
+  body: v.str(n.body, 'note', 20000),
+  author: v.str(n.author, 'author', 60),
+}));
+handle('notes:delete', ({ id }) => db.deleteNote(v.id(id)));
+handle('measurements:save', (m) => db.saveMeasurement({
+  projectId: v.id(m.projectId, 'projectId'),
+  garment: v.oneOf(m.garment, v.GARMENTS, 'garment'),
+  fieldId: v.str(m.fieldId, 'fieldId', 60),
+  value: v.num(m.value, 'measurement', { min: 0, max: 500 }),
+  unit: v.oneOf(m.unit ?? 'cm', ['cm', 'in'], 'unit'),
+  source: v.str(m.source, 'source', 40),
+}));
+handle('fittings:add', (f) => db.addFitting({
+  projectId: v.id(f.projectId, 'projectId'),
+  tailorNotes: v.str(f.tailorNotes, 'notes', 20000),
+  clientNotes: v.str(f.clientNotes, 'notes', 20000),
+}));
+handle('fittings:update', ({ id, tailorNotes, clientNotes }) => db.updateFitting(v.id(id), {
+  tailorNotes: v.str(tailorNotes, 'notes', 20000),
+  clientNotes: v.str(clientNotes, 'notes', 20000),
+}));
+handle('fittings:delete', ({ id }) => db.deleteFitting(v.id(id)));
 
 /* settings + secrets */
-handle('settings:get', ({ key, fallback }) => db.getSetting(key, fallback ?? null));
-handle('settings:set', ({ key, value }) => db.setSetting(key, value));
-handle('secrets:describe', ({ name }) => secrets.describe(name));
+const SETTING_KEYS = ['priceOverrides', 'imageModel', 'visionModel', 'theme'];
+handle('settings:get', ({ key, fallback }) => db.getSetting(v.oneOf(key, SETTING_KEYS, 'setting'), fallback ?? null));
+handle('settings:set', ({ key, value }) => {
+  const name = v.oneOf(key, SETTING_KEYS, 'setting');
+  if (name === 'imageModel' || name === 'visionModel') return db.setSetting(name, v.modelName(value));
+  if (name === 'theme') return db.setSetting(name, v.oneOf(value, ['system', 'light', 'dark'], 'theme'));
+  return db.setSetting(name, v.jsonBlob(value, 'value', 128 * 1024));
+});
+handle('secrets:describe', ({ name }) => secrets.describe(v.oneOf(name, ['gemini'], 'secret')));
 handle('secrets:set', ({ name, value }) => {
-  secrets.set(name, value);
-  return secrets.describe(name);
+  const secret = v.oneOf(name, ['gemini'], 'secret');
+  secrets.set(secret, v.str(value, 'key', 400).trim());
+  return secrets.describe(secret);
 });
 
 /* AI */
 handle('ai:test', () => gemini.testKey(secrets.get('gemini')));
 handle('ai:models', () => gemini.listModels(secrets.get('gemini')));
 
+/**
+ * Reference images are read here in main so file bytes never round-trip
+ * through the renderer just to be sent back out again. Every filename and
+ * scope is validated first, so a compromised renderer cannot use this to read
+ * arbitrary files off the disk.
+ */
+function loadRefImages(refs, defaultScope) {
+  if (!Array.isArray(refs)) v.str(refs, 'refs');
+  if (refs.length > 8) throw new v.ValidationError('Too many reference images (limit 8)');
+  return refs.map((ref) => {
+    const scope = ref.scope ? v.scope(ref.scope) : defaultScope;
+    const filename = v.filename(ref.filename);
+    return { mime: storage.mimeForFile(filename), base64: storage.readAsBase64(scope, filename) };
+  });
+}
+
 handle('ai:render', async ({ projectId, prompt, view, refs = [], referenceIds = [], parentId, instruction, model }) => {
+  const pid = v.id(projectId, 'projectId');
+  const scope = storage.scopeForProject(pid);
   const apiKey = secrets.get('gemini');
-  const imageModel = model || db.getSetting('imageModel', gemini.DEFAULTS.imageModel);
+  const imageModel = model ? v.modelName(model) : db.getSetting('imageModel', gemini.DEFAULTS.imageModel);
 
-  // Reference images are read here in main so file bytes never round-trip
-  // through the renderer just to be sent back out again. `scope` is the media
-  // folder: a project id for capture photos, `client-<id>` for the style library.
-  const images = refs.map((ref) => ({
-    mime: ref.mime ?? storage.mimeForFile(ref.filename),
-    base64: storage.readAsBase64(ref.scope ?? storage.scopeForProject(projectId), ref.filename),
-  }));
-
-  const scope = storage.scopeForProject(projectId);
-  const result = await gemini.generateImage({ apiKey, model: imageModel, prompt, images });
+  const images = loadRefImages(refs, scope);
+  const result = await gemini.generateImage({
+    apiKey,
+    model: imageModel,
+    prompt: v.str(prompt, 'prompt', 20000),
+    images,
+  });
   const filename = storage.saveImage(scope, Buffer.from(result.base64, 'base64'), result.mime, 'render');
 
   const id = db.addRender({
-    projectId,
-    parentId,
-    view,
+    projectId: pid,
+    parentId: v.optionalId(parentId, 'parentId'),
+    view: v.str(view, 'view', 40),
     provider: 'gemini',
     model: result.model,
     prompt,
-    instruction: instruction ?? '',
+    instruction: v.str(instruction, 'instruction', 4000),
     filename,
   });
 
   // Record which style references fed this render, so the client's taste
   // history is evidence from real orders rather than a guess.
-  if (referenceIds.length) db.linkRenderRefs(id, referenceIds);
+  const ids = referenceIds.slice(0, 8).map((r) => v.id(r, 'referenceId'));
+  if (ids.length) db.linkRenderRefs(id, ids);
 
   return { id, filename, scope, url: mediaUrl(scope, filename), notes: result.notes, model: result.model };
 });
 
 handle('ai:analyse', async ({ projectId, prompt, refs = [], schema, model }) => {
+  const pid = v.id(projectId, 'projectId');
   const apiKey = secrets.get('gemini');
-  const visionModel = model || db.getSetting('visionModel', gemini.DEFAULTS.visionModel);
-  const images = refs.map((ref) => ({
-    mime: ref.mime ?? storage.mimeForFile(ref.filename),
-    base64: storage.readAsBase64(ref.scope ?? storage.scopeForProject(projectId), ref.filename),
-  }));
-  return gemini.analyse({ apiKey, model: visionModel, prompt, images, schema });
+  const visionModel = model ? v.modelName(model) : db.getSetting('visionModel', gemini.DEFAULTS.visionModel);
+  const images = loadRefImages(refs, storage.scopeForProject(pid));
+  return gemini.analyse({
+    apiKey,
+    model: visionModel,
+    prompt: v.str(prompt, 'prompt', 20000),
+    images,
+    schema: v.jsonBlob(schema, 'schema', 32 * 1024),
+  });
 });
 
-handle('renders:approve', ({ id, approved }) => db.setRenderApproved(id, approved));
+
+handle('renders:approve', ({ id, approved }) => db.setRenderApproved(v.id(id), !!approved));
 handle('renders:delete', ({ id }) => {
-  const row = db.deleteRender(id);
+  const row = db.deleteRender(v.id(id));
   if (row) storage.deleteImage(storage.scopeForProject(row.project_id), row.filename);
 });
 
 /* export - the "client file" the brief asks the system to keep */
 handle('project:export', async ({ projectId, html }) => {
+  projectId = v.id(projectId, 'projectId');
+  html = v.str(html, 'spec sheet', 4 * 1024 * 1024);
   const project = db.getProject(projectId);
   if (!project) throw new Error('Project not found');
 
@@ -375,3 +524,14 @@ handle('app:info', () => ({
 }));
 
 handle('app:openDataFolder', () => shell.openPath(app.getPath('userData')));
+
+/**
+ * What the app can tell the user about how their data is held. Surfaced in
+ * Settings so the position is visible rather than buried in a README.
+ */
+handle('app:security', () => ({
+  userData: app.getPath('userData'),
+  keyEncrypted: secrets.describe('gemini').encrypted,
+  sandboxed: true,
+  networkHosts: [...security.ALLOWED_HOSTS],
+}));

@@ -119,7 +119,7 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey }) {
               <>
                 <button
                   className="btn btn-sm"
-                  style={{ background: 'transparent', borderColor: 'var(--ink-line)', color: 'var(--on-dark)' }}
+                  style={{ background: 'transparent', borderColor: 'var(--sidebar-line)', color: 'var(--sidebar-text)' }}
                   disabled={index <= 0}
                   onClick={() => setStepKey(steps[index - 1].key)}
                 >
