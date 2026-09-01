@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { STEPS, isVisible } from '../lib/catalog.js';
 import { useProject } from '../lib/useProject.js';
 import PriceBar from '../components/PriceBar.jsx';
+import Stepper from '../components/Stepper.jsx';
 import { Spinner, Banner } from '../components/ui.jsx';
 
 import ClientStep from './project/ClientStep.jsx';
@@ -23,16 +24,7 @@ import SummaryStep from './project/SummaryStep.jsx';
 export default function ProjectView({ projectId, onBack, overrides, hasKey }) {
   const ctx = useProject(projectId);
   const [stepKey, setStepKey] = useState('client');
-  const stepperRef = useRef(null);
   const { project, loading, error } = ctx;
-
-  // The stepper scrolls horizontally once there are enough steps; keep the
-  // current one on screen so the tailor can always see where they are.
-  useEffect(() => {
-    stepperRef.current
-      ?.querySelector('.step-tab.active')
-      ?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
-  }, [stepKey]);
 
   const steps = useMemo(() => {
     if (!project) return [];
@@ -96,17 +88,19 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey }) {
       </div>
 
       <div className="content wide">
-        <div className="stepper" ref={stepperRef} style={{ marginBottom: 20 }}>
-          {steps.map((s, i) => (
-            <button
-              key={s.key}
-              className={`step-tab ${s.key === current.key ? 'active' : ''} ${s.done ? 'done' : ''}`}
-              onClick={() => setStepKey(s.key)}
-            >
-              <span className="num">{s.done && s.key !== current.key ? '✓' : i + 1}</span>
-              {s.title}
-            </button>
-          ))}
+        <div style={{ marginBottom: 20 }}>
+          <Stepper scrollKey={current.key}>
+            {steps.map((s, i) => (
+              <button
+                key={s.key}
+                className={`step-tab ${s.key === current.key ? 'active' : ''} ${s.done ? 'done' : ''}`}
+                onClick={() => setStepKey(s.key)}
+              >
+                <span className="num">{s.done && s.key !== current.key ? '✓' : i + 1}</span>
+                {s.title}
+              </button>
+            ))}
+          </Stepper>
         </div>
 
         {body()}

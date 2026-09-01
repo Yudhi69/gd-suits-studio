@@ -384,9 +384,29 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* -------------------------------------------------------------- stepper */
 
+.stepper-shell { display: flex; align-items: stretch; gap: 6px; min-width: 0; }
+.stepper-shell .stepper { flex: 1; min-width: 0; }
+
+.stepper-arrow {
+  flex: none; width: 30px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--surface-3);
+  color: var(--text-soft); cursor: pointer;
+  display: grid; place-items: center;
+  transition: background .12s, color .12s, opacity .12s;
+}
+.stepper-arrow:hover:not(:disabled) { background: var(--card); color: var(--text); border-color: var(--gold); }
+.stepper-arrow:disabled { opacity: .3; cursor: default; }
+
 .stepper {
   display: flex; gap: 4px; overflow-x: auto; padding: 4px;
   background: var(--surface-3); border-radius: 10px; border: 1px solid var(--line);
+  scroll-behavior: smooth;
+}
+/* A soft edge so a half-visible tab reads as "there is more this way". */
+.stepper.fade-left { mask-image: linear-gradient(90deg, transparent 0, #000 26px); }
+.stepper.fade-right { mask-image: linear-gradient(270deg, transparent 0, #000 26px); }
+.stepper.fade-left.fade-right {
+  mask-image: linear-gradient(90deg, transparent 0, #000 26px, #000 calc(100% - 26px), transparent 100%);
 }
 .stepper::-webkit-scrollbar { height: 0; }
 .step-tab {
