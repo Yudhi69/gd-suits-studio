@@ -4,9 +4,9 @@ import { Modal } from './ui.jsx';
 
 /** Running total, always visible while the tailor builds - the brief's
  *  "all custom selections must dynamically add to the total price". */
-export default function PriceBar({ spec, overrides, right }) {
+export default function PriceBar({ spec, overrides, right, steps }) {
   const [open, setOpen] = useState(false);
-  const { lines, total } = buildBreakdown(spec, overrides);
+  const { lines, total } = buildBreakdown(spec, overrides, steps);
 
   const groups = lines.reduce((acc, line) => {
     (acc[line.group] ??= []).push(line);

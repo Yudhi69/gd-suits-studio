@@ -1,4 +1,4 @@
-import { STEPS, ALL_FIELDS, CURRENCY, isVisible } from './catalog.js';
+import { STEPS, CURRENCY, isVisible, allFieldsOf } from './catalog.js';
 
 /**
  * Price overrides are stored as a flat map so the tailor can retune the price
@@ -25,10 +25,10 @@ function resolve(overrides, key, fallback) {
  * Only visible fields are charged - hiding a field (e.g. waistcoat options on a
  * 2-piece) must never leave a stale charge on the invoice.
  */
-export function buildBreakdown(spec = {}, overrides = {}) {
+export function buildBreakdown(spec = {}, overrides = {}, steps = STEPS) {
   const lines = [];
 
-  for (const step of STEPS) {
+  for (const step of steps) {
     if (!isVisible(step, spec)) continue;
 
     for (const field of step.fields) {
@@ -83,9 +83,9 @@ export function formatMoney(amount) {
 }
 
 /** Every price the tailor can override, for the Settings price-list editor. */
-export function priceCatalogEntries() {
+export function priceCatalogEntries(steps = STEPS) {
   const entries = [];
-  for (const field of ALL_FIELDS) {
+  for (const field of allFieldsOf(steps)) {
     if (field.type === 'choice') {
       for (const opt of field.options ?? []) {
         const base = typeof opt.basePrice === 'number' ? opt.basePrice : opt.price ?? 0;
@@ -95,6 +95,8 @@ export function priceCatalogEntries() {
           step: field.step,
           isBase: typeof opt.basePrice === 'number',
           defaultAmount: base,
+          custom: !!field.custom,
+          itemId: field.itemId,
         });
       }
     } else if (field.price) {
@@ -104,6 +106,8 @@ export function priceCatalogEntries() {
         step: field.step,
         isBase: false,
         defaultAmount: field.price,
+        custom: !!field.custom,
+        itemId: field.itemId,
       });
     }
   }

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from './lib/api.js';
 import { useTheme, THEMES } from './lib/useTheme.js';
+import { useCatalog } from './lib/useCatalog.js';
 import brandLogo from './assets/logo-light.png';
 import { ToastProvider } from './components/ui.jsx';
 import Dashboard from './screens/Dashboard.jsx';
@@ -13,6 +14,7 @@ export default function App() {
   const [overrides, setOverrides] = useState({});
   const [keyState, setKeyState] = useState(null);
   const theme = useTheme();
+  const catalog = useCatalog();
   const [updateReady, setUpdateReady] = useState(null);
 
   useEffect(() => {
@@ -83,6 +85,8 @@ export default function App() {
         <main className="main">
           {route.name === 'dashboard' && (
             <Dashboard
+              steps={catalog.steps}
+              overrides={overrides}
               onOpenProject={(id) => setRoute({ name: 'project', id })}
               onOpenClient={(id) => setRoute({ name: 'client', id })}
             />
@@ -91,6 +95,7 @@ export default function App() {
           {route.name === 'project' && (
             <ProjectView
               projectId={route.id}
+              steps={catalog.steps}
               overrides={overrides}
               hasKey={!!keyState?.present}
               onBack={() => setRoute({ name: 'dashboard' })}
@@ -100,6 +105,8 @@ export default function App() {
           {route.name === 'client' && (
             <ClientFile
               clientId={route.id}
+              steps={catalog.steps}
+              overrides={overrides}
               onBack={() => setRoute({ name: 'dashboard' })}
               onOpenProject={(id) => setRoute({ name: 'project', id })}
             />
@@ -107,6 +114,7 @@ export default function App() {
 
           {route.name === 'settings' && (
             <Settings
+              catalog={catalog}
               overrides={overrides}
               onOverridesChanged={setOverrides}
               keyState={keyState}

@@ -25,15 +25,15 @@ const esc = (value) =>
  * be able to send over for approval, plus the export that writes the whole
  * client file out to a folder.
  */
-export default function SummaryStep({ ctx, overrides }) {
+export default function SummaryStep({ ctx, overrides, steps }) {
   const { project } = ctx;
   const [exporting, setExporting] = useState(false);
   const toast = useToast();
 
   const spec = project.spec ?? {};
   const analysis = project.analysis ?? {};
-  const sections = buildSpecSheet(spec);
-  const { lines, total } = buildBreakdown(spec, overrides);
+  const sections = buildSpecSheet(spec, steps);
+  const { lines, total } = buildBreakdown(spec, overrides, steps);
   const approved = project.renders.filter((r) => r.approved);
 
   async function exportFile() {

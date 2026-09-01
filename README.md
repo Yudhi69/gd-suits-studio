@@ -61,10 +61,29 @@ the model is *told* the complexion instead of guessing it. This is all local;
 it works with no signal.
 
 **The builder.** A progressive step-by-step flow rather than one long form,
-with the running price always on screen. Every option in it comes from
+with the running price always on screen. Every built-in option comes from
 `src/lib/catalog.js` — add a field there and it appears in the flow, in the
 price breakdown, in the spec sheet and in the render prompt with no other code
 change.
+
+**Your own catalog.** Shops offer things the built-in list does not, so items
+and whole categories can be added from **Settings → Price list** without
+touching any code:
+
+- **+ Add item** under any category. Either a *yes / no* add-on with one price
+  (a pocket square, a garment bag) or a *pick one* item whose alternatives are
+  priced separately (shoe style, cufflink metal).
+- **+ Add a category** for a group the built-in flow does not cover. It becomes
+  its own step in the consultation, after the built-in ones.
+- Each item can carry wording for the render prompt — *"a folded silk pocket
+  square in the breast pocket"*. Leave it blank and the item stays out of the
+  render, which is what you want for something that is not visible on a suit.
+
+Custom entries are stored as the same shape as built-in fields, which is the
+point: once saved they render in the builder, price into the quote, appear on
+the spec sheet and reach the AI through exactly the same code paths. Deleting
+one leaves existing orders untouched — a delivered suit should not change
+because the price list was tidied up afterwards.
 
 **Rendering.** The spec is composed into a tailoring prompt — real clauses like
 "peak lapels, 3.5 inches wide", "single breasted with 2 buttons", "double
@@ -198,9 +217,10 @@ their clients is sent.
 ## Tests
 
 ```bash
-npm test              # security, updates, then the render pipeline
+npm test              # security, updates, catalog, then the render pipeline
 npm run test:security # proves the hardening actually blocks attacks
 npm run test:updates  # the update flow against a stubbed release feed
+npm run test:catalog  # adds a custom category and items, then checks the whole chain
 npm run test:render   # drives the whole render pipeline with the network stubbed
 npm run test:tour     # boots the UI, walks every step, writes screenshots
 ```
@@ -211,7 +231,9 @@ tweak chains to its parent, and that reference usage is recorded.
 `test:security` attempts real attacks — path traversal, id injection, a
 disguised HTML payload, renderer network egress — and fails if any succeeds.
 `test:updates` covers version comparison, per-platform asset selection, and
-that a `file://` or `javascript:` download address is refused.
+that a `file://` or `javascript:` download address is refused. `test:catalog`
+adds a category and both kinds of item through the real UI, then checks they
+appear in the builder, charge the right amount and reach the spec sheet.
 
 ---
 

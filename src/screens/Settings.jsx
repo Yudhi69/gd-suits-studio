@@ -2,9 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { api, messageFor } from '../lib/api.js';
 import { priceCatalogEntries, formatMoney } from '../lib/pricing.js';
 import { CURRENCY } from '../lib/catalog.js';
-import { Banner, Collapsible, DebouncedInput, SecretInput, Spinner, Switch, useToast } from '../components/ui.jsx';
+import { Banner, Collapsible, ConfirmButton, DebouncedInput, Modal, SecretInput, Spinner, Switch, useToast } from '../components/ui.jsx';
 
-export default function Settings({ overrides, onOverridesChanged, keyState, onKeyChanged }) {
+export default function Settings({ catalog, overrides, onOverridesChanged, keyState, onKeyChanged }) {
   const [keyInput, setKeyInput] = useState('');
   const [testing, setTesting] = useState(false);
   const [models, setModels] = useState(null);
@@ -20,6 +20,8 @@ export default function Settings({ overrides, onOverridesChanged, keyState, onKe
   const [autoCheck, setAutoCheck] = useState(false);
   const [tokenState, setTokenState] = useState(null);
   const [tokenInput, setTokenInput] = useState('');
+  const [editing, setEditing] = useState(null);
+  const [addingCategory, setAddingCategory] = useState(false);
   const [tab, setTab] = useState('ai');
   const toast = useToast();
 
@@ -84,8 +86,17 @@ export default function Settings({ overrides, onOverridesChanged, keyState, onKe
     }
   }
 
-  const entries = priceCatalogEntries();
+  const entries = priceCatalogEntries(catalog.steps);
   const grouped = entries.reduce((acc, e) => { (acc[e.step] ??= []).push(e); return acc; }, {});
+  const customItemsById = new Map(catalog.items.map((i) => [i.id, i]));
+
+  async function saveOverride(key, val) {
+    const next = { ...overrides };
+    if (val === '') delete next[key];
+    else next[key] = Number(val);
+    await api.settings.set({ key: 'priceOverrides', value: next });
+    onOverridesChanged(next);
+  }
 
   return (
     <>
@@ -212,45 +223,90 @@ export default function Settings({ overrides, onOverridesChanged, keyState, onKe
             <div className="card-pad">
               <p className="small muted" style={{ marginTop: 0 }}>
                 Every quote in the app is built from these numbers. Change one and every order recalculates.
+                Anything you add here appears in the consultation flow, on the quote and on the spec sheet
+                alongside the built-in options.
               </p>
-              {Object.entries(grouped).map(([step, rows]) => {
+
+              {catalog.steps.map((step) => {
+                const rows = grouped[step.key] ?? [];
                 const changed = rows.filter((r) => typeof overrides[r.key] === 'number').length;
+                const mine = rows.filter((r) => r.custom).length;
                 return (
                   <Collapsible
-                    key={step}
-                    title={step}
-                    summary={
-                      changed
-                        ? `${rows.length} items · ${changed} changed`
-                        : `${rows.length} items`
-                    }
+                    key={step.key}
+                    title={step.title}
+                    summary={[
+                      `${rows.length} item${rows.length === 1 ? '' : 's'}`,
+                      mine ? `${mine} yours` : null,
+                      changed ? `${changed} changed` : null,
+                    ].filter(Boolean).join(' · ')}
                   >
+                    {rows.length === 0 && (
+                      <p className="small faint" style={{ marginTop: 10 }}>Nothing in this category yet.</p>
+                    )}
+
                     {rows.map((entry) => (
                       <div className="measure-row" key={entry.key}>
                         <div>
-                          <div style={{ fontWeight: 600 }}>{entry.label}</div>
+                          <div style={{ fontWeight: 600 }}>
+                            {entry.label}
+                            {entry.custom && <span className="pill pill-quiet" style={{ marginLeft: 8 }}>yours</span>}
+                          </div>
                           <div className="tiny faint">
                             {entry.isBase ? 'Base garment price' : 'Added when selected'} · default {formatMoney(entry.defaultAmount)}
                           </div>
                         </div>
-                        <DebouncedInput
-                          type="number"
-                          className="input measure-input"
-                          placeholder={String(entry.defaultAmount)}
-                          value={overrides[entry.key] ?? ''}
-                          onCommit={async (v) => {
-                            const next = { ...overrides };
-                            if (v === '') delete next[entry.key];
-                            else next[entry.key] = Number(v);
-                            await api.settings.set({ key: 'priceOverrides', value: next });
-                            onOverridesChanged(next);
-                          }}
-                        />
+                        <div className="inline" style={{ justifyContent: 'flex-end', gap: 6 }}>
+                          {entry.custom && (
+                            <button
+                              className="btn btn-sm btn-ghost"
+                              onClick={() => setEditing({ mode: 'edit', item: customItemsById.get(entry.itemId) })}
+                            >
+                              Edit
+                            </button>
+                          )}
+                          <DebouncedInput
+                            type="number"
+                            className="input measure-input"
+                            style={{ width: 118 }}
+                            placeholder={String(entry.defaultAmount)}
+                            value={overrides[entry.key] ?? ''}
+                            onCommit={(val) => saveOverride(entry.key, val)}
+                          />
+                        </div>
                       </div>
                     ))}
+
+                    <div className="inline" style={{ marginTop: 12 }}>
+                      <button
+                        className="btn btn-sm btn-primary"
+                        onClick={() => setEditing({ mode: 'add', category: step.key, categoryTitle: step.title })}
+                      >
+                        + Add item to {step.title}
+                      </button>
+                      <div style={{ flex: 1 }} />
+                      {step.custom && (
+                        <ConfirmButton
+                          className="btn btn-sm btn-ghost btn-danger"
+                          confirmLabel="Delete this category and its items?"
+                          onConfirm={async () => {
+                            await api.catalog.deleteCategory({ id: step.categoryId });
+                            await catalog.reload();
+                            toast('Category removed');
+                          }}
+                        >
+                          Delete category
+                        </ConfirmButton>
+                      )}
+                    </div>
                   </Collapsible>
                 );
               })}
+
+              <div className="inline" style={{ marginTop: 16 }}>
+                <button className="btn btn-gold" onClick={() => setAddingCategory(true)}>+ Add a category</button>
+                <span className="tiny faint">A new group in the consultation flow, for things the built-in list does not cover.</span>
+              </div>
             </div>
           </div>
         )}
@@ -458,6 +514,225 @@ export default function Settings({ overrides, onOverridesChanged, keyState, onKe
           </div>
         )}
       </div>
+
+      {editing && (
+        <ItemEditor
+          editing={editing}
+          categories={catalog.steps}
+          onClose={() => setEditing(null)}
+          onSaved={async (message) => { setEditing(null); await catalog.reload(); toast(message, 'ok'); }}
+        />
+      )}
+
+      {addingCategory && (
+        <CategoryEditor
+          onClose={() => setAddingCategory(false)}
+          onSaved={async () => { setAddingCategory(false); await catalog.reload(); toast('Category added', 'ok'); }}
+        />
+      )}
     </>
+  );
+}
+
+/**
+ * Add or edit one of the shop's own items.
+ *
+ * A "yes / no" item is a single add-on with one price. A "pick one" item is a
+ * set of alternatives priced separately - the same shape the built-in options
+ * use, so it renders and prices identically once saved.
+ */
+function ItemEditor({ editing, categories, onClose, onSaved }) {
+  const existing = editing.item;
+  const [form, setForm] = useState(() => ({
+    label: existing?.label ?? '',
+    kind: existing?.kind ?? 'toggle',
+    price: existing?.price ?? '',
+    description: existing?.description ?? '',
+    prompt: existing?.prompt ?? '',
+    category: existing?.category ?? editing.category,
+    options: existing?.options?.length ? existing.options : [{ key: 'opt1', label: '', price: '' }],
+  }));
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+
+  const setOption = (index, patch) =>
+    set({ options: form.options.map((o, i) => (i === index ? { ...o, ...patch } : o)) });
+
+  async function save() {
+    if (!form.label.trim()) { toast('Give the item a name.', 'err'); return; }
+    setBusy(true);
+    try {
+      const payload = {
+        label: form.label.trim(),
+        kind: form.kind,
+        price: form.kind === 'toggle' ? Number(form.price) || 0 : 0,
+        description: form.description.trim(),
+        prompt: form.prompt.trim(),
+        category: form.category,
+        options:
+          form.kind === 'choice'
+            ? form.options
+                .filter((o) => o.label.trim())
+                .map((o, i) => ({ key: o.key || `opt${i + 1}`, label: o.label.trim(), price: Number(o.price) || 0 }))
+            : [],
+      };
+      if (form.kind === 'choice' && payload.options.length < 2) {
+        throw new Error('A "pick one" item needs at least two options.');
+      }
+
+      if (existing) await api.catalog.updateItem({ id: existing.id, ...payload });
+      else await api.catalog.addItem(payload);
+      onSaved(existing ? 'Item updated' : 'Item added');
+    } catch (err) {
+      toast(messageFor(err), 'err');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={existing ? `Edit ${existing.label}` : `Add an item to ${editing.categoryTitle}`}
+      onClose={onClose}
+      wide
+      footer={
+        <>
+          {existing && (
+            <ConfirmButton
+              className="btn btn-danger"
+              confirmLabel="Delete for good?"
+              onConfirm={async () => {
+                await api.catalog.deleteItem({ id: existing.id });
+                onSaved('Item removed');
+              }}
+            >
+              Delete
+            </ConfirmButton>
+          )}
+          <div className="spacer" />
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn btn-gold" onClick={save} disabled={busy}>{busy ? 'Saving...' : 'Save item'}</button>
+        </>
+      }
+    >
+      <div className="field">
+        <label>What is it called?</label>
+        <input className="input" autoFocus value={form.label} placeholder="Pocket square"
+          onChange={(e) => set({ label: e.target.value })} />
+      </div>
+
+      <div className="field">
+        <label>How is it chosen?</label>
+        <div className="options">
+          <button className={`option ${form.kind === 'toggle' ? 'selected' : ''}`} onClick={() => set({ kind: 'toggle' })}>
+            <div className="option-label">Yes / No</div>
+            <div className="option-desc">One add-on with one price</div>
+          </button>
+          <button className={`option ${form.kind === 'choice' ? 'selected' : ''}`} onClick={() => set({ kind: 'choice' })}>
+            <div className="option-label">Pick one</div>
+            <div className="option-desc">Alternatives, priced separately</div>
+          </button>
+        </div>
+      </div>
+
+      {form.kind === 'toggle' ? (
+        <div className="field">
+          <label>Price ({CURRENCY})</label>
+          <input type="number" className="input" style={{ maxWidth: 180 }} value={form.price}
+            placeholder="0" onChange={(e) => set({ price: e.target.value })} />
+        </div>
+      ) : (
+        <div className="field">
+          <label>Options</label>
+          {form.options.map((opt, i) => (
+            <div className="inline" key={i} style={{ marginBottom: 6 }}>
+              <input className="input" style={{ flex: 1 }} placeholder={`Option ${i + 1}`} value={opt.label}
+                onChange={(e) => setOption(i, { label: e.target.value, key: opt.key || `opt${i + 1}` })} />
+              <input type="number" className="input measure-input" style={{ width: 120 }} placeholder="0"
+                value={opt.price} onChange={(e) => setOption(i, { price: e.target.value })} />
+              {form.options.length > 1 && (
+                <button className="btn btn-sm btn-ghost btn-danger"
+                  onClick={() => set({ options: form.options.filter((_, x) => x !== i) })}>Remove</button>
+              )}
+            </div>
+          ))}
+          <button className="btn btn-sm" style={{ marginTop: 4 }}
+            onClick={() => set({ options: [...form.options, { key: `opt${form.options.length + 1}`, label: '', price: '' }] })}>
+            + Add option
+          </button>
+        </div>
+      )}
+
+      <div className="field">
+        <label>Category</label>
+        <select className="select" value={form.category} onChange={(e) => set({ category: e.target.value })}>
+          {categories.map((c) => <option key={c.key} value={c.key}>{c.title}</option>)}
+        </select>
+      </div>
+
+      <div className="field">
+        <label>Short note <span className="faint" style={{ fontWeight: 400 }}>(optional)</span></label>
+        <input className="input" value={form.description} placeholder="Shown under the name in the builder"
+          onChange={(e) => set({ description: e.target.value })} />
+      </div>
+
+      <div className="field" style={{ marginBottom: 0 }}>
+        <label>How should the AI draw it? <span className="faint" style={{ fontWeight: 400 }}>(optional)</span></label>
+        <input className="input" value={form.prompt} placeholder="a folded silk pocket square in the breast pocket"
+          onChange={(e) => set({ prompt: e.target.value })} />
+        <div className="hint">
+          Wording added to the render prompt when this item is chosen. Leave it blank to use the name.
+          If the item is not something you can see on a suit, leave it blank and it stays off the render.
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function CategoryEditor({ onClose, onSaved }) {
+  const [title, setTitle] = useState('');
+  const [blurb, setBlurb] = useState('');
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+
+  async function save() {
+    if (!title.trim()) { toast('Give the category a name.', 'err'); return; }
+    setBusy(true);
+    try {
+      await api.catalog.addCategory({ title: title.trim(), blurb: blurb.trim() });
+      onSaved();
+    } catch (err) {
+      toast(messageFor(err), 'err');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      title="Add a category"
+      onClose={onClose}
+      footer={
+        <>
+          <div className="spacer" />
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn btn-gold" onClick={save} disabled={busy}>{busy ? 'Saving...' : 'Add category'}</button>
+        </>
+      }
+    >
+      <div className="field">
+        <label>Name</label>
+        <input className="input" autoFocus value={title} placeholder="Accessories"
+          onChange={(e) => setTitle(e.target.value)} />
+      </div>
+      <div className="field" style={{ marginBottom: 0 }}>
+        <label>Description <span className="faint" style={{ fontWeight: 400 }}>(optional)</span></label>
+        <input className="input" value={blurb} placeholder="Shown under the heading in the consultation"
+          onChange={(e) => setBlurb(e.target.value)} />
+        <div className="hint">This becomes a new step in the consultation flow, after the built-in ones.</div>
+      </div>
+    </Modal>
   );
 }

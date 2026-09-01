@@ -11,7 +11,7 @@ const STATUS_PILL = {
   delivered: 'pill-ok',
 };
 
-export default function Dashboard({ onOpenProject, onOpenClient }) {
+export default function Dashboard({ onOpenProject, onOpenClient, steps, overrides }) {
   const [clients, setClients] = useState([]);
   const [projects, setProjects] = useState([]);
   const [creating, setCreating] = useState(false);
@@ -51,7 +51,7 @@ export default function Dashboard({ onOpenProject, onOpenClient }) {
           <StatCard label="Orders in progress" value={projects.filter((p) => p.status !== 'delivered').length} />
           <StatCard
             label="Quoted value"
-            value={formatMoney(projects.reduce((sum, p) => sum + buildBreakdown(JSON.parse(p.spec_json || '{}')).total, 0))}
+            value={formatMoney(projects.reduce((sum, p) => sum + buildBreakdown(JSON.parse(p.spec_json || '{}'), overrides, steps).total, 0))}
           />
         </div>
 
@@ -86,7 +86,7 @@ export default function Dashboard({ onOpenProject, onOpenClient }) {
                       <td className="muted">{EVENT_TYPES.find((e) => e.key === p.event_type)?.label ?? '-'}</td>
                       <td className="muted mono">{p.event_date || '-'}</td>
                       <td><span className={`pill ${STATUS_PILL[p.status] ?? 'pill-quiet'}`}>{p.status}</span></td>
-                      <td className="mono" style={{ textAlign: 'right' }}>{formatMoney(buildBreakdown(spec).total)}</td>
+                      <td className="mono" style={{ textAlign: 'right' }}>{formatMoney(buildBreakdown(spec, overrides, steps).total)}</td>
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
                         <button className="btn btn-sm btn-ghost" onClick={() => onOpenClient(p.client_id)}>Client file</button>
                         <ConfirmButton

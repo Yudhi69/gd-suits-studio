@@ -364,6 +364,61 @@ handle('fittings:update', ({ id, tailorNotes, clientNotes }) => db.updateFitting
 }));
 handle('fittings:delete', ({ id }) => db.deleteFitting(v.id(id)));
 
+/* the tailor's own catalog */
+const ITEM_KINDS = ['toggle', 'choice'];
+
+function cleanOptions(options) {
+  if (!Array.isArray(options)) return [];
+  if (options.length > 40) throw new v.ValidationError('That is too many options (limit 40)');
+  return options.map((o, i) => ({
+    key: v.str(o.key, 'option key', 60) || `opt${i}`,
+    label: v.str(o.label, 'option label', 120),
+    desc: v.str(o.desc, 'option note', 200),
+    price: v.num(o.price, 'option price', { min: 0, max: 1e7 }) ?? 0,
+  }));
+}
+
+handle('catalog:list', () => ({
+  categories: db.listCustomCategories(),
+  items: db.listCustomItems(),
+}));
+handle('catalog:addCategory', ({ title, blurb }) =>
+  db.addCustomCategory({ title: v.str(title, 'category name', 80), blurb: v.str(blurb, 'description', 300) })
+);
+handle('catalog:updateCategory', ({ id, title, blurb, sort }) =>
+  db.updateCustomCategory(v.id(id), {
+    title: title === undefined ? undefined : v.str(title, 'category name', 80),
+    blurb: blurb === undefined ? undefined : v.str(blurb, 'description', 300),
+    sort: sort === undefined ? undefined : v.num(sort, 'order', { min: 0, max: 9999 }),
+  })
+);
+handle('catalog:deleteCategory', ({ id }) => db.deleteCustomCategory(v.id(id)));
+
+handle('catalog:addItem', ({ category, label, kind, price, options, description, prompt }) =>
+  db.addCustomItem({
+    category: v.str(category, 'category', 80),
+    label: v.str(label, 'item name', 120),
+    kind: v.oneOf(kind ?? 'toggle', ITEM_KINDS, 'kind'),
+    price: v.num(price, 'price', { min: 0, max: 1e7 }) ?? 0,
+    options: cleanOptions(options),
+    description: v.str(description, 'note', 300),
+    prompt: v.str(prompt, 'render wording', 300),
+  })
+);
+handle('catalog:updateItem', ({ id, ...patch }) =>
+  db.updateCustomItem(v.id(id), {
+    label: patch.label === undefined ? undefined : v.str(patch.label, 'item name', 120),
+    kind: patch.kind === undefined ? undefined : v.oneOf(patch.kind, ITEM_KINDS, 'kind'),
+    price: patch.price === undefined ? undefined : v.num(patch.price, 'price', { min: 0, max: 1e7 }) ?? 0,
+    options: patch.options === undefined ? undefined : cleanOptions(patch.options),
+    description: patch.description === undefined ? undefined : v.str(patch.description, 'note', 300),
+    prompt: patch.prompt === undefined ? undefined : v.str(patch.prompt, 'render wording', 300),
+    category: patch.category === undefined ? undefined : v.str(patch.category, 'category', 80),
+    active: patch.active,
+  })
+);
+handle('catalog:deleteItem', ({ id }) => db.deleteCustomItem(v.id(id)));
+
 /* settings + secrets */
 const SETTING_KEYS = ['priceOverrides', 'imageModel', 'visionModel', 'theme', 'updateFeed', 'autoCheckUpdates'];
 handle('settings:get', ({ key, fallback }) => db.getSetting(v.oneOf(key, SETTING_KEYS, 'setting'), fallback ?? null));

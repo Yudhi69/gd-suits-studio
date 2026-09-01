@@ -10,7 +10,7 @@ import ReferenceLibrary from '../components/ReferenceLibrary.jsx';
  * images and the body record that carries between suits. This is the screen
  * the brief's "clients revisit their profile" depends on.
  */
-export default function ClientFile({ clientId, onBack, onOpenProject }) {
+export default function ClientFile({ clientId, onBack, onOpenProject, steps, overrides }) {
   const [client, setClient] = useState(null);
   const [projects, setProjects] = useState([]);
   const [references, setReferences] = useState([]);
@@ -68,7 +68,7 @@ export default function ClientFile({ clientId, onBack, onOpenProject }) {
                       <td className="muted mono">{p.event_date || '-'}</td>
                       <td><span className="pill pill-quiet">{p.status}</span></td>
                       <td className="mono" style={{ textAlign: 'right' }}>
-                        {formatMoney(buildBreakdown(JSON.parse(p.spec_json || '{}')).total)}
+                        {formatMoney(buildBreakdown(JSON.parse(p.spec_json || '{}'), overrides, steps).total)}
                       </td>
                     </tr>
                   ))}

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { STEPS, isVisible } from '../lib/catalog.js';
+import { isVisible } from '../lib/catalog.js';
 import { useProject } from '../lib/useProject.js';
 import PriceBar from '../components/PriceBar.jsx';
 import Stepper from '../components/Stepper.jsx';
@@ -21,7 +21,7 @@ import SummaryStep from './project/SummaryStep.jsx';
  * asks for it to feel like a game, one decision at a time, with the running
  * price always in view.
  */
-export default function ProjectView({ projectId, onBack, overrides, hasKey }) {
+export default function ProjectView({ projectId, onBack, overrides, hasKey, steps: catalogSteps }) {
   const ctx = useProject(projectId);
   const [stepKey, setStepKey] = useState('client');
   const { project, loading, error } = ctx;
@@ -33,7 +33,7 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey }) {
       { key: 'client', title: 'Client', done: !!project.name },
       { key: 'capture', title: 'Capture', done: project.photos.some((p) => ['front', 'side', 'back', 'face'].includes(p.slot)) },
       { key: 'fabric', title: 'Cloth', done: project.photos.some((p) => p.slot === 'fabric') || !!project.analysis?.fabricColour },
-      ...STEPS.filter((s) => isVisible(s, spec)).map((s) => ({
+      ...catalogSteps.filter((s) => isVisible(s, spec)).map((s) => ({
         key: s.key,
         title: s.title,
         catalog: s,
@@ -44,7 +44,7 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey }) {
       { key: 'fitting', title: 'Fitting', done: project.fittings.length > 0 },
       { key: 'summary', title: 'Summary', done: project.renders.some((r) => r.approved) },
     ];
-  }, [project]);
+  }, [project, catalogSteps]);
 
   if (loading) {
     return <div className="content center" style={{ paddingTop: 80 }}><Spinner /></div>;
@@ -68,9 +68,9 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey }) {
       case 'capture': return <CaptureStep ctx={ctx} />;
       case 'fabric': return <FabricStep ctx={ctx} />;
       case 'measurements': return <MeasureStep ctx={ctx} />;
-      case 'preview': return <PreviewStep ctx={ctx} hasKey={hasKey} />;
+      case 'preview': return <PreviewStep ctx={ctx} hasKey={hasKey} steps={catalogSteps} />;
       case 'fitting': return <FittingStep ctx={ctx} />;
-      case 'summary': return <SummaryStep ctx={ctx} overrides={overrides} />;
+      case 'summary': return <SummaryStep ctx={ctx} overrides={overrides} steps={catalogSteps} />;
       default: return null;
     }
   }
@@ -109,6 +109,7 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey }) {
           <PriceBar
             spec={project.spec}
             overrides={overrides}
+            steps={catalogSteps}
             right={
               <>
                 <button

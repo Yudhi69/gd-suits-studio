@@ -151,6 +151,39 @@ const MIGRATIONS = [
       );
     `);
   },
+
+  // v3 - the tailor's own catalog. Shops offer things the built-in list does
+  // not, so categories and priced items can be added at runtime and flow
+  // through the builder, the quote, the spec sheet and the render prompt
+  // exactly as the built-in ones do.
+  (d) => {
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS catalog_categories (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        key        TEXT NOT NULL UNIQUE,
+        title      TEXT NOT NULL,
+        blurb      TEXT NOT NULL DEFAULT '',
+        sort       INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS catalog_items (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        field_id     TEXT NOT NULL UNIQUE,
+        category     TEXT NOT NULL,
+        label        TEXT NOT NULL,
+        kind         TEXT NOT NULL DEFAULT 'toggle',
+        price        REAL NOT NULL DEFAULT 0,
+        options_json TEXT NOT NULL DEFAULT '[]',
+        description  TEXT NOT NULL DEFAULT '',
+        prompt       TEXT NOT NULL DEFAULT '',
+        sort         INTEGER NOT NULL DEFAULT 0,
+        active       INTEGER NOT NULL DEFAULT 1,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_items_category ON catalog_items(category);
+    `);
+  },
 ];
 
 function open(userDataPath) {
@@ -595,6 +628,108 @@ function seedMeasurementsFromClient(projectId, clientId) {
   return rows.length;
 }
 
+
+/* ------------------------------------------------- the tailor's own catalog */
+
+function listCustomCategories() {
+  return get().prepare('SELECT * FROM catalog_categories ORDER BY sort, id').all();
+}
+
+function addCustomCategory({ title, blurb }) {
+  const d = get();
+  const next = (d.prepare('SELECT MAX(sort) AS n FROM catalog_categories').get()?.n ?? 0) + 1;
+  // The key becomes a step key and a spec namespace, so it is generated rather
+  // than derived from the title - a renamed category must not orphan the
+  // selections already saved against it.
+  const key = `custom-${Date.now().toString(36)}`;
+  const info = d
+    .prepare('INSERT INTO catalog_categories (key, title, blurb, sort) VALUES (?, ?, ?, ?)')
+    .run(key, title, blurb ?? '', next);
+  return { id: info.lastInsertRowid, key };
+}
+
+function updateCustomCategory(id, { title, blurb, sort }) {
+  const d = get();
+  const current = d.prepare('SELECT * FROM catalog_categories WHERE id = ?').get(id);
+  if (!current) return;
+  d.prepare('UPDATE catalog_categories SET title = ?, blurb = ?, sort = ? WHERE id = ?').run(
+    title ?? current.title,
+    blurb ?? current.blurb,
+    sort ?? current.sort,
+    id
+  );
+}
+
+/**
+ * Deleting a category takes its items with it. Existing orders keep whatever
+ * was already saved in their spec JSON - a delivered suit should not silently
+ * change because the price list was tidied up later.
+ */
+function deleteCustomCategory(id) {
+  const d = get();
+  const row = d.prepare('SELECT key FROM catalog_categories WHERE id = ?').get(id);
+  if (!row) return;
+  d.prepare('DELETE FROM catalog_items WHERE category = ?').run(row.key);
+  d.prepare('DELETE FROM catalog_categories WHERE id = ?').run(id);
+}
+
+function listCustomItems() {
+  return get()
+    .prepare('SELECT * FROM catalog_items ORDER BY category, sort, id')
+    .all()
+    .map((row) => ({ ...row, options: JSON.parse(row.options_json || '[]') }));
+}
+
+function addCustomItem({ category, label, kind, price, options, description, prompt }) {
+  const d = get();
+  const next =
+    (d.prepare('SELECT MAX(sort) AS n FROM catalog_items WHERE category = ?').get(category)?.n ?? 0) + 1;
+  const fieldId = `custom_${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`;
+  const info = d
+    .prepare(
+      `INSERT INTO catalog_items (field_id, category, label, kind, price, options_json, description, prompt, sort)
+       VALUES (@fieldId, @category, @label, @kind, @price, @options, @description, @prompt, @sort)`
+    )
+    .run({
+      fieldId,
+      category,
+      label,
+      kind: kind ?? 'toggle',
+      price: Number(price) || 0,
+      options: JSON.stringify(options ?? []),
+      description: description ?? '',
+      prompt: prompt ?? '',
+      sort: next,
+    });
+  return { id: info.lastInsertRowid, fieldId };
+}
+
+function updateCustomItem(id, patch) {
+  const d = get();
+  const current = d.prepare('SELECT * FROM catalog_items WHERE id = ?').get(id);
+  if (!current) return;
+  d.prepare(
+    `UPDATE catalog_items
+        SET label = @label, kind = @kind, price = @price, options_json = @options,
+            description = @description, prompt = @prompt, active = @active, category = @category
+      WHERE id = @id`
+  ).run({
+    id,
+    label: patch.label ?? current.label,
+    kind: patch.kind ?? current.kind,
+    price: patch.price === undefined ? current.price : Number(patch.price) || 0,
+    options: patch.options === undefined ? current.options_json : JSON.stringify(patch.options),
+    description: patch.description ?? current.description,
+    prompt: patch.prompt ?? current.prompt,
+    active: patch.active === undefined ? current.active : patch.active ? 1 : 0,
+    category: patch.category ?? current.category,
+  });
+}
+
+function deleteCustomItem(id) {
+  get().prepare('DELETE FROM catalog_items WHERE id = ?').run(id);
+}
+
 module.exports = {
   open,
   listClients, getClient, upsertClient, deleteClient,
@@ -607,5 +742,7 @@ module.exports = {
   saveMeasurement,
   addRender, getRender, setRenderApproved, deleteRender,
   addFitting, updateFitting, deleteFitting,
+  listCustomCategories, addCustomCategory, updateCustomCategory, deleteCustomCategory,
+  listCustomItems, addCustomItem, updateCustomItem, deleteCustomItem,
   getSetting, setSetting,
 };

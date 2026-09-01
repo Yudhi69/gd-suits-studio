@@ -16,6 +16,8 @@ const CHANNELS = [
   'notes:add', 'notes:delete',
   'measurements:save',
   'fittings:add', 'fittings:update', 'fittings:delete',
+  'catalog:list', 'catalog:addCategory', 'catalog:updateCategory', 'catalog:deleteCategory',
+  'catalog:addItem', 'catalog:updateItem', 'catalog:deleteItem',
   'settings:get', 'settings:set',
   'secrets:describe', 'secrets:set',
   'ai:test', 'ai:models', 'ai:render', 'ai:analyse',

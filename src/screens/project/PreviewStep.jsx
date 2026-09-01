@@ -12,7 +12,7 @@ import NotesPanel from '../../components/NotesPanel.jsx';
  * client's likeness and every already-agreed detail survive the change - which
  * is the difference between a usable tool and rolling dice on each attempt.
  */
-export default function PreviewStep({ ctx, hasKey }) {
+export default function PreviewStep({ ctx, hasKey, steps }) {
   const { project, references, reload, reloadReferences, addNote, deleteNote, photoBySlot } = ctx;
   const [view, setView] = useState('front');
   const [selectedRefs, setSelectedRefs] = useState([]);
@@ -78,11 +78,12 @@ export default function PreviewStep({ ctx, hasKey }) {
         view,
         refs: renderRefs,
         notes: direction,
+        steps,
       }),
-    [spec, analysis, view, renderRefs, direction, project.name, project.surname]
+    [spec, analysis, view, renderRefs, direction, project.name, project.surname, steps]
   );
 
-  const clauses = describeGarment(spec);
+  const clauses = describeGarment(spec, steps);
   const missingBase = !spec.suitType;
 
   async function render() {

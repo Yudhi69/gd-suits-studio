@@ -497,3 +497,87 @@ export function fieldById(id) {
 export function isVisible(node, spec) {
   return typeof node.showIf === 'function' ? !!node.showIf(spec) : true;
 }
+
+
+/* ------------------------------------------- the tailor's own catalog ------ */
+
+/**
+ * Turns a stored custom item into a catalog field.
+ *
+ * The shape is identical to a built-in field, which is the point: once merged,
+ * a custom item renders in the builder, prices into the quote, appears on the
+ * spec sheet and reaches the render prompt through exactly the same code paths
+ * as everything shipped in this file.
+ */
+export function customItemToField(item) {
+  const base = {
+    id: item.field_id,
+    label: item.label,
+    desc: item.description || '',
+    custom: true,
+    itemId: item.id,
+  };
+
+  if (item.kind === 'choice') {
+    return {
+      ...base,
+      type: 'choice',
+      options: (item.options ?? []).map((o) => ({
+        key: o.key,
+        label: o.label,
+        desc: o.desc ?? '',
+        price: Number(o.price) || 0,
+      })),
+      // A phrase supplied by the tailor wins; otherwise the label and the
+      // chosen option are read out plainly.
+      prompt: (value, spec) => {
+        const chosen = (item.options ?? []).find((o) => o.key === value);
+        if (!chosen) return null;
+        return item.prompt
+          ? `${item.prompt}: ${chosen.label.toLowerCase()}`
+          : `${item.label.toLowerCase()}: ${chosen.label.toLowerCase()}`;
+      },
+    };
+  }
+
+  return {
+    ...base,
+    type: 'toggle',
+    price: Number(item.price) || 0,
+    prompt: (value) => (value ? item.prompt || item.label.toLowerCase() : null),
+  };
+}
+
+/**
+ * The effective builder flow: the built-in steps with any custom items folded
+ * into them, followed by whatever categories the shop has added of its own.
+ */
+export function buildSteps(customCategories = [], customItems = []) {
+  const active = customItems.filter((i) => i.active !== 0);
+  const byCategory = active.reduce((acc, item) => {
+    (acc[item.category] ??= []).push(item);
+    return acc;
+  }, {});
+
+  const builtIn = STEPS.map((step) => {
+    const extra = byCategory[step.key] ?? [];
+    if (!extra.length) return step;
+    return { ...step, fields: [...step.fields, ...extra.map(customItemToField)] };
+  });
+
+  const added = customCategories.map((category) => ({
+    key: category.key,
+    title: category.title,
+    blurb: category.blurb || '',
+    custom: true,
+    categoryId: category.id,
+    fields: (byCategory[category.key] ?? []).map(customItemToField),
+  }));
+
+  return [...builtIn, ...added];
+}
+
+/** Flattened fields for any step list, custom or not. */
+export function allFieldsOf(steps) {
+  return steps.flatMap((step) => step.fields.map((f) => ({ ...f, step: step.key })));
+}
