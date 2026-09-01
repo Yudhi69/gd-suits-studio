@@ -121,7 +121,12 @@ async function listModels(apiKey) {
   // cannot be used no matter what it is named.
   const usable = models.filter((m) => m.methods.includes('generateContent'));
 
-  const isImage = (m) => /image/i.test(m.name) && !/embedding/i.test(m.name);
+  // Named for the job in most cases, but not always - "nano-banana" is an
+  // image model with no "image" in its name - so the description is checked
+  // too rather than trusting the naming convention to hold.
+  const isImage = (m) =>
+    !/embedding/i.test(m.name) &&
+    (/image|nano-?banana|imagen/i.test(m.name) || /image generation|generates images/i.test(m.description ?? ''));
   const isVision = (m) => /gemini/i.test(m.name) && !/image|embedding|tts|live|audio/i.test(m.name);
 
   const image = usable.filter(isImage);
@@ -145,15 +150,29 @@ async function listModels(apiKey) {
 async function generateImage({ apiKey, model = DEFAULTS.imageModel, prompt, images = [], timeoutMs }) {
   const parts = [{ text: prompt }, ...images.map(imagePart)];
 
-  const json = await call(
-    apiKey,
-    model,
-    {
-      contents: [{ role: 'user', parts }],
-      generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
-    },
-    { timeoutMs }
-  );
+  let json;
+  try {
+    json = await call(
+      apiKey,
+      model,
+      {
+        contents: [{ role: 'user', parts }],
+        generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+      },
+      { timeoutMs }
+    );
+  } catch (err) {
+    // Asking a text model for an image is answered with a 404, which reads as
+    // "no such model" but actually means "that model cannot return one".
+    // Saying so is the difference between a fixable message and a dead end.
+    if (err.code === 'no_model') {
+      throw new GeminiError(
+        `"${model}" cannot produce images - it is a text model. Open Settings > AI rendering and choose one from the Image models group.`,
+        { status: err.status, code: 'not_image_model' }
+      );
+    }
+    throw err;
+  }
 
   const candidate = json?.candidates?.[0];
 

@@ -61,12 +61,25 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
   useEffect(() => {
     if (!models) return;
     const available = new Set(models.all.map((m) => m.name));
-    if (imageModel && !available.has(imageModel) && models.image.length) {
+    const imageCapable = new Set(models.image.map((m) => m.name));
+
+    // Being on the key is not enough for the image slot. A text model like
+    // gemini-2.5-flash lists fine and accepts the request, then answers with a
+    // 404 because it cannot return an image - so the check is whether it can
+    // do the job, not whether it exists.
+    const imageUnusable = imageModel && !imageCapable.has(imageModel);
+    if (imageUnusable && models.image.length) {
       const replacement = models.image[0].name;
       setImageModel(replacement);
       api.settings.set({ key: 'imageModel', value: replacement }).catch(() => {});
-      toast(`${imageModel} is not on this key - switched to ${replacement}`, 'info');
+      toast(
+        available.has(imageModel)
+          ? `${imageModel} cannot produce images - switched to ${replacement}`
+          : `${imageModel} is not on this key - switched to ${replacement}`,
+        'info'
+      );
     }
+
     if (visionModel && !available.has(visionModel) && models.vision.length) {
       const replacement = models.vision[0].name;
       setVisionModel(replacement);
@@ -247,6 +260,7 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
                     value={imageModel}
                     models={models}
                     preferred="image"
+                    requireCapable
                     onChange={(val) => setModel('imageModel', val, setImageModel)}
                   />
                   <ModelPicker
@@ -605,7 +619,7 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
  * list stays reachable: Google renames these families often, and a picker that
  * hides the model you need is worse than one that ranks them badly.
  */
-function ModelPicker({ label, hint, value, models, preferred, onChange }) {
+function ModelPicker({ label, hint, value, models, preferred, onChange, requireCapable }) {
   if (!models) {
     return (
       <div className="field">
@@ -616,18 +630,35 @@ function ModelPicker({ label, hint, value, models, preferred, onChange }) {
     );
   }
 
+  const capable = models[preferred] ?? [];
   const groups = [
-    { title: preferred === 'image' ? 'Image models' : 'Vision models', items: models[preferred] ?? [] },
-    { title: 'Other models on this key', items: models.all.filter((m) => !(models[preferred] ?? []).includes(m)) },
+    { title: preferred === 'image' ? 'Image models' : 'Vision models', items: capable },
+    {
+      // Kept selectable because the naming of these families changes often and
+      // a picker that hides a working model is worse than one that warns - but
+      // labelled, because picking one here is what caused the 404.
+      title: requireCapable ? 'Other models - will not return an image' : 'Other models on this key',
+      items: models.all.filter((m) => !capable.includes(m)),
+    },
   ].filter((g) => g.items.length);
 
-  const known = models.all.some((m) => m.name === value);
+  // For the image slot, "known" means it can actually do the job.
+  const known = requireCapable
+    ? capable.some((m) => m.name === value)
+    : models.all.some((m) => m.name === value);
+  const existsButWrong = requireCapable && !known && models.all.some((m) => m.name === value);
 
   return (
     <div className="field">
       <label>{label}</label>
       <select className={`select ${known ? '' : 'input-invalid'}`} value={known ? value : ''} onChange={(e) => onChange(e.target.value)}>
-        {!known && <option value="">{value ? `${value} - not on this key` : 'Choose a model'}</option>}
+        {!known && (
+          <option value="">
+            {value
+              ? `${value} - ${existsButWrong ? 'cannot produce images' : 'not on this key'}`
+              : 'Choose a model'}
+          </option>
+        )}
         {groups.map((g) => (
           <optgroup key={g.title} label={g.title}>
             {g.items.map((m) => (
@@ -638,7 +669,13 @@ function ModelPicker({ label, hint, value, models, preferred, onChange }) {
           </optgroup>
         ))}
       </select>
-      <div className="hint">{known ? hint : 'The saved model is not available on this key. Pick one from the list.'}</div>
+      <div className="hint">
+        {known
+          ? hint
+          : existsButWrong
+            ? 'That is a text model - it cannot return an image. Pick one from the Image models group.'
+            : 'The saved model is not available on this key. Pick one from the list.'}
+      </div>
     </div>
   );
 }

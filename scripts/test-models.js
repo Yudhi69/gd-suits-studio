@@ -16,8 +16,21 @@ global.fetch = async (url, opts) => {
         { name: 'models/gemini-3-pro-image-preview', displayName: 'Gemini 3 Pro Image', supportedGenerationMethods: ['generateContent'] },
         { name: 'models/text-embedding-004', displayName: 'Embeddings', supportedGenerationMethods: ['embedContent'] },
         { name: 'models/imagen-3.0-generate-002', displayName: 'Imagen 3', supportedGenerationMethods: ['predict'] },
+        { name: 'models/nano-banana-pro-preview', displayName: 'Nano Banana Pro', description: 'Image generation model', supportedGenerationMethods: ['generateContent'] },
       ],
     }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
+  // Google answers a text model asked for IMAGE output with a 404.
+  if (u.includes(':generateContent')) {
+    const body = JSON.parse(opts?.body ?? '{}');
+    const wantsImage = (body.generationConfig?.responseModalities ?? []).includes('IMAGE');
+    const isImageModel = /image|banana/i.test(u);
+    if (wantsImage && !isImageModel) {
+      return new Response(JSON.stringify({ error: { message: 'models/gemini-2.5-flash is not found for API version v1beta' } }), { status: 404 });
+    }
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [
+      { inlineData: { mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==' } },
+    ] }, finishReason: 'STOP' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
   }
   return new Response(JSON.stringify({ error: { message: 'not found' } }), { status: 404 });
 };
@@ -35,8 +48,15 @@ app.whenReady().then(async () => {
   const js = (c) => win.webContents.executeJavaScript(c);
 
   secrets.set('gemini', 'TEST-KEY-123');
-  // Save a model that does not exist on this key - the situation being fixed.
-  await js(`window.gd.settings.set({ key: 'imageModel', value: 'gemini-9-imaginary' })`);
+  await js(`(async () => {
+    const un = async p => { const r = await p; if(!r.ok) throw new Error(r.error.message); return r.data; };
+    const clientId = await un(window.gd.clients.save({ name:'M', surname:'T' }));
+    await un(window.gd.projects.create({ clientId, title:'M' }));
+  })()`);
+  // A TEXT model saved in the image slot. This is the real-world failure: it
+  // is on the key and lists fine, so a naive "is it available?" check passes,
+  // then every render 404s because it cannot return an image.
+  await js(`window.gd.settings.set({ key: 'imageModel', value: 'gemini-2.5-flash' })`);
   win.webContents.reload();
   await wait(2000);
 
@@ -65,12 +85,20 @@ app.whenReady().then(async () => {
   check(!ui.options.includes('imagen-3.0-generate-002'), 'models this app cannot call are excluded');
   check(ui.options.includes('gemini-2.5-pro'), 'every usable model stays reachable in the second group');
 
-  log('\n=== an unavailable saved model heals itself ===');
-  check(!ui.options.includes('gemini-9-imaginary'), 'the imaginary model is not offered');
+  check(ui.options.includes('nano-banana-pro-preview'), 'an image model without "image" in its name is still found', ui.options.join(', '));
+
+  log('\n=== a text model in the image slot heals itself ===');
   const saved = await js(`window.gd.settings.get({ key: 'imageModel', fallback: '' }).then(r => r.data)`);
-  check(saved !== 'gemini-9-imaginary', 'it was replaced rather than left to fail', String(saved));
-  check(/image/.test(String(saved)), 'and replaced with an image model', String(saved));
+  check(saved !== 'gemini-2.5-flash', 'the text model was replaced rather than left to 404', String(saved));
+  check(/image|banana/.test(String(saved)), 'and replaced with one that can return an image', String(saved));
   check(ui.selected === saved, 'the dropdown shows what was saved', `${ui.selected} vs ${saved}`);
+
+  log('\n=== and the message says something actionable ===');
+  const errText = await js(`(async () => {
+    const r = await window.gd.ai.render({ projectId: 1, prompt: 'x', view: 'front', refs: [], model: 'gemini-2.5-flash' });
+    return r.ok ? 'unexpectedly succeeded' : r.error.message;
+  })()`);
+  check(/cannot produce images/i.test(errText), 'asking a text model for an image explains why', errText.slice(0, 90));
 
   log(`\n${fail === 0 ? 'ALL MODEL CHECKS PASSED' : 'FAILED'} — ${pass} passed, ${fail} failed`);
   app.exit(fail === 0 ? 0 : 1);
