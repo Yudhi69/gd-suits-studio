@@ -51,6 +51,18 @@ export default function SummaryStep({ ctx, overrides, steps, unit = 'cm' }) {
 
   /** Self-contained HTML the tailor can email or print for sign-off. */
   function specSheetHtml() {
+    const schedule = [
+      ['consultation_date', 'First consultation'],
+      ['measurement_date', 'Measurements'],
+      ['first_fitting_date', 'First fitting'],
+      ['final_fitting_date', 'Final fitting & delivery'],
+    ].filter(([key]) => project[key]);
+    const scheduleRows = schedule.length
+      ? `<h3>Schedule</h3><table>${schedule
+          .map(([key, label]) => `<tr><td class="k">${esc(label)}</td><td class="num">${esc(project[key])}</td></tr>`)
+          .join('')}</table>`
+      : '';
+
     const rows = sections
       .map(
         (s) => `<h3>${esc(s.title)}</h3><table>${s.rows
@@ -97,7 +109,11 @@ export default function SummaryStep({ ctx, overrides, steps, unit = 'cm' }) {
  <strong>${esc(project.title)}</strong><br>
  ${esc(EVENT_TYPES.find((e) => e.key === project.event_type)?.label ?? '')} ${project.event_date ? `&middot; ${esc(project.event_date)}` : ''}<br>
  ${project.delivery_date ? `Delivery: ${esc(project.delivery_date)}` : ''}
+ ${project.is_minor && project.secondary_name
+   ? `<br>Approvals to ${esc(project.secondary_name)}${project.secondary_relationship ? ` (${esc(project.secondary_relationship)})` : ''}${project.secondary_contact ? ` &middot; ${esc(project.secondary_contact)}` : ''}`
+   : ''}
 </div>
+${scheduleRows}
 ${images ? `<h3>Approved design</h3>${images}` : ''}
 ${rows}
 ${measureRows}

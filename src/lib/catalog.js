@@ -199,15 +199,28 @@ export const STEPS = [
         ],
       },
       {
-        id: 'sleeveButtons',
-        label: 'Sleeve Buttons',
+        id: 'buttonColour',
+        label: 'Button Finish',
         type: 'choice',
         required: true,
-        prompt: (v) => `${v} working cuff buttons`,
+        prompt: (v, spec) =>
+          v === 'custom'
+            ? `buttons in ${nameColour(spec.buttonColourCustom || '#c9a227')}`
+            : `${v} buttons`,
         options: [
-          { key: '3', label: '3 Buttons', price: 0 },
-          { key: '4', label: '4 Buttons', price: 0 },
+          { key: 'neutral', label: 'Neutral', desc: 'Matched to the cloth', price: 0 },
+          { key: 'gold', label: 'Gold', price: 180 },
+          { key: 'silver', label: 'Silver', price: 180 },
+          { key: 'custom', label: 'Custom Colour', desc: 'Pick below', price: 240 },
         ],
+      },
+      {
+        id: 'buttonColourCustom',
+        label: 'Button Colour',
+        type: 'colour',
+        showIf: (s) => s.buttonColour === 'custom',
+        default: '#c9a227',
+        prompt: () => null, // already named by the finish clause above
       },
     ],
   },
@@ -264,6 +277,22 @@ export const STEPS = [
           { key: 'clips', label: 'Clips', price: 0 },
           { key: 'single_button', label: 'Single Button', price: 0 },
           { key: 'double_button', label: 'Double Button', price: 80 },
+        ],
+      },
+      {
+        id: 'bottomFinish',
+        label: 'Bottom Finish',
+        type: 'choice',
+        required: true,
+        prompt: (v) => ({
+          straight: 'a straight cut through the bottom of the leg',
+          tapered: 'a tapered finish through the bottom of the leg',
+          slim: 'a slim fit through the bottom of the leg',
+        })[v],
+        options: [
+          { key: 'straight', label: 'Straight Cut', price: 0 },
+          { key: 'tapered', label: 'Tapered Finish', price: 0 },
+          { key: 'slim', label: 'Slim Fit', price: 0 },
         ],
       },
       {
@@ -370,7 +399,6 @@ export const STEPS = [
           { key: 'wing', label: 'Wing', desc: 'Black tie', price: 90 },
         ],
       },
-      { id: 'shirtButtonColour', label: 'Button Colour', type: 'colour', showIf: (s) => s.shirt, default: '#ffffff', prompt: () => null },
       {
         id: 'shirtCuff',
         label: 'Cuff Style',
@@ -423,6 +451,12 @@ export const STEPS = [
         ],
       },
       { id: 'liningColour', label: 'Lining Colour', type: 'colour', showIf: (s) => s.liningMode === 'colour', default: '#1b2a4a', prompt: () => null },
+      { id: 'liningCollage', label: 'Custom lining - upload collage', type: 'images', slot: 'lining_collage',
+        showIf: (s) => s.liningMode === 'pattern',
+        hint: 'The artwork the lining is printed from. Several images can be added.',
+        prompt: () => null },
+      { id: 'monogramCollar', label: 'Monogram - jacket collar', type: 'text', price: 200, maxLength: 24,
+        placeholder: 'e.g. G.D.', prompt: (v) => `a monogram reading "${v}" under the jacket collar` },
       { id: 'monogramPocket', label: 'Monogram - pocket', type: 'text', price: 200, maxLength: 24, placeholder: 'e.g. G.D.',
         prompt: (v) => `a monogram reading "${v}" on the pocket` },
       { id: 'monogramLining', label: 'Monogram - lining', type: 'text', price: 200, maxLength: 40, placeholder: 'e.g. Tailored for Sipho, 2026',
@@ -493,7 +527,7 @@ export const PROJECT_STATUSES = [
   { key: 'approved', label: 'Approved by client', pill: 'pill-ok' },
   { key: 'first_fitting', label: 'First fitting', pill: 'pill-warn' },
   { key: 'final_fitting', label: 'Final fitting', pill: 'pill-warn' },
-  { key: 'delivered', label: 'Delivered', pill: 'pill-ok' },
+  { key: 'delivered', label: 'Delivery', pill: 'pill-ok' },
 ];
 
 export const statusLabel = (key) =>

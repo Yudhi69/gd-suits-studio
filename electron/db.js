@@ -218,6 +218,24 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_options_field ON catalog_options(field_id);
     `);
   },
+
+  // v6 - a guardian for under-age clients, and the dates the process actually
+  // runs to. Matric ball clients are usually minors, so the person who signs
+  // and pays is not the person being measured.
+  (d) => {
+    d.exec(`
+      ALTER TABLE clients ADD COLUMN is_minor INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE clients ADD COLUMN secondary_name TEXT NOT NULL DEFAULT '';
+      ALTER TABLE clients ADD COLUMN secondary_relationship TEXT NOT NULL DEFAULT '';
+      ALTER TABLE clients ADD COLUMN secondary_contact TEXT NOT NULL DEFAULT '';
+      ALTER TABLE clients ADD COLUMN secondary_email TEXT NOT NULL DEFAULT '';
+
+      ALTER TABLE projects ADD COLUMN consultation_date TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN measurement_date TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN first_fitting_date TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN final_fitting_date TEXT NOT NULL DEFAULT '';
+    `);
+  },
 ];
 
 function open(userDataPath) {
@@ -265,13 +283,23 @@ function listClients() {
 function upsertClient(client) {
   const d = get();
   if (client.id) {
-    const sets = ['name=@name', 'surname=@surname', 'contact=@contact', 'email=@email'];
+    const sets = [
+      'name=@name', 'surname=@surname', 'contact=@contact', 'email=@email',
+      'is_minor=@is_minor', 'secondary_name=@secondary_name',
+      'secondary_relationship=@secondary_relationship',
+      'secondary_contact=@secondary_contact', 'secondary_email=@secondary_email',
+    ];
     const params = {
       id: client.id,
       name: client.name ?? '',
       surname: client.surname ?? '',
       contact: client.contact ?? '',
       email: client.email ?? '',
+      is_minor: client.isMinor ? 1 : 0,
+      secondary_name: client.secondaryName ?? '',
+      secondary_relationship: client.secondaryRelationship ?? '',
+      secondary_contact: client.secondaryContact ?? '',
+      secondary_email: client.secondaryEmail ?? '',
       updated_at: nowStamp(),
     };
     if (client.profile !== undefined) {
@@ -282,8 +310,25 @@ function upsertClient(client) {
     return client.id;
   }
   const info = d
-    .prepare(`INSERT INTO clients (name, surname, contact, email) VALUES (@name, @surname, @contact, @email)`)
-    .run({ name: client.name ?? '', surname: client.surname ?? '', contact: client.contact ?? '', email: client.email ?? '' });
+    .prepare(
+      `INSERT INTO clients
+         (name, surname, contact, email, is_minor,
+          secondary_name, secondary_relationship, secondary_contact, secondary_email)
+       VALUES
+         (@name, @surname, @contact, @email, @is_minor,
+          @secondary_name, @secondary_relationship, @secondary_contact, @secondary_email)`
+    )
+    .run({
+      name: client.name ?? '',
+      surname: client.surname ?? '',
+      contact: client.contact ?? '',
+      email: client.email ?? '',
+      is_minor: client.isMinor ? 1 : 0,
+      secondary_name: client.secondaryName ?? '',
+      secondary_relationship: client.secondaryRelationship ?? '',
+      secondary_contact: client.secondaryContact ?? '',
+      secondary_email: client.secondaryEmail ?? '',
+    });
   return info.lastInsertRowid;
 }
 
@@ -305,7 +350,9 @@ function listProjects(clientId) {
 function getProject(id) {
   const d = get();
   const project = d
-    .prepare(`SELECT p.*, c.name, c.surname, c.contact, c.email
+    .prepare(`SELECT p.*, c.name, c.surname, c.contact, c.email, c.is_minor,
+                     c.secondary_name, c.secondary_relationship,
+                     c.secondary_contact, c.secondary_email
                 FROM projects p JOIN clients c ON c.id = p.client_id
                WHERE p.id = ?`)
     .get(id);
@@ -342,7 +389,10 @@ function createProject({ clientId, title, eventType, eventOther, eventDate, deli
 }
 
 function updateProject(id, patch) {
-  const allowed = ['title', 'event_type', 'event_other', 'event_date', 'delivery_date', 'status'];
+  const allowed = [
+    'title', 'event_type', 'event_other', 'event_date', 'delivery_date', 'status',
+    'consultation_date', 'measurement_date', 'first_fitting_date', 'final_fitting_date',
+  ];
   const d = get();
   const sets = [];
   const params = { id, updated_at: nowStamp() };

@@ -229,6 +229,11 @@ handle('clients:save', (c) => db.upsertClient({
   surname: v.str(c.surname, 'surname', 120),
   contact: v.str(c.contact, 'contact number', 60),
   email: v.str(c.email, 'email', 200),
+  isMinor: !!c.isMinor,
+  secondaryName: v.str(c.secondaryName, 'name', 200),
+  secondaryRelationship: v.str(c.secondaryRelationship, 'relationship', 60),
+  secondaryContact: v.str(c.secondaryContact, 'contact number', 60),
+  secondaryEmail: v.str(c.secondaryEmail, 'email', 200),
   profile: v.jsonBlob(c.profile, 'profile', 64 * 1024),
 }));
 handle('clients:delete', ({ id }) => {
@@ -259,6 +264,9 @@ handle('projects:update', ({ id, patch = {} }) => {
   if (patch.event_other !== undefined) clean.event_other = v.str(patch.event_other, 'event detail', 200);
   if (patch.event_date !== undefined) clean.event_date = v.str(patch.event_date, 'event date', 40);
   if (patch.delivery_date !== undefined) clean.delivery_date = v.str(patch.delivery_date, 'delivery date', 40);
+  for (const key of ['consultation_date', 'measurement_date', 'first_fitting_date', 'final_fitting_date']) {
+    if (patch[key] !== undefined) clean[key] = v.str(patch[key], key.replace(/_/g, ' '), 40);
+  }
   if (patch.status !== undefined) clean.status = v.oneOf(patch.status, v.PROJECT_STATUSES, 'status');
   if (patch.spec !== undefined) clean.spec = v.jsonBlob(patch.spec, 'spec');
   if (patch.analysis !== undefined) clean.analysis = v.jsonBlob(patch.analysis, 'analysis');

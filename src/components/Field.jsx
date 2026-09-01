@@ -1,14 +1,16 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Switch, DebouncedInput } from './ui.jsx';
 import ColourPicker from './ColourPicker.jsx';
 import { AddOptionTile, OptionEditor } from './AddOption.jsx';
+import { fileToDataUrl } from '../lib/image.js';
+import { useToast, ConfirmButton } from './ui.jsx';
 import { formatMoney } from '../lib/pricing.js';
 
 /**
  * Renders one catalog field. Every control in the builder comes through here,
  * so adding an option to `catalog.js` is all it takes to extend the flow.
  */
-export default function Field({ field, spec, overrides = {}, onChange, onCatalogChanged }) {
+export default function Field({ field, spec, overrides = {}, onChange, onCatalogChanged, media }) {
   const [editingOption, setEditingOption] = useState(null);
   const value = spec[field.id];
 
@@ -93,6 +95,10 @@ export default function Field({ field, spec, overrides = {}, onChange, onCatalog
     );
   }
 
+  if (field.type === 'images') {
+    return <ImageField field={field} media={media} />;
+  }
+
   if (field.type === 'colour') {
     return <ColourField field={field} value={value} onChange={onChange} />;
   }
@@ -169,6 +175,87 @@ function ColourField({ field, value, onChange }) {
           <ColourPicker label={field.id} value={current} onChange={(v) => onChange(field.id, v)} />
         </div>
       )}
+    </div>
+  );
+}
+
+
+/**
+ * A set of images attached to the order rather than a value on the spec - the
+ * lining collage is artwork, not a choice. Several can be added, because a
+ * collage is usually assembled from more than one picture.
+ */
+function ImageField({ field, media }) {
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+
+  if (!media) return null;
+  const images = media.photosFor(field.slot);
+
+  async function add(files) {
+    const picked = [...files].filter((f) => f.type.startsWith('image/'));
+    if (!picked.length) return;
+    setBusy(true);
+    try {
+      for (const file of picked) {
+        const { dataUrl, width, height } = await fileToDataUrl(file);
+        await media.add({ slot: field.slot, dataUrl, meta: { width, height } });
+      }
+    } catch (err) {
+      toast(err.message, 'err');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="field">
+      <label>{field.label}</label>
+      {field.hint && <div className="hint" style={{ marginTop: -2 }}>{field.hint}</div>}
+
+      <div
+        className="swatch-row"
+        style={{ marginTop: 8 }}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files); }}
+      >
+        {images.map((photo) => (
+          <div key={photo.id} style={{ position: 'relative' }}>
+            <img
+              src={media.urlFor(photo.filename)}
+              alt=""
+              style={{ width: 92, height: 92, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--line)' }}
+            />
+            <ConfirmButton
+              className="ref-star"
+              confirmLabel="!"
+              onConfirm={() => media.remove(photo.id)}
+            >
+              x
+            </ConfirmButton>
+          </div>
+        ))}
+
+        <button
+          type="button"
+          className="btn"
+          style={{ width: 92, height: 92, display: 'grid', placeItems: 'center' }}
+          onClick={() => inputRef.current?.click()}
+          disabled={busy}
+        >
+          {busy ? '...' : '+'}
+        </button>
+      </div>
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={(e) => { add(e.target.files); e.target.value = ''; }}
+      />
     </div>
   );
 }
