@@ -29,7 +29,7 @@ function wrap(group, action) {
 const GROUPS = [
   'clients', 'projects', 'photos', 'references', 'clientMeasurements',
   'notes', 'measurements', 'fittings', 'settings', 'secrets',
-  'ai', 'renders', 'project', 'app',
+  'ai', 'renders', 'project', 'app', 'updates',
 ];
 
 export const api = {};

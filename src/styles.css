@@ -200,6 +200,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
   display: flex; flex-direction: column; gap: 6px;
 }
 
+.update-flag {
+  width: 100%; padding: 6px 9px; margin-bottom: 4px;
+  border-radius: 7px; cursor: pointer; text-align: left;
+  border: 1px solid var(--gold-deep);
+  background: linear-gradient(135deg, var(--gold-bright), var(--gold));
+  color: #241d05; font-size: 11.5px; font-weight: 700;
+}
+.update-flag:hover { filter: brightness(1.06); }
+
 .theme-switch {
   display: flex; gap: 2px; padding: 2px; margin-bottom: 4px;
   background: var(--sidebar-2); border-radius: 8px;

@@ -13,11 +13,21 @@ export default function App() {
   const [overrides, setOverrides] = useState({});
   const [keyState, setKeyState] = useState(null);
   const theme = useTheme();
+  const [updateReady, setUpdateReady] = useState(null);
 
   useEffect(() => {
     (async () => {
       setOverrides((await api.settings.get({ key: 'priceOverrides', fallback: {} })) ?? {});
       setKeyState(await api.secrets.describe({ name: 'gemini' }));
+
+      // Only if the tailor asked for it. Nothing about them is sent - it is a
+      // plain GET for the latest published version number.
+      if (await api.settings.get({ key: 'autoCheckUpdates', fallback: false })) {
+        api.updates
+          .check()
+          .then((result) => result.updateAvailable && setUpdateReady(result))
+          .catch(() => {});
+      }
     })();
   }, []);
 
@@ -60,6 +70,11 @@ export default function App() {
                 </button>
               ))}
             </div>
+            {updateReady && (
+              <button className="update-flag" onClick={() => setRoute({ name: 'settings' })}>
+                Version {updateReady.version} available
+              </button>
+            )}
             <div>{keyState?.present ? 'AI rendering ready' : 'Offline mode - no API key'}</div>
             <div style={{ opacity: .6 }}>Local data, on this machine</div>
           </div>

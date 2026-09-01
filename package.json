@@ -21,7 +21,8 @@
     "test:render": "cross-env DATA_DIR=.testdata/render electron scripts/test-render-pipeline.js",
     "test:tour": "cross-env DATA_DIR=.testdata/tour SHOT_DIR=.testdata/shots electron scripts/screenshot-tour.js",
     "test:security": "cross-env DATA_DIR=.testdata/security electron scripts/test-security.js",
-    "test": "npm run test:security && npm run test:render"
+    "test": "npm run test:security && npm run test:updates && npm run test:render",
+    "test:updates": "cross-env DATA_DIR=.testdata/updates electron scripts/test-updates.js"
   },
   "dependencies": {
     "better-sqlite3": "^12.2.0"

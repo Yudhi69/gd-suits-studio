@@ -159,11 +159,48 @@ the judgement this app exists to support.
 
 ---
 
+## Updates
+
+**Settings → Updates → Check for updates.** It compares the installed version
+against a release feed, shows what changed, and offers the download built for
+that machine (arm64 vs Intel vs Windows is chosen automatically).
+
+It **checks and notifies rather than installing by itself**, and that is a
+constraint rather than a preference. Squirrel — the machinery behind Electron's
+auto-update — verifies the code signature of the replacement bundle, and these
+builds are ad-hoc signed because there is no Apple Developer ID yet. A silent
+self-update would simply fail on macOS. Handing the download to the browser
+means the tailor sees what they are installing, which is the right default for
+an app that cannot yet prove its own provenance. Once the app is signed,
+`electron-updater` drops in behind the same button — the feed shape is already
+what it expects.
+
+Nothing this app downloads is ever executed by this app.
+
+**Publishing a release.** Bump `version` in `package.json`, build, and attach
+the installers to a GitHub release. The default feed is the releases endpoint
+for this repository.
+
+Two things to know while the repository is **private**: its releases are
+private too, so the check returns "no releases found" until either an access
+token is set (Settings → Updates → Where updates come from) or releases are
+published somewhere public. A token is fine for your own machine but should
+not be shipped to anyone else's — publish releases publicly before handing the
+app out. The feed can also point at a plain JSON file of the shape
+`{ version, notes, url, assets: [{ name, url }] }`; it must be https.
+
+Auto-check on launch is **off by default** and can be turned on in the same
+place. It is one GET for the latest version number; nothing about the user or
+their clients is sent.
+
+---
+
 ## Tests
 
 ```bash
-npm test              # security checks, then the render pipeline
+npm test              # security, updates, then the render pipeline
 npm run test:security # proves the hardening actually blocks attacks
+npm run test:updates  # the update flow against a stubbed release feed
 npm run test:render   # drives the whole render pipeline with the network stubbed
 npm run test:tour     # boots the UI, walks every step, writes screenshots
 ```
@@ -173,6 +210,8 @@ the request shape, that the returned image is stored and served back, that a
 tweak chains to its parent, and that reference usage is recorded.
 `test:security` attempts real attacks — path traversal, id injection, a
 disguised HTML payload, renderer network egress — and fails if any succeeds.
+`test:updates` covers version comparison, per-platform asset selection, and
+that a `file://` or `javascript:` download address is refused.
 
 ---
 

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api, messageFor } from '../lib/api.js';
 import { priceCatalogEntries, formatMoney } from '../lib/pricing.js';
 import { CURRENCY } from '../lib/catalog.js';
-import { Banner, Collapsible, DebouncedInput, SecretInput, Spinner, useToast } from '../components/ui.jsx';
+import { Banner, Collapsible, DebouncedInput, SecretInput, Spinner, Switch, useToast } from '../components/ui.jsx';
 
 export default function Settings({ overrides, onOverridesChanged, keyState, onKeyChanged }) {
   const [keyInput, setKeyInput] = useState('');
@@ -12,6 +12,14 @@ export default function Settings({ overrides, onOverridesChanged, keyState, onKe
   const [visionModel, setVisionModel] = useState('');
   const [info, setInfo] = useState(null);
   const [posture, setPosture] = useState(null);
+  const [update, setUpdate] = useState(null);
+  const [updateError, setUpdateError] = useState(null);
+  const [checking, setChecking] = useState(false);
+  const [feed, setFeed] = useState('');
+  const [defaultFeed, setDefaultFeed] = useState('');
+  const [autoCheck, setAutoCheck] = useState(false);
+  const [tokenState, setTokenState] = useState(null);
+  const [tokenInput, setTokenInput] = useState('');
   const [tab, setTab] = useState('ai');
   const toast = useToast();
 
@@ -21,6 +29,11 @@ export default function Settings({ overrides, onOverridesChanged, keyState, onKe
       setVisionModel(await api.settings.get({ key: 'visionModel', fallback: 'gemini-2.5-flash' }));
       setInfo(await api.app.info());
       setPosture(await api.app.security().catch(() => null));
+      const fallback = await api.updates.defaultFeed().catch(() => '');
+      setDefaultFeed(fallback);
+      setFeed((await api.settings.get({ key: 'updateFeed', fallback })) || fallback);
+      setAutoCheck(!!(await api.settings.get({ key: 'autoCheckUpdates', fallback: false })));
+      setTokenState(await api.secrets.describe({ name: 'updateToken' }).catch(() => null));
     })();
   }, []);
 
@@ -56,6 +69,21 @@ export default function Settings({ overrides, onOverridesChanged, keyState, onKe
     toast('Model saved', 'ok');
   }
 
+  async function checkForUpdates() {
+    setChecking(true);
+    setUpdateError(null);
+    try {
+      const result = await api.updates.check();
+      setUpdate(result);
+      toast(result.updateAvailable ? `Version ${result.version} is available` : 'You are on the latest version', 'ok');
+    } catch (err) {
+      setUpdateError(messageFor(err));
+      setUpdate(null);
+    } finally {
+      setChecking(false);
+    }
+  }
+
   const entries = priceCatalogEntries();
   const grouped = entries.reduce((acc, e) => { (acc[e.step] ??= []).push(e); return acc; }, {});
 
@@ -71,6 +99,9 @@ export default function Settings({ overrides, onOverridesChanged, keyState, onKe
         <div className="stepper" style={{ marginBottom: 20 }}>
           <button className={`step-tab ${tab === 'ai' ? 'active' : ''}`} onClick={() => setTab('ai')}>AI rendering</button>
           <button className={`step-tab ${tab === 'prices' ? 'active' : ''}`} onClick={() => setTab('prices')}>Price list</button>
+          <button className={`step-tab ${tab === 'updates' ? 'active' : ''}`} onClick={() => setTab('updates')}>
+            Updates{update?.updateAvailable ? ' •' : ''}
+          </button>
           <button className={`step-tab ${tab === 'about' ? 'active' : ''}`} onClick={() => setTab('about')}>About &amp; data</button>
         </div>
 
@@ -221,6 +252,163 @@ export default function Settings({ overrides, onOverridesChanged, keyState, onKe
                 );
               })}
             </div>
+          </div>
+        )}
+
+        {tab === 'updates' && (
+          <div className="stack">
+            <div className="card">
+              <div className="card-head">
+                <h3>Version</h3>
+                <div className="spacer" />
+                <span className="pill pill-quiet">Installed: {info?.version ?? '...'}</span>
+              </div>
+              <div className="card-pad">
+                <div className="inline">
+                  <button className="btn btn-gold" onClick={checkForUpdates} disabled={checking}>
+                    {checking ? <><Spinner /> Checking...</> : 'Check for updates'}
+                  </button>
+                  {update && !update.updateAvailable && (
+                    <span className="pill pill-ok">Up to date</span>
+                  )}
+                  {update?.updateAvailable && (
+                    <span className="pill">Version {update.version} available</span>
+                  )}
+                </div>
+
+                {updateError && <Banner kind="warn"><div style={{ marginTop: 10 }}>{updateError}</div></Banner>}
+
+                {update?.updateAvailable && (
+                  <div style={{ marginTop: 16 }}>
+                    <div className="price-line">
+                      <span className="muted">New version</span>
+                      <span style={{ fontWeight: 600 }}>{update.version}</span>
+                    </div>
+                    {update.publishedAt && (
+                      <div className="price-line">
+                        <span className="muted">Published</span>
+                        <span className="mono small">{update.publishedAt.slice(0, 10)}</span>
+                      </div>
+                    )}
+                    {update.downloadName && (
+                      <div className="price-line">
+                        <span className="muted">For this machine</span>
+                        <span className="mono small">{update.downloadName}</span>
+                      </div>
+                    )}
+
+                    {update.notes && (
+                      <>
+                        <div className="price-group-title">What changed</div>
+                        {/* Release notes come from a remote server, so they are
+                            shown as plain text - never parsed as markup. */}
+                        <div className="note" style={{ whiteSpace: 'pre-wrap', maxHeight: 260, overflowY: 'auto' }}>
+                          {update.notes}
+                        </div>
+                      </>
+                    )}
+
+                    <div className="inline" style={{ marginTop: 14 }}>
+                      <button
+                        className="btn btn-gold"
+                        onClick={async () => {
+                          try {
+                            await api.updates.download({ url: update.downloadUrl });
+                          } catch (err) {
+                            toast(messageFor(err), 'err');
+                          }
+                        }}
+                      >
+                        Download {update.version}
+                      </button>
+                      {update.pageUrl && update.pageUrl !== update.downloadUrl && (
+                        <button className="btn" onClick={() => api.updates.download({ url: update.pageUrl })}>
+                          Open the release page
+                        </button>
+                      )}
+                    </div>
+
+                    <Banner kind="info">
+                      <div>
+                        The download opens in your browser. Quit GD Suits Studio, install it the same way you
+                        installed this copy, and reopen - your client files are untouched by an update.
+                        <div className="small" style={{ marginTop: 6, opacity: .85 }}>
+                          It does not update itself in place because these builds are ad-hoc signed. macOS refuses
+                          to swap out a bundle it cannot verify, so a silent update would fail. Once the app is
+                          signed with an Apple Developer ID, one-click updates can be switched on.
+                        </div>
+                      </div>
+                    </Banner>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <Collapsible title="Where updates come from" summary="Advanced">
+              <div className="field" style={{ marginTop: 12 }}>
+                <label>Update address</label>
+                <DebouncedInput
+                  className="input mono"
+                  value={feed}
+                  onCommit={async (val) => {
+                    const next = val.trim() || defaultFeed;
+                    setFeed(next);
+                    await api.settings.set({ key: 'updateFeed', value: next });
+                    toast('Update address saved', 'ok');
+                  }}
+                />
+                <div className="hint">
+                  A GitHub releases endpoint, or a JSON file of the shape
+                  <span className="mono"> {'{ version, notes, url, assets }'}</span>. Must be https.
+                </div>
+              </div>
+
+              <div className="field">
+                <label>Access token {tokenState?.present && <span className="mono faint">({tokenState.hint})</span>}</label>
+                <div className="inline">
+                  <SecretInput
+                    placeholder="Only needed while the repository is private"
+                    value={tokenInput}
+                    onChange={setTokenInput}
+                    onEnter={async () => {
+                      const state = await api.secrets.set({ name: 'updateToken', value: tokenInput.trim() });
+                      setTokenState(state);
+                      setTokenInput('');
+                      toast(state.present ? 'Token saved' : 'Token removed', 'ok');
+                    }}
+                  />
+                  <button
+                    className="btn btn-primary"
+                    onClick={async () => {
+                      const state = await api.secrets.set({ name: 'updateToken', value: tokenInput.trim() });
+                      setTokenState(state);
+                      setTokenInput('');
+                      toast(state.present ? 'Token saved' : 'Token removed', 'ok');
+                    }}
+                  >
+                    Save
+                  </button>
+                </div>
+                <div className="hint">
+                  Stored with the same keychain encryption as the API key. A token should not be shipped to other
+                  people's machines - publish releases publicly instead before handing the app out.
+                </div>
+              </div>
+
+              <div className="toggle-row" style={{ marginBottom: 4 }}>
+                <div>
+                  <div style={{ fontWeight: 600 }}>Check automatically on launch</div>
+                  <div className="tiny faint">One request to the address above when the app opens. Nothing is sent about you.</div>
+                </div>
+                <Switch
+                  checked={autoCheck}
+                  onChange={async (val) => {
+                    setAutoCheck(val);
+                    await api.settings.set({ key: 'autoCheckUpdates', value: val });
+                  }}
+                />
+              </div>
+            </Collapsible>
           </div>
         )}
 

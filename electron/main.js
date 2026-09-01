@@ -10,6 +10,7 @@ const storage = require('./storage');
 const secrets = require('./secrets');
 const gemini = require('./ai/gemini');
 const security = require('./security');
+const updater = require('./updater');
 const v = require('./validate');
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -364,17 +365,19 @@ handle('fittings:update', ({ id, tailorNotes, clientNotes }) => db.updateFitting
 handle('fittings:delete', ({ id }) => db.deleteFitting(v.id(id)));
 
 /* settings + secrets */
-const SETTING_KEYS = ['priceOverrides', 'imageModel', 'visionModel', 'theme'];
+const SETTING_KEYS = ['priceOverrides', 'imageModel', 'visionModel', 'theme', 'updateFeed', 'autoCheckUpdates'];
 handle('settings:get', ({ key, fallback }) => db.getSetting(v.oneOf(key, SETTING_KEYS, 'setting'), fallback ?? null));
 handle('settings:set', ({ key, value }) => {
   const name = v.oneOf(key, SETTING_KEYS, 'setting');
   if (name === 'imageModel' || name === 'visionModel') return db.setSetting(name, v.modelName(value));
   if (name === 'theme') return db.setSetting(name, v.oneOf(value, ['system', 'light', 'dark'], 'theme'));
+  if (name === 'updateFeed') return db.setSetting(name, v.str(value, 'update address', 500).trim());
+  if (name === 'autoCheckUpdates') return db.setSetting(name, !!value);
   return db.setSetting(name, v.jsonBlob(value, 'value', 128 * 1024));
 });
-handle('secrets:describe', ({ name }) => secrets.describe(v.oneOf(name, ['gemini'], 'secret')));
+handle('secrets:describe', ({ name }) => secrets.describe(v.oneOf(name, ['gemini', 'updateToken'], 'secret')));
 handle('secrets:set', ({ name, value }) => {
-  const secret = v.oneOf(name, ['gemini'], 'secret');
+  const secret = v.oneOf(name, ['gemini', 'updateToken'], 'secret');
   secrets.set(secret, v.str(value, 'key', 400).trim());
   return secrets.describe(secret);
 });
@@ -517,13 +520,35 @@ handle('project:export', async ({ projectId, html }) => {
 });
 
 handle('app:info', () => ({
-  version: app.getVersion(),
+  version: updater.currentVersion(),
   userData: app.getPath('userData'),
   platform: process.platform,
   online: true,
 }));
 
 handle('app:openDataFolder', () => shell.openPath(app.getPath('userData')));
+
+/* updates - checked on demand, never applied silently */
+const DEFAULT_FEED = 'https://api.github.com/repos/Yudhi69/gd-suits-studio/releases/latest';
+
+handle('updates:check', () =>
+  updater.check({
+    feedUrl: db.getSetting('updateFeed', DEFAULT_FEED) || DEFAULT_FEED,
+    token: secrets.get('updateToken'),
+  })
+);
+
+/**
+ * Hands the download to the browser rather than fetching and running it.
+ * Nothing this app downloads is ever executed by this app.
+ */
+handle('updates:download', ({ url }) => {
+  const opened = security.openExternalSafely(v.str(url, 'download address', 800));
+  if (!opened) throw new Error('That download address was refused - it must be an https link.');
+  return { opened: true };
+});
+
+handle('updates:defaultFeed', () => DEFAULT_FEED);
 
 /**
  * What the app can tell the user about how their data is held. Surfaced in
@@ -533,5 +558,11 @@ handle('app:security', () => ({
   userData: app.getPath('userData'),
   keyEncrypted: secrets.describe('gemini').encrypted,
   sandboxed: true,
-  networkHosts: [...security.ALLOWED_HOSTS],
+  networkHosts: [
+    ...security.ALLOWED_HOSTS,
+    (() => {
+      try { return new URL(db.getSetting('updateFeed', DEFAULT_FEED) || DEFAULT_FEED).host; }
+      catch { return null; }
+    })(),
+  ].filter(Boolean),
 }));

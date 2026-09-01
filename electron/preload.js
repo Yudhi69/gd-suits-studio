@@ -22,6 +22,7 @@ const CHANNELS = [
   'renders:approve', 'renders:delete',
   'project:export',
   'app:info', 'app:openDataFolder', 'app:security',
+  'updates:check', 'updates:download', 'updates:defaultFeed',
 ];
 
 /**
