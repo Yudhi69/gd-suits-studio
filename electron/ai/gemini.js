@@ -36,7 +36,10 @@ function explain(status, body) {
     return new GeminiError('The API key is missing permission for this model, or billing is not enabled on the Google account.', { status, code: 'forbidden' });
   }
   if (status === 404) {
-    return new GeminiError(`That model is not available on this key. Open Settings and pick a model from the list.`, { status, code: 'no_model' });
+    return new GeminiError(
+      'That model is not available on this key. Open Settings > AI rendering and choose one from the list - it is loaded from your key, so everything in it will work.',
+      { status, code: 'no_model' }
+    );
   }
   if (status === 429) {
     return new GeminiError('Google rate-limited the request. Wait a moment and try again.', { status, code: 'rate_limit', retryable: true });
@@ -114,13 +117,24 @@ async function listModels(apiKey) {
     methods: m.supportedGenerationMethods ?? [],
   }));
 
+  // This app calls :generateContent, so anything that does not support it
+  // cannot be used no matter what it is named.
   const usable = models.filter((m) => m.methods.includes('generateContent'));
+
+  const isImage = (m) => /image/i.test(m.name) && !/embedding/i.test(m.name);
+  const isVision = (m) => /gemini/i.test(m.name) && !/image|embedding|tts|live|audio/i.test(m.name);
+
+  const image = usable.filter(isImage);
+  const vision = usable.filter(isVision);
+
   return {
     all: usable,
-    // Image-capable models are the ones whose name marks them as image models;
-    // Google has shipped these under several names, so match on the family.
-    image: usable.filter((m) => /image/i.test(m.name) && !/embedding|vision-embed/i.test(m.name)),
-    vision: usable.filter((m) => /gemini/i.test(m.name) && !/image|embedding|tts|live/i.test(m.name)),
+    image,
+    vision,
+    // Everything else that could still be selected by hand. Google renames
+    // these families often, so the picker offers the full list as a fallback
+    // rather than trapping the tailor behind a guess about naming.
+    other: usable.filter((m) => !isImage(m) && !isVision(m)),
   };
 }
 

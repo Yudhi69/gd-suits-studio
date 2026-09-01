@@ -8,6 +8,7 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
   const [keyInput, setKeyInput] = useState('');
   const [testing, setTesting] = useState(false);
   const [models, setModels] = useState(null);
+  const [modelsError, setModelsError] = useState(null);
   const [imageModel, setImageModel] = useState('');
   const [visionModel, setVisionModel] = useState('');
   const [info, setInfo] = useState(null);
@@ -39,6 +40,40 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
     })();
   }, []);
 
+  // The list is fetched as soon as there is a key, rather than waiting for the
+  // tailor to press a button they have no reason to know about. Without it the
+  // model fields fall back to free text, which is how an unavailable model
+  // gets saved in the first place.
+  useEffect(() => {
+    if (!keyState?.present) { setModels(null); return; }
+    let cancelled = false;
+    api.ai
+      .models()
+      .then((list) => { if (!cancelled) { setModels(list); setModelsError(null); } })
+      .catch((err) => { if (!cancelled) { setModels(null); setModelsError(messageFor(err)); } });
+    return () => { cancelled = true; };
+  }, [keyState?.present]);
+
+  /**
+   * If the saved model is not on this key, fall back to one that is rather
+   * than leaving the tailor with a render button that always fails.
+   */
+  useEffect(() => {
+    if (!models) return;
+    const available = new Set(models.all.map((m) => m.name));
+    if (imageModel && !available.has(imageModel) && models.image.length) {
+      const replacement = models.image[0].name;
+      setImageModel(replacement);
+      api.settings.set({ key: 'imageModel', value: replacement }).catch(() => {});
+      toast(`${imageModel} is not on this key - switched to ${replacement}`, 'info');
+    }
+    if (visionModel && !available.has(visionModel) && models.vision.length) {
+      const replacement = models.vision[0].name;
+      setVisionModel(replacement);
+      api.settings.set({ key: 'visionModel', value: replacement }).catch(() => {});
+    }
+  }, [models]); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function saveKey() {
     try {
       const state = await api.secrets.set({ name: 'gemini', value: keyInput.trim() });
@@ -53,12 +88,15 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
 
   async function loadModels() {
     setTesting(true);
+    setModelsError(null);
     try {
       const list = await api.ai.models();
       setModels(list);
-      toast(`Connected - ${list.all.length} models available`, 'ok');
+      toast(`Connected - ${list.image.length} image and ${list.vision.length} vision models on this key`, 'ok');
     } catch (err) {
-      toast(messageFor(err), 'err');
+      const message = messageFor(err);
+      setModelsError(message);
+      toast(message, 'err');
       setModels(null);
     } finally {
       setTesting(false);
@@ -177,37 +215,61 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
             </div>
 
             <div className="card">
-              <div className="card-head"><h3>Models</h3></div>
+              <div className="card-head">
+                <h3>Models</h3>
+                <div className="spacer" />
+                {models
+                  ? <span className="pill pill-ok">{models.all.length} available on this key</span>
+                  : keyState?.present
+                    ? <span className="pill pill-warn">List not loaded</span>
+                    : <span className="pill pill-quiet">Add a key first</span>}
+              </div>
               <div className="card-pad">
-                <div className="row">
-                  <div className="field">
-                    <label>Image model (renders)</label>
-                    {models?.image?.length ? (
-                      <select className="select" value={imageModel} onChange={(e) => setModel('imageModel', e.target.value, setImageModel)}>
-                        {models.image.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
-                      </select>
-                    ) : (
-                      <DebouncedInput className="input mono" value={imageModel} onCommit={(v) => setModel('imageModel', v, setImageModel)} />
-                    )}
-                    <div className="hint">Must be an image-generation model. Test the connection to load the live list.</div>
-                  </div>
-                  <div className="field">
-                    <label>Vision model (body read, sanity checks)</label>
-                    {models?.vision?.length ? (
-                      <select className="select" value={visionModel} onChange={(e) => setModel('visionModel', e.target.value, setVisionModel)}>
-                        {models.vision.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
-                      </select>
-                    ) : (
-                      <DebouncedInput className="input mono" value={visionModel} onCommit={(v) => setModel('visionModel', v, setVisionModel)} />
-                    )}
-                  </div>
-                </div>
-                {models && (
-                  <Banner kind="info">
-                    {models.image.length} image model{models.image.length === 1 ? '' : 's'} and {models.vision.length} vision
-                    model{models.vision.length === 1 ? '' : 's'} available on this key.
+                {!keyState?.present && (
+                  <Banner kind="info">Add an API key above and the models on it will be listed here.</Banner>
+                )}
+
+                {keyState?.present && modelsError && (
+                  <Banner kind="warn">
+                    <div>
+                      Could not load the model list: {modelsError}
+                      <div style={{ marginTop: 8 }}>
+                        <button className="btn btn-sm" onClick={loadModels} disabled={testing}>Try again</button>
+                      </div>
+                    </div>
                   </Banner>
                 )}
+
+                <div className="row">
+                  <ModelPicker
+                    label="Image model (renders)"
+                    hint="Only models that can return an image will produce a render."
+                    value={imageModel}
+                    models={models}
+                    preferred="image"
+                    onChange={(val) => setModel('imageModel', val, setImageModel)}
+                  />
+                  <ModelPicker
+                    label="Vision model (body read, sanity checks)"
+                    hint="Reads the client photographs and the measurements."
+                    value={visionModel}
+                    models={models}
+                    preferred="vision"
+                    onChange={(val) => setModel('visionModel', val, setVisionModel)}
+                  />
+                </div>
+
+                {models && models.image.length === 0 && (
+                  <Banner kind="warn">
+                    This key has no image-generation models on it, so renders will not work. Image models are
+                    enabled per Google account - check that billing is set up in Google AI Studio, then reload
+                    the list.
+                  </Banner>
+                )}
+
+                <button className="btn btn-sm" onClick={loadModels} disabled={!keyState?.present || testing}>
+                  {testing ? <><Spinner /> Loading...</> : 'Reload the model list'}
+                </button>
               </div>
             </div>
           </div>
@@ -531,6 +593,53 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
         />
       )}
     </>
+  );
+}
+
+/**
+ * A model chooser that only ever offers models the key actually has.
+ *
+ * Free text is what let an unavailable model get saved, so it is only offered
+ * when the list genuinely cannot be fetched - offline, or a key that cannot
+ * list models. The likely models for the job are grouped first, but the whole
+ * list stays reachable: Google renames these families often, and a picker that
+ * hides the model you need is worse than one that ranks them badly.
+ */
+function ModelPicker({ label, hint, value, models, preferred, onChange }) {
+  if (!models) {
+    return (
+      <div className="field">
+        <label>{label}</label>
+        <DebouncedInput className="input mono" value={value} onCommit={onChange} />
+        <div className="hint">{hint} Typed by hand because the list could not be loaded.</div>
+      </div>
+    );
+  }
+
+  const groups = [
+    { title: preferred === 'image' ? 'Image models' : 'Vision models', items: models[preferred] ?? [] },
+    { title: 'Other models on this key', items: models.all.filter((m) => !(models[preferred] ?? []).includes(m)) },
+  ].filter((g) => g.items.length);
+
+  const known = models.all.some((m) => m.name === value);
+
+  return (
+    <div className="field">
+      <label>{label}</label>
+      <select className={`select ${known ? '' : 'input-invalid'}`} value={known ? value : ''} onChange={(e) => onChange(e.target.value)}>
+        {!known && <option value="">{value ? `${value} - not on this key` : 'Choose a model'}</option>}
+        {groups.map((g) => (
+          <optgroup key={g.title} label={g.title}>
+            {g.items.map((m) => (
+              <option key={m.name} value={m.name}>
+                {m.name}{m.displayName && m.displayName !== m.name ? ` - ${m.displayName}` : ''}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+      <div className="hint">{known ? hint : 'The saved model is not available on this key. Pick one from the list.'}</div>
+    </div>
   );
 }
 

@@ -21,11 +21,12 @@
     "test:render": "cross-env DATA_DIR=.testdata/render electron scripts/test-render-pipeline.js",
     "test:tour": "cross-env DATA_DIR=.testdata/tour SHOT_DIR=.testdata/shots electron scripts/screenshot-tour.js",
     "test:security": "cross-env DATA_DIR=.testdata/security electron scripts/test-security.js",
-    "test": "npm run test:security && npm run test:updates && npm run test:catalog && npm run test:workflow && npm run test:render",
+    "test": "npm run test:security && npm run test:models && npm run test:updates && npm run test:catalog && npm run test:workflow && npm run test:render",
     "test:updates": "cross-env DATA_DIR=.testdata/updates electron scripts/test-updates.js",
     "test:catalog": "cross-env DATA_DIR=.testdata/catalog electron scripts/test-catalog.js",
     "test:workflow": "cross-env DATA_DIR=.testdata/workflow electron scripts/test-workflow.js",
-    "build:preload": "esbuild electron/preload.js --bundle --platform=node --format=cjs --external:electron --outfile=electron/preload.build.js --log-level=warning"
+    "build:preload": "esbuild electron/preload.js --bundle --platform=node --format=cjs --external:electron --outfile=electron/preload.build.js --log-level=warning",
+    "test:models": "cross-env DATA_DIR=.testdata/models electron scripts/test-models.js"
   },
   "dependencies": {
     "better-sqlite3": "^12.2.0"

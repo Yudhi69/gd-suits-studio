@@ -35,9 +35,10 @@ npm start        # production bundle, run locally
 
 1. Get a free API key at [aistudio.google.com](https://aistudio.google.com).
 2. Open **Settings → AI rendering**, paste it, press **Save**.
-3. Press **Test connection & list models** — the model dropdowns fill with
-   whatever that key can actually use, so nothing is hard-coded to a model
-   name that may be retired.
+3. The model dropdowns fill themselves from your key. Only models this app can
+   actually call are offered, so nothing is hard-coded to a name that may be
+   retired — and if a saved model is no longer on the key, it is swapped for
+   one that is rather than left to fail on every render.
 
 The key is encrypted with the OS keychain (Keychain on macOS, DPAPI on
 Windows) and never leaves the machine except in calls to Google.
@@ -234,6 +235,7 @@ npm test              # security, updates, catalog, workflow, then the render pi
 npm run test:security # proves the hardening actually blocks attacks
 npm run test:updates  # the update flow against a stubbed release feed
 npm run test:catalog  # adds a custom category and items, then checks the whole chain
+npm run test:models   # the model picker only offers models the key really has
 npm run test:workflow # units, custom options on built-in selectors, first/final fittings
 npm run test:render   # drives the whole render pipeline with the network stubbed
 npm run test:tour     # boots the UI, walks every step, writes screenshots
