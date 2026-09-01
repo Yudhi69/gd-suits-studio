@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { api, projectMedia, messageFor } from '../../lib/api.js';
 import { buildSpecSheet } from '../../lib/promptBuilder.js';
 import { buildBreakdown, formatMoney } from '../../lib/pricing.js';
-import { EVENT_TYPES, MEASUREMENTS } from '../../lib/catalog.js';
+import { EVENT_TYPES, MEASUREMENTS, statusLabel } from '../../lib/catalog.js';
+import { formatMeasure, unitLabel } from '../../lib/units.js';
 import { useToast, Spinner } from '../../components/ui.jsx';
 
 /**
@@ -25,7 +26,7 @@ const esc = (value) =>
  * be able to send over for approval, plus the export that writes the whole
  * client file out to a folder.
  */
-export default function SummaryStep({ ctx, overrides, steps }) {
+export default function SummaryStep({ ctx, overrides, steps, unit = 'cm' }) {
   const { project } = ctx;
   const [exporting, setExporting] = useState(false);
   const toast = useToast();
@@ -67,10 +68,10 @@ export default function SummaryStep({ ctx, overrides, steps }) {
         const taken = group.fields
           .map((f) => {
             const m = project.measurements.find((x) => x.garment === key && x.field_id === f.id && x.value !== null);
-            return m ? `<tr><td class="k">${esc(f.label)}</td><td class="num">${esc(m.value)} cm</td></tr>` : '';
+            return m ? `<tr><td class="k">${esc(f.label)}</td><td class="num">${esc(formatMeasure(m.value, unit))}</td></tr>` : '';
           })
           .join('');
-        return taken ? `<h3>${esc(group.label)} measurements</h3><table>${taken}</table>` : '';
+        return taken ? `<h3>${esc(group.label)} measurements (${esc(unitLabel(unit))})</h3><table>${taken}</table>` : '';
       })
       .join('');
 

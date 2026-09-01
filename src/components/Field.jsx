@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import { Switch, DebouncedInput } from './ui.jsx';
 import ColourPicker from './ColourPicker.jsx';
+import { AddOptionTile, OptionEditor } from './AddOption.jsx';
 import { formatMoney } from '../lib/pricing.js';
 
 /**
  * Renders one catalog field. Every control in the builder comes through here,
  * so adding an option to `catalog.js` is all it takes to extend the flow.
  */
-export default function Field({ field, spec, overrides = {}, onChange }) {
+export default function Field({ field, spec, overrides = {}, onChange, onCatalogChanged }) {
+  const [editingOption, setEditingOption] = useState(null);
   const value = spec[field.id];
 
   const priceFor = (opt) => {
@@ -38,10 +40,41 @@ export default function Field({ field, spec, overrides = {}, onChange }) {
                     {typeof opt.basePrice === 'number' ? '' : '+'}{formatMoney(amount)}
                   </div>
                 )}
+                {opt.custom && (
+                  <span
+                    className="option-edit"
+                    role="button"
+                    tabIndex={0}
+                    title="Edit this option"
+                    onClick={(e) => { e.stopPropagation(); setEditingOption(opt); }}
+                    onKeyDown={(e) => e.key === 'Enter' && (e.stopPropagation(), setEditingOption(opt))}
+                  >
+                    edit
+                  </span>
+                )}
               </button>
             );
           })}
+          {onCatalogChanged && (
+            <AddOptionTile fieldId={field.id} fieldLabel={field.label} onAdded={onCatalogChanged} />
+          )}
         </div>
+
+        {editingOption && (
+          <OptionEditor
+            fieldId={field.id}
+            fieldLabel={field.label}
+            existing={{
+              id: editingOption.optionId,
+              label: editingOption.label,
+              price: editingOption.price,
+              description: editingOption.desc,
+              prompt: editingOption.promptText,
+            }}
+            onClose={() => setEditingOption(null)}
+            onSaved={() => { setEditingOption(null); onCatalogChanged?.(); }}
+          />
+        )}
       </div>
     );
   }

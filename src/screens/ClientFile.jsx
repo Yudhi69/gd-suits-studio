@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { api, projectMedia } from '../lib/api.js';
 import { buildBreakdown, formatMoney } from '../lib/pricing.js';
-import { EVENT_TYPES } from '../lib/catalog.js';
+import { EVENT_TYPES, statusLabel, statusPill } from '../lib/catalog.js';
+import { formatMeasure, unitLabel } from '../lib/units.js';
 import { Empty, Spinner } from '../components/ui.jsx';
 import ReferenceLibrary from '../components/ReferenceLibrary.jsx';
 
@@ -10,7 +11,7 @@ import ReferenceLibrary from '../components/ReferenceLibrary.jsx';
  * images and the body record that carries between suits. This is the screen
  * the brief's "clients revisit their profile" depends on.
  */
-export default function ClientFile({ clientId, onBack, onOpenProject, steps, overrides }) {
+export default function ClientFile({ clientId, onBack, onOpenProject, steps, overrides, unit = 'cm' }) {
   const [client, setClient] = useState(null);
   const [projects, setProjects] = useState([]);
   const [references, setReferences] = useState([]);
@@ -66,7 +67,7 @@ export default function ClientFile({ clientId, onBack, onOpenProject, steps, ove
                       <td style={{ fontWeight: 600 }}>{p.title}</td>
                       <td className="muted">{EVENT_TYPES.find((e) => e.key === p.event_type)?.label ?? '-'}</td>
                       <td className="muted mono">{p.event_date || '-'}</td>
-                      <td><span className="pill pill-quiet">{p.status}</span></td>
+                      <td><span className={`pill ${statusPill(p.status)}`}>{statusLabel(p.status)}</span></td>
                       <td className="mono" style={{ textAlign: 'right' }}>
                         {formatMoney(buildBreakdown(JSON.parse(p.spec_json || '{}'), overrides, steps).total)}
                       </td>
@@ -114,7 +115,7 @@ export default function ClientFile({ clientId, onBack, onOpenProject, steps, ove
             <div className="card-head">
               <h3>Body record</h3>
               <div className="spacer" />
-              <span className="tiny faint">Carried into every new order automatically</span>
+              <span className="tiny faint">In {unitLabel(unit)} · carried into every new order automatically</span>
             </div>
             <div className="card-pad">
               {measurements.filter((m) => m.value !== null).length === 0 ? (
@@ -129,7 +130,7 @@ export default function ClientFile({ clientId, onBack, onOpenProject, steps, ove
                       {rows.map((m) => (
                         <div className="price-line" key={m.id}>
                           <span className="muted">{m.field_id}</span>
-                          <span className="mono">{m.value} cm <span className="faint tiny">{m.updated_at?.slice(0, 10)}</span></span>
+                          <span className="mono">{formatMeasure(m.value, unit)} <span className="faint tiny">{m.updated_at?.slice(0, 10)}</span></span>
                         </div>
                       ))}
                     </div>

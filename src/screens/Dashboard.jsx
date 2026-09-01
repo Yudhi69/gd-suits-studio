@@ -1,17 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
-import { EVENT_TYPES } from '../lib/catalog.js';
+import { eventTypesWith, statusLabel, statusPill } from '../lib/catalog.js';
 import { buildBreakdown, formatMoney } from '../lib/pricing.js';
 import { ConfirmButton, Empty, Modal, useToast } from '../components/ui.jsx';
 
-const STATUS_PILL = {
-  draft: 'pill-quiet',
-  approved: 'pill-ok',
-  fitting: 'pill-warn',
-  delivered: 'pill-ok',
-};
-
-export default function Dashboard({ onOpenProject, onOpenClient, steps, overrides }) {
+export default function Dashboard({ onOpenProject, onOpenClient, steps, overrides, customOptions = [] }) {
   const [clients, setClients] = useState([]);
   const [projects, setProjects] = useState([]);
   const [creating, setCreating] = useState(false);
@@ -83,9 +76,9 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
                     <tr key={p.id} className="clickable" onClick={() => onOpenProject(p.id)}>
                       <td style={{ fontWeight: 600 }}>{p.name} {p.surname}</td>
                       <td>{p.title}</td>
-                      <td className="muted">{EVENT_TYPES.find((e) => e.key === p.event_type)?.label ?? '-'}</td>
+                      <td className="muted">{eventTypesWith(customOptions).find((e) => e.key === p.event_type)?.label ?? '-'}</td>
                       <td className="muted mono">{p.event_date || '-'}</td>
-                      <td><span className={`pill ${STATUS_PILL[p.status] ?? 'pill-quiet'}`}>{p.status}</span></td>
+                      <td><span className={`pill ${statusPill(p.status)}`}>{statusLabel(p.status)}</span></td>
                       <td className="mono" style={{ textAlign: 'right' }}>{formatMoney(buildBreakdown(spec, overrides, steps).total)}</td>
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
                         <button className="btn btn-sm btn-ghost" onClick={() => onOpenClient(p.client_id)}>Client file</button>
@@ -113,6 +106,7 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
       {creating && (
         <NewConsultation
           clients={clients}
+          customOptions={customOptions}
           onClose={() => setCreating(false)}
           onCreated={(id) => { setCreating(false); onOpenProject(id); }}
         />
@@ -130,7 +124,7 @@ function StatCard({ label, value }) {
   );
 }
 
-function NewConsultation({ clients, onClose, onCreated }) {
+function NewConsultation({ clients, onClose, onCreated, customOptions = [] }) {
   const [mode, setMode] = useState(clients.length ? 'existing' : 'new');
   const [clientId, setClientId] = useState(clients[0]?.id ?? null);
   const [form, setForm] = useState({ name: '', surname: '', contact: '', email: '' });
@@ -150,7 +144,7 @@ function NewConsultation({ clients, onClose, onCreated }) {
 
       const projectId = await api.projects.create({
         clientId: id,
-        title: order.title.trim() || `${EVENT_TYPES.find((e) => e.key === order.eventType)?.label ?? 'New'} suit`,
+        title: order.title.trim() || `${eventTypesWith(customOptions).find((e) => e.key === order.eventType)?.label ?? 'New'} suit`,
         eventType: order.eventType,
         eventDate: order.eventDate,
         deliveryDate: order.deliveryDate,
@@ -238,7 +232,7 @@ function NewConsultation({ clients, onClose, onCreated }) {
       <div className="field">
         <label>Event type</label>
         <select className="select" value={order.eventType} onChange={(e) => setOrder({ ...order, eventType: e.target.value })}>
-          {EVENT_TYPES.map((e) => <option key={e.key} value={e.key}>{e.label}</option>)}
+          {eventTypesWith(customOptions).map((e) => <option key={e.key} value={e.key}>{e.label}</option>)}
         </select>
       </div>
       <div className="row">

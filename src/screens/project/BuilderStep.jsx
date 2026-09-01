@@ -4,7 +4,7 @@ import Field from '../../components/Field.jsx';
 import NotesPanel from '../../components/NotesPanel.jsx';
 
 /** Renders any catalog step. All the builder screens are this one component. */
-export default function BuilderStep({ ctx, step, overrides }) {
+export default function BuilderStep({ ctx, step, overrides, onCatalogChanged }) {
   const { project, updateSpec, addNote, deleteNote } = ctx;
   const spec = project.spec ?? {};
 
@@ -28,6 +28,7 @@ export default function BuilderStep({ ctx, step, overrides }) {
                 spec={spec}
                 overrides={overrides}
                 onChange={updateSpec}
+                onCatalogChanged={onCatalogChanged}
               />
             ))}
           </div>

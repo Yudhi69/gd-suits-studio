@@ -13,6 +13,7 @@ export default function App() {
   const [route, setRoute] = useState({ name: 'dashboard' });
   const [overrides, setOverrides] = useState({});
   const [keyState, setKeyState] = useState(null);
+  const [unit, setUnit] = useState('cm');
   const theme = useTheme();
   const catalog = useCatalog();
   const [updateReady, setUpdateReady] = useState(null);
@@ -20,6 +21,7 @@ export default function App() {
   useEffect(() => {
     (async () => {
       setOverrides((await api.settings.get({ key: 'priceOverrides', fallback: {} })) ?? {});
+      setUnit((await api.settings.get({ key: 'measureUnit', fallback: 'cm' })) ?? 'cm');
       setKeyState(await api.secrets.describe({ name: 'gemini' }));
 
       // Only if the tailor asked for it. Nothing about them is sent - it is a
@@ -87,6 +89,7 @@ export default function App() {
             <Dashboard
               steps={catalog.steps}
               overrides={overrides}
+              customOptions={catalog.options}
               onOpenProject={(id) => setRoute({ name: 'project', id })}
               onOpenClient={(id) => setRoute({ name: 'client', id })}
             />
@@ -97,6 +100,10 @@ export default function App() {
               projectId={route.id}
               steps={catalog.steps}
               overrides={overrides}
+              unit={unit}
+              onUnitChange={async (u) => { setUnit(u); await api.settings.set({ key: 'measureUnit', value: u }); }}
+              customOptions={catalog.options}
+              onCatalogChanged={catalog.reload}
               hasKey={!!keyState?.present}
               onBack={() => setRoute({ name: 'dashboard' })}
             />
@@ -107,6 +114,7 @@ export default function App() {
               clientId={route.id}
               steps={catalog.steps}
               overrides={overrides}
+              unit={unit}
               onBack={() => setRoute({ name: 'dashboard' })}
               onOpenProject={(id) => setRoute({ name: 'project', id })}
             />

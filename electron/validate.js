@@ -114,12 +114,13 @@ function modelName(value, field = 'model') {
 const PHOTO_SLOTS = ['front', 'side', 'back', 'face', 'fabric', 'lining', 'inspiration', 'fitting'];
 const GARMENTS = ['jacket', 'waistcoat', 'pants', 'shirt', ''];
 const REFERENCE_KINDS = ['style', 'fabric', 'lining', 'fit'];
-const PROJECT_STATUSES = ['draft', 'approved', 'fitting', 'delivered'];
+const PROJECT_STATUSES = ['draft', 'approved', 'first_fitting', 'final_fitting', 'delivered'];
+const FITTING_KINDS = ['first', 'final', 'extra'];
 
 module.exports = {
   ValidationError,
   id, optionalId, str, oneOf, num,
   filename, scope, dataUrl, jsonBlob, modelName,
-  PHOTO_SLOTS, GARMENTS, REFERENCE_KINDS, PROJECT_STATUSES,
+  PHOTO_SLOTS, GARMENTS, REFERENCE_KINDS, PROJECT_STATUSES, FITTING_KINDS,
   MAX_IMAGE_BYTES,
 };

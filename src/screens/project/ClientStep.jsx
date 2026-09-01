@@ -1,10 +1,11 @@
 import React from 'react';
 import { api } from '../../lib/api.js';
-import { EVENT_TYPES } from '../../lib/catalog.js';
+import { eventTypesWith, PROJECT_STATUSES } from '../../lib/catalog.js';
+import { AddOptionTile } from '../../components/AddOption.jsx';
 import { DebouncedInput, useToast } from '../../components/ui.jsx';
 import NotesPanel from '../../components/NotesPanel.jsx';
 
-export default function ClientStep({ ctx }) {
+export default function ClientStep({ ctx, customOptions = [], onCatalogChanged }) {
   const { project, updateProject, reload, addNote, deleteNote } = ctx;
   const toast = useToast();
 
@@ -64,7 +65,7 @@ export default function ClientStep({ ctx }) {
             <div className="field">
               <label>Event type</label>
               <div className="options">
-                {EVENT_TYPES.map((e) => (
+                {eventTypesWith(customOptions).map((e) => (
                   <button
                     key={e.key}
                     className={`option ${project.event_type === e.key ? 'selected' : ''}`}
@@ -73,6 +74,9 @@ export default function ClientStep({ ctx }) {
                     <div className="option-label">{e.label}</div>
                   </button>
                 ))}
+                {onCatalogChanged && (
+                  <AddOptionTile fieldId="eventType" fieldLabel="Event type" onAdded={onCatalogChanged} />
+                )}
               </div>
             </div>
 
@@ -98,11 +102,12 @@ export default function ClientStep({ ctx }) {
             <div className="field">
               <label>Status</label>
               <select className="select" value={project.status} onChange={(e) => updateProject({ status: e.target.value })}>
-                <option value="draft">Draft</option>
-                <option value="approved">Approved by client</option>
-                <option value="fitting">In fitting</option>
-                <option value="delivered">Delivered</option>
+                {PROJECT_STATUSES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
               </select>
+              <div className="hint">
+                A suit in fitting is either at its first fitting or its final one - the first is where the
+                corrections are marked up, the final is a sign-off.
+              </div>
             </div>
           </div>
         </div>

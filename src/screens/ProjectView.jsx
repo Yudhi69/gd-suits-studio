@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { isVisible } from '../lib/catalog.js';
+import { isVisible, statusLabel, statusPill } from '../lib/catalog.js';
 import { useProject } from '../lib/useProject.js';
 import PriceBar from '../components/PriceBar.jsx';
 import Stepper from '../components/Stepper.jsx';
@@ -21,7 +21,7 @@ import SummaryStep from './project/SummaryStep.jsx';
  * asks for it to feel like a game, one decision at a time, with the running
  * price always in view.
  */
-export default function ProjectView({ projectId, onBack, overrides, hasKey, steps: catalogSteps }) {
+export default function ProjectView({ projectId, onBack, overrides, hasKey, steps: catalogSteps, unit, onUnitChange, customOptions, onCatalogChanged }) {
   const ctx = useProject(projectId);
   const [stepKey, setStepKey] = useState('client');
   const { project, loading, error } = ctx;
@@ -62,15 +62,15 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey, step
   const index = steps.indexOf(current);
 
   function body() {
-    if (current.catalog) return <BuilderStep ctx={ctx} step={current.catalog} overrides={overrides} />;
+    if (current.catalog) return <BuilderStep ctx={ctx} step={current.catalog} overrides={overrides} onCatalogChanged={onCatalogChanged} />;
     switch (current.key) {
-      case 'client': return <ClientStep ctx={ctx} />;
+      case 'client': return <ClientStep ctx={ctx} customOptions={customOptions} onCatalogChanged={onCatalogChanged} />;
       case 'capture': return <CaptureStep ctx={ctx} />;
       case 'fabric': return <FabricStep ctx={ctx} />;
-      case 'measurements': return <MeasureStep ctx={ctx} />;
+      case 'measurements': return <MeasureStep ctx={ctx} unit={unit} onUnitChange={onUnitChange} />;
       case 'preview': return <PreviewStep ctx={ctx} hasKey={hasKey} steps={catalogSteps} />;
       case 'fitting': return <FittingStep ctx={ctx} />;
-      case 'summary': return <SummaryStep ctx={ctx} overrides={overrides} steps={catalogSteps} />;
+      case 'summary': return <SummaryStep ctx={ctx} overrides={overrides} steps={catalogSteps} unit={unit} />;
       default: return null;
     }
   }
@@ -84,7 +84,7 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey, step
           <div className="tiny faint">{project.title}</div>
         </div>
         <div className="spacer" />
-        <span className={`pill ${project.status === 'draft' ? 'pill-quiet' : 'pill-ok'}`}>{project.status}</span>
+        <span className={`pill ${statusPill(project.status)}`}>{statusLabel(project.status)}</span>
       </div>
 
       <div className="content wide">

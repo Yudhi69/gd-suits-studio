@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { MEASUREMENTS } from '../../lib/catalog.js';
+import { UNITS, toDisplay, fromDisplay, unitShort, unitLabel, stepFor } from '../../lib/units.js';
 import { api, messageFor } from '../../lib/api.js';
 import { DebouncedInput, Spinner, useToast, Banner } from '../../components/ui.jsx';
 import NotesPanel from '../../components/NotesPanel.jsx';
@@ -25,7 +26,7 @@ const ADVICE_SCHEMA = {
   required: ['flags'],
 };
 
-export default function MeasureStep({ ctx }) {
+export default function MeasureStep({ ctx, unit = 'cm', onUnitChange }) {
   const { project, saveMeasurement, addNote, deleteNote } = ctx;
   const [checking, setChecking] = useState(false);
   const [advice, setAdvice] = useState(null);
@@ -46,6 +47,8 @@ export default function MeasureStep({ ctx }) {
   async function sanityCheck() {
     const taken = project.measurements
       .filter((m) => m.value !== null)
+      // Always sent in centimetres regardless of what is on screen: it is the
+      // stored unit, and an unambiguous one for the model to reason in.
       .map((m) => `${m.garment}.${m.field_id} = ${m.value}cm`)
       .join('\n');
 
@@ -82,9 +85,21 @@ export default function MeasureStep({ ctx }) {
           <div className="card-head">
             <div>
               <h3>Measurements</h3>
-              <div className="tiny faint">{filled} of {totalFields} taken - all in centimetres</div>
+              <div className="tiny faint">{filled} of {totalFields} taken - shown in {unitLabel(unit)}</div>
             </div>
             <div className="spacer" />
+            <div className="unit-switch" role="group" aria-label="Measurement units">
+              {UNITS.map((u) => (
+                <button
+                  key={u.key}
+                  className={unit === u.key ? 'active' : ''}
+                  aria-pressed={unit === u.key}
+                  onClick={() => onUnitChange?.(u.key)}
+                >
+                  {u.label}
+                </button>
+              ))}
+            </div>
             <button className="btn btn-sm btn-primary" onClick={sanityCheck} disabled={checking}>
               {checking ? <><Spinner /> Checking...</> : 'AI sanity check'}
             </button>
@@ -107,14 +122,17 @@ export default function MeasureStep({ ctx }) {
                         <div style={{ fontWeight: 600 }}>{field.label}</div>
                         <div className="tiny faint">{field.hint}</div>
                       </div>
-                      <DebouncedInput
-                        type="number"
-                        step="0.5"
-                        className={`input measure-input ${row?.source === 'carried-over' ? 'carried' : ''}`}
-                        placeholder="-"
-                        value={row?.value ?? ''}
-                        onCommit={(v) => saveMeasurement(key, field.id, v === '' ? null : Number(v))}
-                      />
+                      <div className="measure-entry">
+                        <DebouncedInput
+                          type="number"
+                          step={stepFor(unit)}
+                          className={`input measure-input ${row?.source === 'carried-over' ? 'carried' : ''}`}
+                          placeholder="-"
+                          value={toDisplay(row?.value, unit)}
+                          onCommit={(v) => saveMeasurement(key, field.id, fromDisplay(v, unit))}
+                        />
+                        <span className="measure-unit">{unitShort(unit)}</span>
+                      </div>
                     </div>
                   );
                 })}

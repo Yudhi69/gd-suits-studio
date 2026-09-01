@@ -357,10 +357,12 @@ handle('fittings:add', (f) => db.addFitting({
   projectId: v.id(f.projectId, 'projectId'),
   tailorNotes: v.str(f.tailorNotes, 'notes', 20000),
   clientNotes: v.str(f.clientNotes, 'notes', 20000),
+  kind: f.kind === undefined ? undefined : v.oneOf(f.kind, v.FITTING_KINDS, 'fitting kind'),
 }));
-handle('fittings:update', ({ id, tailorNotes, clientNotes }) => db.updateFitting(v.id(id), {
-  tailorNotes: v.str(tailorNotes, 'notes', 20000),
-  clientNotes: v.str(clientNotes, 'notes', 20000),
+handle('fittings:update', ({ id, tailorNotes, clientNotes, kind }) => db.updateFitting(v.id(id), {
+  tailorNotes: tailorNotes === undefined ? undefined : v.str(tailorNotes, 'notes', 20000),
+  clientNotes: clientNotes === undefined ? undefined : v.str(clientNotes, 'notes', 20000),
+  kind: kind === undefined ? undefined : v.oneOf(kind, v.FITTING_KINDS, 'fitting kind'),
 }));
 handle('fittings:delete', ({ id }) => db.deleteFitting(v.id(id)));
 
@@ -381,7 +383,28 @@ function cleanOptions(options) {
 handle('catalog:list', () => ({
   categories: db.listCustomCategories(),
   items: db.listCustomItems(),
+  options: db.listCustomOptions(),
 }));
+
+handle('catalog:addOption', ({ fieldId, label, description, price, prompt }) =>
+  db.addCustomOption({
+    fieldId: v.str(fieldId, 'field', 80),
+    label: v.str(label, 'option name', 120),
+    description: v.str(description, 'note', 200),
+    price: v.num(price, 'price', { min: 0, max: 1e7 }) ?? 0,
+    prompt: v.str(prompt, 'render wording', 300),
+  })
+);
+handle('catalog:updateOption', ({ id, ...patch }) =>
+  db.updateCustomOption(v.id(id), {
+    label: patch.label === undefined ? undefined : v.str(patch.label, 'option name', 120),
+    description: patch.description === undefined ? undefined : v.str(patch.description, 'note', 200),
+    price: patch.price === undefined ? undefined : v.num(patch.price, 'price', { min: 0, max: 1e7 }) ?? 0,
+    prompt: patch.prompt === undefined ? undefined : v.str(patch.prompt, 'render wording', 300),
+    active: patch.active,
+  })
+);
+handle('catalog:deleteOption', ({ id }) => db.deleteCustomOption(v.id(id)));
 handle('catalog:addCategory', ({ title, blurb }) =>
   db.addCustomCategory({ title: v.str(title, 'category name', 80), blurb: v.str(blurb, 'description', 300) })
 );
@@ -420,7 +443,7 @@ handle('catalog:updateItem', ({ id, ...patch }) =>
 handle('catalog:deleteItem', ({ id }) => db.deleteCustomItem(v.id(id)));
 
 /* settings + secrets */
-const SETTING_KEYS = ['priceOverrides', 'imageModel', 'visionModel', 'theme', 'updateFeed', 'autoCheckUpdates'];
+const SETTING_KEYS = ['priceOverrides', 'imageModel', 'visionModel', 'theme', 'updateFeed', 'autoCheckUpdates', 'measureUnit'];
 handle('settings:get', ({ key, fallback }) => db.getSetting(v.oneOf(key, SETTING_KEYS, 'setting'), fallback ?? null));
 handle('settings:set', ({ key, value }) => {
   const name = v.oneOf(key, SETTING_KEYS, 'setting');
@@ -428,6 +451,7 @@ handle('settings:set', ({ key, value }) => {
   if (name === 'theme') return db.setSetting(name, v.oneOf(value, ['system', 'light', 'dark'], 'theme'));
   if (name === 'updateFeed') return db.setSetting(name, v.str(value, 'update address', 500).trim());
   if (name === 'autoCheckUpdates') return db.setSetting(name, !!value);
+  if (name === 'measureUnit') return db.setSetting(name, v.oneOf(value, ['cm', 'in'], 'unit'));
   return db.setSetting(name, v.jsonBlob(value, 'value', 128 * 1024));
 });
 handle('secrets:describe', ({ name }) => secrets.describe(v.oneOf(name, ['gemini', 'updateToken'], 'secret')));

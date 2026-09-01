@@ -11,7 +11,7 @@ import { buildSteps } from './catalog.js';
  * list. Nothing downstream needs to know which parts are built in.
  */
 export function useCatalog() {
-  const [custom, setCustom] = useState({ categories: [], items: [] });
+  const [custom, setCustom] = useState({ categories: [], items: [], options: [] });
   const [loading, setLoading] = useState(true);
 
   const reload = useCallback(async () => {
@@ -27,9 +27,16 @@ export function useCatalog() {
   useEffect(() => { reload(); }, [reload]);
 
   const steps = useMemo(
-    () => buildSteps(custom.categories, custom.items),
-    [custom.categories, custom.items]
+    () => buildSteps(custom.categories, custom.items, custom.options),
+    [custom.categories, custom.items, custom.options]
   );
 
-  return { steps, categories: custom.categories, items: custom.items, loading, reload };
+  return {
+    steps,
+    categories: custom.categories,
+    items: custom.items,
+    options: custom.options ?? [],
+    loading,
+    reload,
+  };
 }

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { api, projectMedia } from '../../lib/api.js';
-import { FITTING_GARMENTS } from '../../lib/catalog.js';
+import { FITTING_GARMENTS, FITTING_KINDS, fittingLabel } from '../../lib/catalog.js';
 import { fileToDataUrl } from '../../lib/image.js';
 import { ConfirmButton, DebouncedInput, Empty, useToast } from '../../components/ui.jsx';
 
@@ -20,10 +20,20 @@ export default function FittingStep({ ctx }) {
     (g) => (g !== 'waistcoat' || spec.suitType === 'three_piece') && (g !== 'shirt' || spec.shirt)
   );
 
-  async function addSession() {
-    await api.fittings.add({ projectId: project.id });
+  // The first visit is the first fitting; anything after it defaults to the
+  // final one, which is the shape almost every order actually takes.
+  const nextKind = project.fittings.length === 0 ? 'first' : 'final';
+
+  async function addSession(kind) {
+    await api.fittings.add({ projectId: project.id, kind });
+    // Keep the order's stage in step with the fitting being recorded, so the
+    // dashboard reflects reality without anyone remembering to set it.
+    await api.projects.update({
+      id: project.id,
+      patch: { status: kind === 'final' ? 'final_fitting' : 'first_fitting' },
+    });
     await reload();
-    toast('Fitting session started', 'ok');
+    toast(`${fittingLabel(kind)} started`, 'ok');
   }
 
   return (
@@ -31,15 +41,26 @@ export default function FittingStep({ ctx }) {
       <div className="inline">
         <div>
           <h2>Fittings</h2>
-          <div className="small muted">Every session is kept, so you can see how the garment moved between them.</div>
+          <div className="small muted">
+            First fitting, then final. Every session is kept, so you can see how the garment moved between them.
+          </div>
         </div>
         <div style={{ flex: 1 }} />
-        <button className="btn btn-gold" onClick={addSession}>New fitting session</button>
+        {project.fittings.some((f) => f.kind === 'first') && (
+          <button className="btn" onClick={() => addSession('extra')}>Additional fitting</button>
+        )}
+        <button className="btn btn-gold" onClick={() => addSession(nextKind)}>
+          Record {fittingLabel(nextKind).toLowerCase()}
+        </button>
       </div>
 
       {project.fittings.length === 0 ? (
-        <Empty title="No fittings recorded yet" action={<button className="btn btn-primary" onClick={addSession}>Record the first fitting</button>}>
-          Start a session when the client comes in to try the garment.
+        <Empty
+          title="No fittings recorded yet"
+          action={<button className="btn btn-primary" onClick={() => addSession('first')}>Record the first fitting</button>}
+        >
+          Every suit goes through a first fitting, where the corrections are marked up, and a final fitting to
+          sign it off. Start a session when the client comes in to try the garment.
         </Empty>
       ) : (
         project.fittings.map((fitting) => (
@@ -81,9 +102,23 @@ function FittingCard({ fitting, project, garments, onReload, onSavePhoto, onDele
   return (
     <div className="card">
       <div className="card-head">
-        <h3>Fitting {fitting.session_no}</h3>
+        <h3>{fittingLabel(fitting.kind)}</h3>
+        <span className={`pill ${fitting.kind === 'final' ? 'pill-ok' : 'pill-warn'}`}>
+          Session {fitting.session_no}
+        </span>
         <span className="tiny faint">{fitting.created_at}</span>
         <div className="spacer" />
+        <select
+          className="select"
+          style={{ maxWidth: 180 }}
+          value={fitting.kind}
+          onChange={async (e) => {
+            await api.fittings.update({ id: fitting.id, kind: e.target.value });
+            onReload();
+          }}
+        >
+          {FITTING_KINDS.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
+        </select>
         <ConfirmButton
           className="btn btn-sm btn-ghost btn-danger"
           confirmLabel="Delete session?"

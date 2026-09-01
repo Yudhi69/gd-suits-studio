@@ -483,6 +483,34 @@ export const MEASUREMENTS = {
   },
 };
 
+/**
+ * Order stages. A suit in fitting is either at its first fitting or its final
+ * one, and the distinction matters - the first is where the big corrections
+ * happen, the final is a sign-off.
+ */
+export const PROJECT_STATUSES = [
+  { key: 'draft', label: 'Draft', pill: 'pill-quiet' },
+  { key: 'approved', label: 'Approved by client', pill: 'pill-ok' },
+  { key: 'first_fitting', label: 'First fitting', pill: 'pill-warn' },
+  { key: 'final_fitting', label: 'Final fitting', pill: 'pill-warn' },
+  { key: 'delivered', label: 'Delivered', pill: 'pill-ok' },
+];
+
+export const statusLabel = (key) =>
+  PROJECT_STATUSES.find((s) => s.key === key)?.label ?? key;
+export const statusPill = (key) =>
+  PROJECT_STATUSES.find((s) => s.key === key)?.pill ?? 'pill-quiet';
+
+/** The two fittings a suit goes through, plus room for an extra visit. */
+export const FITTING_KINDS = [
+  { key: 'first', label: 'First fitting', blurb: 'Where the real corrections are marked up.' },
+  { key: 'final', label: 'Final fitting', blurb: 'Sign-off before delivery.' },
+  { key: 'extra', label: 'Additional fitting', blurb: 'An extra visit between the two.' },
+];
+
+export const fittingLabel = (key) =>
+  FITTING_KINDS.find((k) => k.key === key)?.label ?? 'Fitting';
+
 /** Garments a fitting session records notes and photos against. */
 export const FITTING_GARMENTS = ['jacket', 'waistcoat', 'pants', 'shirt'];
 
@@ -552,17 +580,69 @@ export function customItemToField(item) {
  * The effective builder flow: the built-in steps with any custom items folded
  * into them, followed by whatever categories the shop has added of its own.
  */
-export function buildSteps(customCategories = [], customItems = []) {
+/**
+ * Appends the shop's own options to a selector that already exists.
+ *
+ * These extend a field rather than adding one - another lapel shape, another
+ * event type - so they are merged onto the end of the option list and behave
+ * identically from there on.
+ */
+export function withCustomOptions(field, customOptions = []) {
+  if (field.type !== 'choice') return field;
+  const mine = customOptions.filter((o) => o.field_id === field.id && o.active !== 0);
+  if (!mine.length) return field;
+
+  const extra = mine.map((o) => ({
+    key: o.option_key,
+    label: o.label,
+    desc: o.description || '',
+    price: Number(o.price) || 0,
+    custom: true,
+    optionId: o.id,
+    promptText: o.prompt || '',
+  }));
+
+  const options = [...(field.options ?? []), ...extra];
+  const originalPrompt = field.prompt;
+
+  return {
+    ...field,
+    options,
+    // A built-in field's phrasing function knows nothing about these keys, so
+    // custom choices are described from their own wording (or their label)
+    // and everything else falls through to the original.
+    prompt: (value, spec) => {
+      const mineChosen = extra.find((o) => o.key === value);
+      if (mineChosen) {
+        return mineChosen.promptText || `${field.label.toLowerCase()}: ${mineChosen.label.toLowerCase()}`;
+      }
+      if (typeof originalPrompt === 'function') return originalPrompt(value, spec);
+      const opt = options.find((o) => o.key === value);
+      return opt ? `${field.label.toLowerCase()}: ${opt.label.toLowerCase()}` : null;
+    },
+  };
+}
+
+/** Event types, with any the shop has added of its own. */
+export function eventTypesWith(customOptions = []) {
+  const mine = customOptions
+    .filter((o) => o.field_id === 'eventType' && o.active !== 0)
+    .map((o) => ({ key: o.option_key, label: o.label, custom: true, optionId: o.id }));
+  return [...EVENT_TYPES, ...mine];
+}
+
+export function buildSteps(customCategories = [], customItems = [], customOptions = []) {
   const active = customItems.filter((i) => i.active !== 0);
   const byCategory = active.reduce((acc, item) => {
     (acc[item.category] ??= []).push(item);
     return acc;
   }, {});
 
+  const decorate = (fields) => fields.map((f) => withCustomOptions(f, customOptions));
+
   const builtIn = STEPS.map((step) => {
     const extra = byCategory[step.key] ?? [];
-    if (!extra.length) return step;
-    return { ...step, fields: [...step.fields, ...extra.map(customItemToField)] };
+    return { ...step, fields: decorate([...step.fields, ...extra.map(customItemToField)]) };
   });
 
   const added = customCategories.map((category) => ({
@@ -571,7 +651,7 @@ export function buildSteps(customCategories = [], customItems = []) {
     blurb: category.blurb || '',
     custom: true,
     categoryId: category.id,
-    fields: (byCategory[category.key] ?? []).map(customItemToField),
+    fields: decorate((byCategory[category.key] ?? []).map(customItemToField)),
   }));
 
   return [...builtIn, ...added];

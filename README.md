@@ -75,6 +75,10 @@ touching any code:
   priced separately (shoe style, cufflink metal).
 - **+ Add a category** for a group the built-in flow does not cover. It becomes
   its own step in the consultation, after the built-in ones.
+- **+ Add option** on *every* selector, right where it is missed — another
+  lapel shape, another event type, another cloth finish. Added in the builder
+  itself rather than in Settings, and available on every order from then on.
+  Your own options carry an *edit* link; built-in ones cannot be edited away.
 - Each item can carry wording for the render prompt — *"a folded silk pocket
   square in the breast pocket"*. Leave it blank and the item stays out of the
   render, which is what you want for something that is not visible on a suit.
@@ -101,8 +105,17 @@ someone brings in are the best record of their taste. Tag them, pin favourites,
 feed them into any future render. The app records which references actually fed
 which render, so the style history is evidence rather than a guess.
 
-**Fittings.** Sessions with the tailor's notes and the client's own comments,
-plus photos of each garment from three angles.
+**Fittings.** Every suit goes through a **first fitting**, where the real
+corrections are marked up, and a **final fitting** to sign it off — with room
+for an additional visit between them. Each session records the tailor's notes,
+the client's own comments and photos of each garment from three angles.
+Recording a fitting moves the order's status to match, so the dashboard
+reflects reality without anyone remembering to set it.
+
+**Centimetres or inches.** A toggle on the Measurements step switches the whole
+app between them. Everything is *stored* in centimetres regardless — a client's
+body record has to stay comparable across orders, and it would drift badly if
+some measurements were saved in inches depending on who took them.
 
 **Export.** Writes the whole client file to a folder — JSON, every photo and
 render, and a printable HTML spec sheet with the price breakdown to send for
@@ -217,10 +230,11 @@ their clients is sent.
 ## Tests
 
 ```bash
-npm test              # security, updates, catalog, then the render pipeline
+npm test              # security, updates, catalog, workflow, then the render pipeline
 npm run test:security # proves the hardening actually blocks attacks
 npm run test:updates  # the update flow against a stubbed release feed
 npm run test:catalog  # adds a custom category and items, then checks the whole chain
+npm run test:workflow # units, custom options on built-in selectors, first/final fittings
 npm run test:render   # drives the whole render pipeline with the network stubbed
 npm run test:tour     # boots the UI, walks every step, writes screenshots
 ```
@@ -234,6 +248,12 @@ disguised HTML payload, renderer network egress — and fails if any succeeds.
 that a `file://` or `javascript:` download address is refused. `test:catalog`
 adds a category and both kinds of item through the real UI, then checks they
 appear in the builder, charge the right amount and reach the spec sheet.
+
+`test:workflow` deliberately does **not** assert on simulated typing. React's
+controlled inputs only update from a genuine keystroke — neither a programmatic
+`.value` write nor Electron's `insertText` moves React's state — so asserting
+on it would test Electron's input simulation rather than this app. The unit
+conversion is asserted from both directions instead.
 
 ---
 

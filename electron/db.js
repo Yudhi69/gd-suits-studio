@@ -184,6 +184,40 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_items_category ON catalog_items(category);
     `);
   },
+
+  // v4 - a fitting is either the first or the final one, and the order status
+  // says which stage it is at. Existing rows are mapped rather than reset:
+  // the earliest session on an order becomes the first fitting.
+  (d) => {
+    d.exec(`
+      ALTER TABLE fittings ADD COLUMN kind TEXT NOT NULL DEFAULT 'first';
+      UPDATE fittings SET kind = 'first' WHERE session_no = 1;
+      UPDATE fittings SET kind = 'final' WHERE session_no > 1;
+      UPDATE projects SET status = 'first_fitting' WHERE status = 'fitting';
+    `);
+  },
+
+  // v5 - options the shop adds to a selector that already exists. Distinct
+  // from catalog_items, which add a whole new field: these extend the choices
+  // on a built-in one (another lapel shape, another event type).
+  (d) => {
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS catalog_options (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        field_id    TEXT NOT NULL,
+        option_key  TEXT NOT NULL,
+        label       TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        price       REAL NOT NULL DEFAULT 0,
+        prompt      TEXT NOT NULL DEFAULT '',
+        sort        INTEGER NOT NULL DEFAULT 0,
+        active      INTEGER NOT NULL DEFAULT 1,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(field_id, option_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_options_field ON catalog_options(field_id);
+    `);
+  },
 ];
 
 function open(userDataPath) {
@@ -446,20 +480,28 @@ function deleteRender(id) {
 
 /* --------------------------------------------------------------- fittings */
 
-function addFitting({ projectId, tailorNotes, clientNotes }) {
+function addFitting({ projectId, tailorNotes, clientNotes, kind }) {
   const d = get();
   const next =
     (d.prepare('SELECT MAX(session_no) AS n FROM fittings WHERE project_id = ?').get(projectId)?.n ?? 0) + 1;
   const info = d
-    .prepare('INSERT INTO fittings (project_id, session_no, tailor_notes, client_notes) VALUES (?, ?, ?, ?)')
-    .run(projectId, next, tailorNotes ?? '', clientNotes ?? '');
+    .prepare(
+      'INSERT INTO fittings (project_id, session_no, tailor_notes, client_notes, kind) VALUES (?, ?, ?, ?, ?)'
+    )
+    .run(projectId, next, tailorNotes ?? '', clientNotes ?? '', kind ?? (next === 1 ? 'first' : 'final'));
   return info.lastInsertRowid;
 }
 
-function updateFitting(id, { tailorNotes, clientNotes }) {
-  get()
-    .prepare('UPDATE fittings SET tailor_notes = ?, client_notes = ? WHERE id = ?')
-    .run(tailorNotes ?? '', clientNotes ?? '', id);
+function updateFitting(id, { tailorNotes, clientNotes, kind }) {
+  const d = get();
+  const current = d.prepare('SELECT * FROM fittings WHERE id = ?').get(id);
+  if (!current) return;
+  d.prepare('UPDATE fittings SET tailor_notes = ?, client_notes = ?, kind = ? WHERE id = ?').run(
+    tailorNotes ?? current.tailor_notes,
+    clientNotes ?? current.client_notes,
+    kind ?? current.kind,
+    id
+  );
 }
 
 function deleteFitting(id) {
@@ -730,6 +772,47 @@ function deleteCustomItem(id) {
   get().prepare('DELETE FROM catalog_items WHERE id = ?').run(id);
 }
 
+
+function listCustomOptions() {
+  return get().prepare('SELECT * FROM catalog_options ORDER BY field_id, sort, id').all();
+}
+
+function addCustomOption({ fieldId, label, description, price, prompt }) {
+  const d = get();
+  const next =
+    (d.prepare('SELECT MAX(sort) AS n FROM catalog_options WHERE field_id = ?').get(fieldId)?.n ?? 0) + 1;
+  // The key is generated, never derived from the label: renaming an option
+  // must not orphan the orders already saved against it.
+  const optionKey = `opt_${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`;
+  const info = d
+    .prepare(
+      `INSERT INTO catalog_options (field_id, option_key, label, description, price, prompt, sort)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(fieldId, optionKey, label, description ?? '', Number(price) || 0, prompt ?? '', next);
+  return { id: info.lastInsertRowid, optionKey };
+}
+
+function updateCustomOption(id, patch) {
+  const d = get();
+  const current = d.prepare('SELECT * FROM catalog_options WHERE id = ?').get(id);
+  if (!current) return;
+  d.prepare(
+    'UPDATE catalog_options SET label = ?, description = ?, price = ?, prompt = ?, active = ? WHERE id = ?'
+  ).run(
+    patch.label ?? current.label,
+    patch.description ?? current.description,
+    patch.price === undefined ? current.price : Number(patch.price) || 0,
+    patch.prompt ?? current.prompt,
+    patch.active === undefined ? current.active : patch.active ? 1 : 0,
+    id
+  );
+}
+
+function deleteCustomOption(id) {
+  get().prepare('DELETE FROM catalog_options WHERE id = ?').run(id);
+}
+
 module.exports = {
   open,
   listClients, getClient, upsertClient, deleteClient,
@@ -744,5 +827,6 @@ module.exports = {
   addFitting, updateFitting, deleteFitting,
   listCustomCategories, addCustomCategory, updateCustomCategory, deleteCustomCategory,
   listCustomItems, addCustomItem, updateCustomItem, deleteCustomItem,
+  listCustomOptions, addCustomOption, updateCustomOption, deleteCustomOption,
   getSetting, setSetting,
 };
