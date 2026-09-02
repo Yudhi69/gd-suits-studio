@@ -262,6 +262,7 @@ npm run test:catalog  # adds a custom category and items, then checks the whole 
 npm run test:models   # the model picker only offers models the key really has
 npm run test:workflow # units, custom options on built-in selectors, first/final fittings
 npm run test:quote    # an agreed quote must not move when the price list does
+npm run test:migrations # every historical schema version upgrades without data loss
 npm run test:render   # drives the whole render pipeline with the network stubbed
 npm run test:tour     # boots the UI, walks every step, writes screenshots
 ```
@@ -370,6 +371,28 @@ temp directory (`hdiutil resize` fails and you silently get only one DMG).
 for that architecture *in place*, which leaves the dev app unable to start.
 Each `dist:` script rebuilds it for the host afterwards; if you ever run
 `electron-builder` directly, finish with `npx electron-builder install-app-deps`.
+
+### Hardening the binary
+
+`build/afterPack.js` flips Electron's build-time fuses before signing. The one
+that matters is **RunAsNode**: left on, the shipped app can be driven as a
+plain Node process, which sidesteps every renderer control in `security.js`.
+Also off: `NODE_OPTIONS` injection and `--inspect` (which would attach a
+debugger to the process holding the API key). On: asar integrity validation and
+`OnlyLoadAppFromAsar`, so a modified archive is refused and an unpacked `app/`
+folder cannot be loaded in its place.
+
+Verified against a real tamper — extract the archive, edit `main.js`, repack,
+re-sign ad-hoc, and the app aborts:
+
+```
+FATAL:asar_util.cc(144)] Integrity check failed for asar archive
+```
+
+Note what that does **not** cover while builds are ad-hoc signed: an attacker
+who can rewrite the archive can also rewrite the hash in `Info.plist` and
+re-sign. These fuses raise the bar and are the correct pairing for a real
+Developer ID signature; they are not a substitute for one.
 
 ### Signing
 

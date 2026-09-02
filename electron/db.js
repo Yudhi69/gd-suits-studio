@@ -889,6 +889,8 @@ function deleteCustomOption(id) {
 
 module.exports = {
   open,
+  MIGRATIONS,
+  SCHEMA_VERSION: MIGRATIONS.length,
   listClients, getClient, upsertClient, deleteClient,
   addReference, listReferences, getReference, updateReference, deleteReference,
   linkRenderRefs, styleHistory,
