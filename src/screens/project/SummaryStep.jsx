@@ -2,9 +2,11 @@ import React, { useState } from 'react';
 import { api, projectMedia, messageFor } from '../../lib/api.js';
 import { buildSpecSheet } from '../../lib/promptBuilder.js';
 import { buildBreakdown, formatMoney } from '../../lib/pricing.js';
+import { quoteFromSpec, quoteDrift, isDraft } from '../../lib/quote.js';
+import { ConfirmButton } from '../../components/ui.jsx';
 import { EVENT_TYPES, MEASUREMENTS, statusLabel } from '../../lib/catalog.js';
 import { formatMeasure, unitLabel } from '../../lib/units.js';
-import { useToast, Spinner } from '../../components/ui.jsx';
+import { useToast, Spinner, Banner } from '../../components/ui.jsx';
 
 /**
  * The spec sheet is assembled as raw HTML and then written to disk, so every
@@ -34,8 +36,21 @@ export default function SummaryStep({ ctx, overrides, steps, unit = 'cm' }) {
   const spec = project.spec ?? {};
   const analysis = project.analysis ?? {};
   const sections = buildSpecSheet(spec, steps);
-  const { lines, total } = buildBreakdown(spec, overrides, steps);
+  const live = buildBreakdown(spec, overrides, steps);
+  // Once the order has left draft the agreed figure is the quote; the live one
+  // is only there to show whether the price list has moved since.
+  const { lines, total } = project.quote ?? live;
+  const drift = quoteDrift(project.quote, spec, overrides, steps);
   const approved = project.renders.filter((r) => r.approved);
+
+  async function requote() {
+    await api.projects.setQuote({
+      id: project.id,
+      quote: quoteFromSpec(spec, overrides, steps, project.status),
+    });
+    await ctx.reload();
+    toast('Re-quoted at today\'s prices', 'ok');
+  }
 
   async function exportFile() {
     setExporting(true);
@@ -118,7 +133,8 @@ ${images ? `<h3>Approved design</h3>${images}` : ''}
 ${rows}
 ${measureRows}
 <h3>Price breakdown</h3><table>${priceRows}</table>
-<div class="total"><span>Total</span><span>${formatMoney(total)}</span></div>
+<div class="total"><span>Total</span><span>${esc(formatMoney(total))}</span></div>
+${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c">Quoted ${esc(String(project.quote.at ?? '').slice(0, 10))}. This price is held for this order.</p>` : ''}
 </body></html>`;
   }
 
@@ -195,8 +211,37 @@ ${measureRows}
 
       <div style={{ flex: 1, minWidth: 300 }}>
         <div className="card">
-          <div className="card-head"><h3>Quote</h3></div>
+          <div className="card-head">
+            <h3>Quote</h3>
+            <div className="spacer" />
+            {project.quote
+              ? <span className="pill pill-ok">Agreed {String(project.quote.at ?? '').slice(0, 10)}</span>
+              : <span className="pill pill-quiet">Draft - still moving</span>}
+          </div>
           <div className="card-pad">
+            {drift && (
+              <Banner kind="warn">
+                <div>
+                  The price list has changed since this was agreed - today it would be{' '}
+                  <strong>{formatMoney(drift.live.total)}</strong> ({drift.label}). The client was quoted{' '}
+                  <strong>{formatMoney(total)}</strong>, and that is what stands.
+                  <div style={{ marginTop: 8 }}>
+                    <ConfirmButton
+                      className="btn btn-sm"
+                      confirmLabel="Replace the agreed quote?"
+                      onConfirm={requote}
+                    >
+                      Re-quote at today's prices
+                    </ConfirmButton>
+                  </div>
+                </div>
+              </Banner>
+            )}
+            {isDraft(project.status) && (
+              <p className="tiny faint" style={{ marginTop: 0 }}>
+                This total follows the price list until the order is approved, then it is fixed.
+              </p>
+            )}
             {lines.map((l, i) => (
               <div className="price-line" key={`${l.key}-${i}`}>
                 <span className="small">{l.label}</span>

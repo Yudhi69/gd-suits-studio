@@ -10,7 +10,7 @@ const media = require('./mediaUrl');
  */
 const CHANNELS = [
   'clients:list', 'clients:get', 'clients:save', 'clients:delete',
-  'projects:list', 'projects:get', 'projects:create', 'projects:update', 'projects:delete',
+  'projects:list', 'projects:get', 'projects:create', 'projects:update', 'projects:delete', 'projects:setQuote',
   'photos:add', 'photos:delete', 'photos:meta',
   'references:add', 'references:list', 'references:update', 'references:delete', 'references:history',
   'clientMeasurements:save', 'clientMeasurements:list', 'measurements:seedFromClient',

@@ -40,23 +40,28 @@ export function buildBreakdown(spec = {}, overrides = {}, steps = STEPS) {
         const opt = field.options?.find((o) => o.key === value);
         if (!opt) continue;
 
-        // The suit type carries the base garment price rather than a delta.
+        // An option is either the base garment price or a delta on top of it -
+        // never both. They share one override key, so charging both would
+        // double the base price the moment a tailor edited it in Settings.
+        const key = priceKeyForOption(field.id, opt.key);
+
         if (typeof opt.basePrice === 'number') {
           lines.push({
             group: 'Base',
             label: `${opt.label} suit`,
-            amount: resolve(overrides, priceKeyForOption(field.id, opt.key), opt.basePrice),
-            key: priceKeyForOption(field.id, opt.key),
+            amount: resolve(overrides, key, opt.basePrice),
+            key,
           });
+          continue;
         }
 
-        const delta = resolve(overrides, priceKeyForOption(field.id, opt.key), opt.price ?? 0);
+        const delta = resolve(overrides, key, opt.price ?? 0);
         if (delta) {
           lines.push({
             group: step.title,
             label: `${field.label}: ${opt.label}`,
             amount: delta,
-            key: priceKeyForOption(field.id, opt.key),
+            key,
           });
         }
       } else if (field.price) {

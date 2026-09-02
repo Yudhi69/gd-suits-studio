@@ -133,6 +133,15 @@ app between them. Everything is *stored* in centimetres regardless — a client'
 body record has to stay comparable across orders, and it would drift badly if
 some measurements were saved in inches depending on who took them.
 
+**Quotes are frozen once agreed.** While an order is a draft its total follows
+the price list. The moment it leaves draft — approved, in fitting, delivered —
+the figures are written onto the order and stop moving, because by then a
+number has been shown to a client. Change a price afterwards, or delete an
+option the client chose, and the agreed quote holds; the app shows what today's
+price list *would* say and offers an explicit **Re-quote** rather than
+rewriting history. This applies to the dashboard, the client file and the
+exported sheet alike.
+
 **Export.** Writes the whole client file to a folder — JSON, every photo and
 render, and a printable HTML spec sheet with the price breakdown to send for
 sign-off.
@@ -252,6 +261,7 @@ npm run test:updates  # the update flow against a stubbed release feed
 npm run test:catalog  # adds a custom category and items, then checks the whole chain
 npm run test:models   # the model picker only offers models the key really has
 npm run test:workflow # units, custom options on built-in selectors, first/final fittings
+npm run test:quote    # an agreed quote must not move when the price list does
 npm run test:render   # drives the whole render pipeline with the network stubbed
 npm run test:tour     # boots the UI, walks every step, writes screenshots
 ```

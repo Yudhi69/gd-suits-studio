@@ -236,6 +236,19 @@ const MIGRATIONS = [
       ALTER TABLE projects ADD COLUMN final_fitting_date TEXT NOT NULL DEFAULT '';
     `);
   },
+
+  // v7 - the agreed quote, frozen onto the order.
+  //
+  // Until now every quote was recomputed live from the current price list, so
+  // adjusting a price - or deleting an option a client had chosen - silently
+  // rewrote the total on orders that had already been agreed and sent. The
+  // spec was never lost, but the money moved. An order that has left draft now
+  // carries the figures it was agreed at.
+  (d) => {
+    d.exec(`
+      ALTER TABLE projects ADD COLUMN quote_json TEXT NOT NULL DEFAULT '';
+    `);
+  },
 ];
 
 function open(userDataPath) {
@@ -362,6 +375,7 @@ function getProject(id) {
     ...project,
     spec: JSON.parse(project.spec_json || '{}'),
     analysis: JSON.parse(project.analysis_json || '{}'),
+    quote: project.quote_json ? JSON.parse(project.quote_json) : null,
     photos: d.prepare('SELECT * FROM photos WHERE project_id = ? ORDER BY created_at').all(id)
       .map((p) => ({ ...p, meta: JSON.parse(p.meta_json || '{}') })),
     notes: d.prepare('SELECT * FROM notes WHERE project_id = ? ORDER BY created_at DESC').all(id),
@@ -414,6 +428,16 @@ function updateProject(id, patch) {
   if (!sets.length) return;
 
   d.prepare(`UPDATE projects SET ${sets.join(', ')}, updated_at = @updated_at WHERE id = @id`).run(params);
+}
+
+/**
+ * Freezes the agreed figures onto the order. Passing null clears them, which
+ * is what happens when a tailor deliberately re-quotes.
+ */
+function setQuote(projectId, quote) {
+  get()
+    .prepare('UPDATE projects SET quote_json = ?, updated_at = ? WHERE id = ?')
+    .run(quote ? JSON.stringify(quote) : '', nowStamp(), projectId);
 }
 
 function deleteProject(id) {
@@ -869,7 +893,7 @@ module.exports = {
   addReference, listReferences, getReference, updateReference, deleteReference,
   linkRenderRefs, styleHistory,
   saveClientMeasurement, listClientMeasurements, seedMeasurementsFromClient,
-  listProjects, getProject, createProject, updateProject, deleteProject,
+  listProjects, getProject, createProject, updateProject, deleteProject, setQuote,
   addPhoto, getPhoto, deletePhoto, updatePhotoMeta,
   addNote, deleteNote,
   saveMeasurement,

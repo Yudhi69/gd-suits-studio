@@ -1,6 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { isVisible, statusLabel, statusPill } from '../lib/catalog.js';
 import { useProject } from '../lib/useProject.js';
+import { quoteFromSpec, isDraft } from '../lib/quote.js';
+import { api } from '../lib/api.js';
 import PriceBar from '../components/PriceBar.jsx';
 import Stepper from '../components/Stepper.jsx';
 import { Spinner, Banner } from '../components/ui.jsx';
@@ -45,6 +47,21 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey, step
       { key: 'summary', title: 'Summary', done: project.renders.some((r) => r.approved) },
     ];
   }, [project, catalogSteps]);
+
+  // Any status past draft means a figure has been shown to a client, so the
+  // quote is frozen at that point, whichever screen moved the status - the
+  // fitting step sets it too. Declared before the early returns below: a hook
+  // that only runs on some renders breaks React's hook ordering.
+  useEffect(() => {
+    if (!project || project.quote || isDraft(project.status)) return;
+    api.projects
+      .setQuote({
+        id: project.id,
+        quote: quoteFromSpec(project.spec, overrides, catalogSteps, project.status),
+      })
+      .then(() => ctx.reload())
+      .catch(() => {});
+  }, [project?.status, project?.quote]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) {
     return <div className="content center" style={{ paddingTop: 80 }}><Spinner /></div>;
@@ -110,6 +127,7 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey, step
             spec={project.spec}
             overrides={overrides}
             steps={catalogSteps}
+            quote={project.quote}
             right={
               <>
                 <button

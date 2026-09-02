@@ -272,6 +272,31 @@ handle('projects:update', ({ id, patch = {} }) => {
   if (patch.analysis !== undefined) clean.analysis = v.jsonBlob(patch.analysis, 'analysis');
   return db.updateProject(v.id(id), clean);
 });
+/**
+ * Stores the agreed quote. The figures are computed in the renderer, which is
+ * where the catalog and the price list live; this bounds and records them.
+ */
+handle('projects:setQuote', ({ id, quote }) => {
+  const projectId = v.id(id);
+  if (quote === null) return db.setQuote(projectId, null);
+
+  if (!Array.isArray(quote?.lines)) throw new v.ValidationError('A quote needs a list of lines');
+  if (quote.lines.length > 400) throw new v.ValidationError('That is too many quote lines');
+
+  return db.setQuote(projectId, {
+    lines: quote.lines.map((line) => ({
+      group: v.str(line.group, 'group', 80),
+      label: v.str(line.label, 'label', 200),
+      amount: v.num(line.amount, 'amount', { min: -1e7, max: 1e7 }) ?? 0,
+      key: v.str(line.key, 'key', 120),
+    })),
+    total: v.num(quote.total, 'total', { min: -1e9, max: 1e9 }) ?? 0,
+    currency: v.str(quote.currency, 'currency', 8),
+    at: new Date().toISOString(),
+    status: v.oneOf(quote.status ?? 'approved', v.PROJECT_STATUSES, 'status'),
+  });
+});
+
 handle('projects:delete', ({ id }) => {
   const projectId = v.id(id);
   db.deleteProject(projectId);

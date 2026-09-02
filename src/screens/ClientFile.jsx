@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api, projectMedia } from '../lib/api.js';
-import { buildBreakdown, formatMoney } from '../lib/pricing.js';
+import { formatMoney } from '../lib/pricing.js';
+import { quotedTotal } from '../lib/quote.js';
 import { EVENT_TYPES, statusLabel, statusPill } from '../lib/catalog.js';
 import { formatMeasure, unitLabel } from '../lib/units.js';
 import { Empty, Spinner } from '../components/ui.jsx';
@@ -69,7 +70,7 @@ export default function ClientFile({ clientId, onBack, onOpenProject, steps, ove
                       <td className="muted mono">{p.event_date || '-'}</td>
                       <td><span className={`pill ${statusPill(p.status)}`}>{statusLabel(p.status)}</span></td>
                       <td className="mono" style={{ textAlign: 'right' }}>
-                        {formatMoney(buildBreakdown(JSON.parse(p.spec_json || '{}'), overrides, steps).total)}
+                        {formatMoney(quotedTotal(p, JSON.parse(p.spec_json || '{}'), overrides, steps))}
                       </td>
                     </tr>
                   ))}

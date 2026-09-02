@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { eventTypesWith, statusLabel, statusPill } from '../lib/catalog.js';
-import { buildBreakdown, formatMoney } from '../lib/pricing.js';
+import { formatMoney } from '../lib/pricing.js';
+import { quotedTotal } from '../lib/quote.js';
 import { ConfirmButton, Empty, Modal, useToast } from '../components/ui.jsx';
 
 export default function Dashboard({ onOpenProject, onOpenClient, steps, overrides, customOptions = [] }) {
@@ -44,7 +45,7 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
           <StatCard label="Orders in progress" value={projects.filter((p) => p.status !== 'delivered').length} />
           <StatCard
             label="Quoted value"
-            value={formatMoney(projects.reduce((sum, p) => sum + buildBreakdown(JSON.parse(p.spec_json || '{}'), overrides, steps).total, 0))}
+            value={formatMoney(projects.reduce((sum, p) => sum + quotedTotal(p, JSON.parse(p.spec_json || '{}'), overrides, steps), 0))}
           />
         </div>
 
@@ -79,7 +80,7 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
                       <td className="muted">{eventTypesWith(customOptions).find((e) => e.key === p.event_type)?.label ?? '-'}</td>
                       <td className="muted mono">{p.event_date || '-'}</td>
                       <td><span className={`pill ${statusPill(p.status)}`}>{statusLabel(p.status)}</span></td>
-                      <td className="mono" style={{ textAlign: 'right' }}>{formatMoney(buildBreakdown(spec, overrides, steps).total)}</td>
+                      <td className="mono" style={{ textAlign: 'right' }}>{formatMoney(quotedTotal(p, spec, overrides, steps))}</td>
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
                         <button className="btn btn-sm btn-ghost" onClick={() => onOpenClient(p.client_id)}>Client file</button>
                         <ConfirmButton
