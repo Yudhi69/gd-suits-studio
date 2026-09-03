@@ -556,10 +556,20 @@ handle('ai:setConfig', ({ image, vision, customBaseUrl }) => {
       model: v.modelName(vision?.model ?? ''),
     },
   };
-  // A custom endpoint is the one address the tailor supplies, so it gets the
-  // same https-only treatment as the update feed.
-  if (clean.customBaseUrl && !/^https:\/\//i.test(clean.customBaseUrl)) {
-    throw new Error('A custom AI endpoint must be an https address.');
+  // https everywhere except loopback: a local model server (ComfyUI, LM Studio,
+  // Automatic1111) only ever listens on plain http, and refusing that would
+  // block the one genuinely free way to render.
+  if (clean.customBaseUrl) {
+    let parsed;
+    try {
+      parsed = new URL(clean.customBaseUrl);
+    } catch {
+      throw new Error('That custom AI endpoint is not a valid URL.');
+    }
+    const loopback = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname);
+    if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopback)) {
+      throw new Error('A custom AI endpoint must use https, unless it is running on this machine (localhost).');
+    }
   }
   db.setSetting('aiConfig', clean);
   return clean;

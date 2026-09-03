@@ -6,7 +6,15 @@ app.setPath('userData', path.resolve(process.env.DATA_DIR));
 const realFetch = global.fetch;
 global.fetch = async (url, opts) => {
   const u = String(url);
-  if (!u.includes('generativelanguage.googleapis.com')) return realFetch(url, opts);
+  // Both providers are stubbed; anything else is a genuine call and passes
+  // through. Without OpenAI here the credit test hit the live API and got a
+  // 401 for the fake key, which is not what it was asserting.
+  const stubbed = u.includes('generativelanguage.googleapis.com') || u.includes('api.openai.com');
+  if (!stubbed) return realFetch(url, opts);
+  if (u.includes('api.openai.com/v1/models')) {
+    return new Response(JSON.stringify({ data: [{ id: 'gpt-image-1' }, { id: 'gpt-4o' }] }),
+      { status: 200, headers: { 'content-type': 'application/json' } });
+  }
   if (u.includes('/models?')) {
     return new Response(JSON.stringify({
       models: [
@@ -19,6 +27,26 @@ global.fetch = async (url, opts) => {
         { name: 'models/nano-banana-pro-preview', displayName: 'Nano Banana Pro', description: 'Image generation model', supportedGenerationMethods: ['generateContent'] },
       ],
     }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
+  // Free allowance used up - a 429 that will not clear until tomorrow.
+  if (u.includes('quota-exhausted:generateContent')) {
+    return new Response(JSON.stringify({ error: { code: 429, status: 'RESOURCE_EXHAUSTED',
+      message: 'You exceeded your current quota, please check your plan and billing details.',
+      details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+        violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }] }] } }),
+      { status: 429, headers: { 'content-type': 'application/json' } });
+  }
+  // A retired model, with Google naming the replacement.
+  if (u.includes('retired-model:generateContent')) {
+    return new Response(JSON.stringify({ error: { code: 404, status: 'NOT_FOUND',
+      message: 'This model models/retired-model is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features.' } }),
+      { status: 404, headers: { 'content-type': 'application/json' } });
+  }
+  // OpenAI reports an empty credit balance as a 429, same as throttling.
+  if (u.includes('api.openai.com') && u.includes('/images/')) {
+    return new Response(JSON.stringify({ error: { type: 'insufficient_quota', code: 'credit_balance_exhausted',
+      message: 'You have no credits remaining. Add credits to continue using the API.' } }),
+      { status: 429, headers: { 'content-type': 'application/json' } });
   }
   // Google answers a text model asked for IMAGE output with a 404.
   if (u.includes(':generateContent')) {
@@ -118,6 +146,27 @@ app.whenReady().then(async () => {
     return JSON.stringify([...selects[0].options].map(o => o.value));
   })()`));
   check(!imageProviders.includes('anthropic'), 'Claude is absent from the image provider list', imageProviders.join(', '));
+
+  log('\n=== a 429 is not always throttling ===');
+  const quotaErr = await js(`window.gd.ai.render({ projectId: 1, prompt: 'x', view: 'front', refs: [], model: 'quota-exhausted' }).then(r => r.ok ? 'ok' : r.error.message)`);
+  check(/free daily quota/i.test(quotaErr), 'a used-up free allowance says so, and when it resets', quotaErr.slice(0, 80));
+  check(!/wait a moment/i.test(quotaErr), 'and does not tell the tailor to wait for something that will not clear');
+
+  const retiredErr = await js(`window.gd.ai.render({ projectId: 1, prompt: 'x', view: 'front', refs: [], model: 'retired-model' }).then(r => r.ok ? 'ok' : r.error.message)`);
+  check(/retired/i.test(retiredErr), 'a retired model is reported as retired', retiredErr.slice(0, 80));
+  check(/gemini-3\.6-flash/.test(retiredErr), "and names Google's suggested replacement", retiredErr.slice(0, 100));
+
+  await js(`window.gd.ai.setConfig({ image:{provider:'openai',model:'gpt-image-1'}, vision:{provider:'gemini',model:'gemini-3.6-flash'}, customBaseUrl:'' })`);
+  await js(`window.gd.secrets.set({ name: 'openai', value: 'sk-test-123' })`);
+  const creditErr = await js(`window.gd.ai.render({ projectId: 1, prompt: 'x', view: 'front', refs: [] }).then(r => r.ok ? 'ok' : r.error.message)`);
+  check(/no API credit/i.test(creditErr), 'an empty OpenAI balance is reported as credit, not throttling', creditErr.slice(0, 80));
+  check(/ChatGPT Plus/i.test(creditErr), 'and says plainly that ChatGPT Plus does not fund the API');
+
+  log('\n=== a custom endpoint must be https, unless it is local ===');
+  const localOk = await js(`window.gd.ai.setConfig({ image:{provider:'custom',model:'x'}, vision:{provider:'gemini',model:'gemini-3.6-flash'}, customBaseUrl: 'http://localhost:7860/v1' }).then(r => r.ok ? 'ALLOWED' : r.error.message)`);
+  check(localOk === 'ALLOWED', 'a local model server over http is allowed', localOk);
+  const remoteHttp = await js(`window.gd.ai.setConfig({ image:{provider:'custom',model:'x'}, vision:{provider:'gemini',model:'gemini-3.6-flash'}, customBaseUrl: 'http://example.com/v1' }).then(r => r.ok ? 'ALLOWED' : r.error.message)`);
+  check(remoteHttp !== 'ALLOWED', 'but a remote http endpoint is still refused', remoteHttp);
 
   log('\n=== a custom endpoint must be https ===');
   const bad = await js(`window.gd.ai.setConfig({ image:{provider:'custom',model:'x'}, vision:{provider:'gemini',model:'gemini-2.5-flash'}, customBaseUrl: 'http://insecure.example' }).then(r => r.ok ? 'ALLOWED' : r.error.message)`);

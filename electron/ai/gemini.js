@@ -36,12 +36,33 @@ function explain(status, body) {
     return new GeminiError('The API key is missing permission for this model, or billing is not enabled on the Google account.', { status, code: 'forbidden' });
   }
   if (status === 404) {
+    // Google names the replacement when a model is retired, which is far more
+    // use than a generic "not available".
+    const suggested = /use\s+models\/([\w.-]+)/i.exec(apiMessage)?.[1];
+    if (/no longer available|deprecated/i.test(apiMessage)) {
+      return new GeminiError(
+        `That model has been retired${suggested ? ` - Google suggests ${suggested}` : ''}. Pick a current one in Settings > AI rendering.`,
+        { status, code: 'retired_model' }
+      );
+    }
     return new GeminiError(
-      'That model is not available on this key. Open Settings > AI rendering and choose one from the list - it is loaded from your key, so everything in it will work.',
+      'That model is not available on this key. Open Settings > AI rendering and choose one from the list.',
       { status, code: 'no_model' }
     );
   }
   if (status === 429) {
+    // A used-up free allowance and a momentary throttle are both 429s, and the
+    // advice for each is the opposite of the other: one clears in seconds, the
+    // other not until tomorrow.
+    const quota = body?.error?.details?.find((d) => String(d['@type'] ?? '').includes('QuotaFailure'));
+    const freeTier = JSON.stringify(quota ?? '').includes('FreeTier') || /free_tier/i.test(apiMessage);
+    if (freeTier) {
+      return new GeminiError(
+        'The free daily quota for this model is used up. It resets at midnight Pacific time, ' +
+        'or enable billing in Google AI Studio to lift the cap. Everything except rendering keeps working meanwhile.',
+        { status, code: 'free_quota', retryable: false }
+      );
+    }
     return new GeminiError('Google rate-limited the request. Wait a moment and try again.', { status, code: 'rate_limit', retryable: true });
   }
   if (status >= 500) {

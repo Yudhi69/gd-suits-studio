@@ -25,7 +25,18 @@ function explain(status, body, label = 'OpenAI') {
   if (status === 401) return new ProviderError(`${label} rejected that API key.`, { status, code: 'bad_key' });
   if (status === 403) return new ProviderError(`${label} refused the request - the key may lack access to this model.`, { status, code: 'forbidden' });
   if (status === 404) return new ProviderError(`That model is not available on this ${label} key. Pick another in Settings.`, { status, code: 'no_model' });
-  if (status === 429) return new ProviderError(`${label} rate-limited the request. Wait a moment and try again.`, { status, code: 'rate_limit', retryable: true });
+  if (status === 429) {
+    // OpenAI answers "no credits" with a 429 too, which reads as throttling
+    // and sends people off to wait for something that will never clear.
+    if (body?.error?.type === 'insufficient_quota' || /credit|quota|billing/i.test(message)) {
+      return new ProviderError(
+        `${label} has no API credit left. A ChatGPT Plus subscription does not fund API calls - they are billed separately. ` +
+        'Add credit at platform.openai.com/settings/organization/billing, or switch the image provider to Gemini in Settings.',
+        { status, code: 'no_credit' }
+      );
+    }
+    return new ProviderError(`${label} rate-limited the request. Wait a moment and try again.`, { status, code: 'rate_limit', retryable: true });
+  }
   if (status >= 500) return new ProviderError(`${label} had a server error. Try again.`, { status, code: 'server', retryable: true });
   return new ProviderError(message || `${label} request failed (HTTP ${status})`, { status, code: 'api' });
 }
