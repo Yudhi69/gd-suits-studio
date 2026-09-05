@@ -744,3 +744,19 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .month-track { flex: 1; width: 100%; display: flex; align-items: flex-end; }
 .month-fill { width: 100%; background: var(--chart-accent); border-radius: 4px 4px 0 0; min-height: 2px; }
 .month-label { font-size: 10.5px; color: var(--text-faint); margin-top: 5px; }
+
+/* Sortable column headings. The button carries the header's own type so the
+   row still reads as a header, not as a toolbar. */
+.th-sort {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; letter-spacing: inherit; text-transform: inherit;
+  color: inherit; display: inline-flex; align-items: center; gap: 5px;
+}
+.th-sort:hover { color: var(--text); }
+.th-sort.is-active { color: var(--text); }
+.th-sort:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; border-radius: 3px; }
+.th-arrow { font-size: 10px; line-height: 1; opacity: .85; }
+
+/* An order number is read as one token, so it never breaks across lines. */
+.order-ref { white-space: nowrap; }
+.th-sort { white-space: nowrap; }

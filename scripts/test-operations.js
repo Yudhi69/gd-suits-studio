@@ -91,6 +91,39 @@ app.whenReady().then(async () => {
   check(ui.bars > 0, 'pipeline bars drawn', String(ui.bars));
   check(ui.attention, 'the attention panel appears when there is something wrong');
 
+  // ---- sorting the orders list ----
+  log('\n=== the orders list sorts on every column ===');
+  const sorted = JSON.parse(await js(`(async () => {
+    [...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('Orders')).click();
+    await new Promise(r => setTimeout(r, 900));
+    const head = (label) => [...document.querySelectorAll('.th-sort')].find(b => b.textContent.trim().startsWith(label));
+    const col = (i) => [...document.querySelectorAll('tbody tr')].map(r => r.children[i].textContent.trim());
+    const out = { headers: [...document.querySelectorAll('.th-sort')].map(b => b.textContent.replace(/[↑↓]/g,'').trim()) };
+    out.defaultRefs = col(0).slice(0, 3);
+    head('Client').click(); await new Promise(r => setTimeout(r, 400));
+    out.clientAsc = col(1).slice(0, 3);
+    out.arrowAfterFirstClick = head('Client').textContent.includes('↑');
+    head('Client').click(); await new Promise(r => setTimeout(r, 400));
+    out.clientDesc = col(1).slice(0, 3);
+    out.arrowAfterSecondClick = head('Client').textContent.includes('↓');
+    head('Value').click(); await new Promise(r => setTimeout(r, 400));
+    out.valueFirst = col(6).slice(0, 2);
+    head('Status').click(); await new Promise(r => setTimeout(r, 400));
+    out.statusFirst = col(5).slice(0, 3);
+    out.onlyOneArrow = document.querySelectorAll('.th-sort.is-active').length;
+    return JSON.stringify(out);
+  })()`));
+
+  check(sorted.headers.length === 8, 'every column heading is a sort control', sorted.headers.join('|'));
+  check(sorted.defaultRefs.every(r => /^GD-\d{4}-\d{4}$/.test(r)), 'each order shows its own reference', sorted.defaultRefs.join(' '));
+  check(sorted.arrowAfterFirstClick, 'clicking a column sorts it ascending');
+  check(sorted.arrowAfterSecondClick, 'clicking again reverses it');
+  check(JSON.stringify(sorted.clientAsc) !== JSON.stringify(sorted.clientDesc), 'the two directions differ', JSON.stringify(sorted.clientAsc));
+  check(sorted.clientAsc.join() === [...sorted.clientAsc].sort().join(), 'ascending really is A-Z', sorted.clientAsc.join(' '));
+  check(sorted.onlyOneArrow === 1, 'only the column in force shows an arrow', String(sorted.onlyOneArrow));
+  check(sorted.statusFirst[0] === 'Enquiry' || sorted.statusFirst[0] === 'Quoted' || sorted.statusFirst[0] === 'Deposit paid',
+    'status sorts down the pipeline, not alphabetically', sorted.statusFirst.join(' '));
+
   if (process.env.SHOT_DIR) {
     fs.writeFileSync(path.join(process.env.SHOT_DIR, 'business.png'), (await win.webContents.capturePage()).toPNG());
     log('  (screenshot written)');

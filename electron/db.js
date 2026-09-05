@@ -346,6 +346,60 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_projects_source ON projects(import_source);
     `);
   },
+  // v10 - an order number a person can say out loud, and a truthful timeline.
+  //
+  // Every order has always had a row id, but an id is an implementation
+  // detail: it is not something GD can quote down the phone or write on an
+  // invoice. order_ref is that number - GD-2026-0043 - unique across the book
+  // and never reused.
+  //
+  // The second half repairs something the workbook import broke. Importing
+  // stamped all 771 rows with the moment they were imported, which made two
+  // years of finished work look like the most recently touched thing in the
+  // business and buried whatever the tailor was actually working on. Each
+  // imported order is dated from the last thing that really happened to it.
+  (d) => {
+    d.exec(`
+      ALTER TABLE projects ADD COLUMN order_ref TEXT NOT NULL DEFAULT '';
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_ref
+        ON projects(order_ref) WHERE order_ref <> '';
+    `);
+
+    // An imported order's real date: the last thing that has actually
+    // happened to it. A fitting booked for next year is not activity - it has
+    // not occurred - so anything in the future is ignored and the most recent
+    // past date wins. MAX() over dates already filtered to the past does that.
+    d.exec(`
+      UPDATE projects
+         SET updated_at = COALESCE(
+               -- Scalar MAX() returns NULL if any argument is NULL, so a
+               -- missing fitting date would wipe out the others. Absent dates
+               -- become '', which sorts below every real date instead.
+               NULLIF(MAX(
+                 CASE WHEN final_fitting_date <= date('now') THEN final_fitting_date ELSE '' END,
+                 CASE WHEN first_fitting_date <= date('now') THEN first_fitting_date ELSE '' END,
+                 CASE WHEN consultation_date  <= date('now') THEN consultation_date  ELSE '' END,
+                 CASE WHEN first_appointment  <= date('now') THEN first_appointment  ELSE '' END,
+                 CASE WHEN event_date         <= date('now') THEN event_date         ELSE '' END
+               ), ''),
+               ''
+             ),
+             created_at = COALESCE(
+               NULLIF(consultation_date, ''),
+               NULLIF(first_appointment, ''),
+               NULLIF(event_date, ''),
+               date(created_at)
+             ) || ' 00:00:00'
+       WHERE import_source <> '';
+    `);
+
+    // Unknown beats wrong: an imported order with nothing dateable on it is
+    // left without a timestamp rather than being stamped with the import,
+    // which would put it at the top of a list sorted by recent activity.
+
+    // Number what is already here. New orders get theirs on creation.
+    assignOrderRefs();
+  },
 ];
 
 function open(userDataPath) {
@@ -485,11 +539,70 @@ function getProject(id) {
   };
 }
 
+/**
+ * The next free order number for a year. Numbers are never reused, so this
+ * takes the highest already issued rather than counting the rows - deleting
+ * an order must not hand its number to the next one.
+ */
+function nextOrderRef(d, year = String(new Date().getFullYear())) {
+  const row = d
+    .prepare(`SELECT MAX(CAST(substr(order_ref, 9) AS INTEGER)) AS top
+                FROM projects WHERE order_ref LIKE ?`)
+    .get(`GD-${year}-%`);
+  return `GD-${year}-${String((row?.top ?? 0) + 1).padStart(4, '0')}`;
+}
+
+/**
+ * Give an order number to anything that has not got one.
+ *
+ * Numbering runs per year of the order's own date and continues from the
+ * highest already issued, so running this again after an import numbers only
+ * the new arrivals and never reissues a number that is already in use.
+ */
+function assignOrderRefs() {
+  const d = get();
+  const top = new Map();
+  for (const r of d.prepare(
+    `SELECT substr(order_ref, 4, 4) AS yr, MAX(CAST(substr(order_ref, 9) AS INTEGER)) AS n
+       FROM projects WHERE order_ref <> '' GROUP BY yr`).all()) {
+    top.set(r.yr, r.n ?? 0);
+  }
+  const rows = d.prepare(
+    `SELECT id, substr(COALESCE(NULLIF(created_at, ''), date('now')), 1, 4) AS yr
+       FROM projects WHERE order_ref = '' ORDER BY created_at, id`).all();
+  const stmt = d.prepare('UPDATE projects SET order_ref = ? WHERE id = ?');
+  let issued = 0;
+  for (const r of rows) {
+    const year = /^\d{4}$/.test(r.yr) ? r.yr : String(new Date().getFullYear());
+    const next = (top.get(year) ?? 0) + 1;
+    top.set(year, next);
+    stmt.run(`GD-${year}-${String(next).padStart(4, '0')}`, r.id);
+    issued++;
+  }
+  return issued;
+}
+
+/**
+ * Date an imported order by what really happened to it, rather than by when
+ * the import ran. Not reachable over IPC: only the importer sets these.
+ *
+ * The order number is cleared at the same time. It is derived from the year
+ * the order was taken, which is only known once these dates are set - the one
+ * handed out at insert was stamped with the year the import ran.
+ */
+function stampImport(id, { createdAt, updatedAt }) {
+  get()
+    .prepare(`UPDATE projects
+                 SET created_at = @createdAt, updated_at = @updatedAt, order_ref = ''
+               WHERE id = @id`)
+    .run({ id, createdAt: createdAt || '', updatedAt: updatedAt || '' });
+}
+
 function createProject({ clientId, title, eventType, eventOther, eventDate, deliveryDate }) {
   const info = get()
     .prepare(
-      `INSERT INTO projects (client_id, title, event_type, event_other, event_date, delivery_date)
-       VALUES (@clientId, @title, @eventType, @eventOther, @eventDate, @deliveryDate)`
+      `INSERT INTO projects (client_id, title, event_type, event_other, event_date, delivery_date, order_ref)
+       VALUES (@clientId, @title, @eventType, @eventOther, @eventDate, @deliveryDate, @orderRef)`
     )
     .run({
       clientId,
@@ -498,6 +611,7 @@ function createProject({ clientId, title, eventType, eventOther, eventDate, deli
       eventOther: eventOther ?? '',
       eventDate: eventDate ?? '',
       deliveryDate: deliveryDate ?? '',
+      orderRef: nextOrderRef(get()),
     });
   return info.lastInsertRowid;
 }
@@ -1215,6 +1329,7 @@ module.exports = {
   addOrderExtra, updateOrderExtra, deleteOrderExtra,
   analytics,
   tx,
+  nextOrderRef, assignOrderRefs, stampImport,
   addPhoto, getPhoto, deletePhoto, updatePhotoMeta,
   addNote, deleteNote,
   saveMeasurement,

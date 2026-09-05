@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
-import { eventTypesWith, statusLabel, statusPill } from '../lib/catalog.js';
+import { eventTypesWith, statusLabel, statusPill, PROJECT_STATUSES } from '../lib/catalog.js';
 import { formatMoney } from '../lib/pricing.js';
 import { quotedTotal } from '../lib/quote.js';
 import { ConfirmButton, Empty, Modal, useToast } from '../components/ui.jsx';
@@ -10,6 +10,9 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
   const [projects, setProjects] = useState([]);
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState('');
+  // Most recently worked on first - the order you had open yesterday is the
+  // one you want this morning.
+  const [sort, setSort] = useState({ key: 'updated', dir: 'desc' });
   const toast = useToast();
 
   async function load() {
@@ -20,9 +23,46 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
   useEffect(() => { load(); }, []);
 
   const q = query.trim().toLowerCase();
-  const shown = q
-    ? projects.filter((p) => `${p.name} ${p.surname} ${p.title} ${p.event_type}`.toLowerCase().includes(q))
+  const found = q
+    ? projects.filter((p) =>
+        `${p.name} ${p.surname} ${p.title} ${p.event_type} ${p.order_ref}`.toLowerCase().includes(q))
     : projects;
+
+  /**
+   * What each column sorts on. Status sorts by where it sits in the pipeline
+   * rather than by its name, because "Alterations" before "Delivered" is
+   * alphabetical nonsense - the useful order is how far along the work is.
+   */
+  const sortKeys = {
+    ref: (p) => p.order_ref || '',
+    client: (p) => `${p.surname} ${p.name}`.trim().toLowerCase(),
+    order: (p) => (p.title || '').toLowerCase(),
+    event: (p) => (eventTypesWith(customOptions).find((e) => e.key === p.event_type)?.label ?? '').toLowerCase(),
+    date: (p) => p.event_date || '',
+    status: (p) => PROJECT_STATUSES.findIndex((s) => s.key === p.status),
+    value: (p) => quotedTotal(p, JSON.parse(p.spec_json || '{}'), overrides, steps),
+    updated: (p) => p.updated_at || '',
+  };
+
+  const shown = [...found].sort((a, b) => {
+    const read = sortKeys[sort.key] ?? sortKeys.updated;
+    const [x, y] = [read(a), read(b)];
+    // A missing date or value sorts last whichever way the column is facing,
+    // so turning the arrow around never fills the top of the list with blanks.
+    const blank = (v) => v === '' || v === null || v === undefined || v === -1;
+    if (blank(x) !== blank(y)) return blank(x) ? 1 : -1;
+    const cmp = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y));
+    return sort.dir === 'asc' ? cmp : -cmp;
+  });
+
+  const toggle = (key) =>
+    setSort((s) => ({
+      key,
+      // A new column starts in the order that reads most naturally for it:
+      // biggest first for money and newest first for dates, A-Z for names.
+      dir: s.key === key ? (s.dir === 'asc' ? 'desc' : 'asc')
+        : ['value', 'date', 'updated'].includes(key) ? 'desc' : 'asc',
+    }));
 
   return (
     <>
@@ -61,12 +101,14 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
             <table className="table">
               <thead>
                 <tr>
-                  <th>Client</th>
-                  <th>Order</th>
-                  <th>Event</th>
-                  <th>Event date</th>
-                  <th>Status</th>
-                  <th style={{ textAlign: 'right' }}>Value</th>
+                  <SortHeader label="Ref" col="ref" sort={sort} onSort={toggle} />
+                  <SortHeader label="Client" col="client" sort={sort} onSort={toggle} />
+                  <SortHeader label="Order" col="order" sort={sort} onSort={toggle} />
+                  <SortHeader label="Event" col="event" sort={sort} onSort={toggle} />
+                  <SortHeader label="Event date" col="date" sort={sort} onSort={toggle} />
+                  <SortHeader label="Status" col="status" sort={sort} onSort={toggle} />
+                  <SortHeader label="Value" col="value" sort={sort} onSort={toggle} align="right" />
+                  <SortHeader label="Updated" col="updated" sort={sort} onSort={toggle} />
                   <th />
                 </tr>
               </thead>
@@ -75,12 +117,14 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
                   const spec = JSON.parse(p.spec_json || '{}');
                   return (
                     <tr key={p.id} className="clickable" onClick={() => onOpenProject(p.id)}>
+                      <td className="mono tiny faint order-ref">{p.order_ref || '-'}</td>
                       <td style={{ fontWeight: 600 }}>{p.name} {p.surname}</td>
                       <td>{p.title}</td>
                       <td className="muted">{eventTypesWith(customOptions).find((e) => e.key === p.event_type)?.label ?? '-'}</td>
                       <td className="muted mono">{p.event_date || '-'}</td>
                       <td><span className={`pill ${statusPill(p.status)}`}>{statusLabel(p.status)}</span></td>
                       <td className="mono" style={{ textAlign: 'right' }}>{formatMoney(quotedTotal(p, spec, overrides, steps))}</td>
+                      <td className="muted mono tiny">{(p.updated_at || '').slice(0, 10) || '-'}</td>
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
                         <button className="btn btn-sm btn-ghost" onClick={() => onOpenClient(p.client_id)}>Client file</button>
                         <ConfirmButton
@@ -113,6 +157,28 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
         />
       )}
     </>
+  );
+}
+
+/**
+ * A column heading that sorts. The arrow shows only on the column in force,
+ * so the header row stays quiet rather than sprouting six of them.
+ */
+function SortHeader({ label, col, sort, onSort, align }) {
+  const active = sort.key === col;
+  return (
+    <th style={{ textAlign: align || 'left' }}>
+      <button
+        type="button"
+        className={`th-sort ${active ? 'is-active' : ''}`}
+        onClick={() => onSort(col)}
+        aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+        title={`Sort by ${label.toLowerCase()}`}
+      >
+        {label}
+        <span className="th-arrow" aria-hidden="true">{active ? (sort.dir === 'asc' ? '↑' : '↓') : ''}</span>
+      </button>
+    </th>
   );
 }
 

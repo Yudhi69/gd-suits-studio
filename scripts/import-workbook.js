@@ -232,7 +232,19 @@ function buildOrders(dir) {
       } else lastNamed = rawName;
 
       const garment = readGarment(r);
-      const appt = readAppointments(findCell(r, RX.appt, 8));
+      // A continuation row carries no dates of its own - it is the same order
+      // as the row above, measured and fitted on the same day - so it takes
+      // that row's, rather than being left undated.
+      const appt = (() => {
+        const own = readAppointments(findCell(r, RX.appt, 8));
+        if (!continuation) return own;
+        const parent = orders[orders.length - 1];
+        return {
+          consultation: own.consultation || parent?.consultation || '',
+          firstFitting: own.firstFitting || parent?.firstFitting || '',
+          finalFitting: own.finalFitting || parent?.finalFitting || '',
+        };
+      })();
       const { email, contact } = readContact(findCell(r, /@|\d{3}[\s-]\d{3}/, 9));
       const money = readMoney(r[8]);
       const eventDate = readDate(r[1]);
@@ -247,7 +259,7 @@ function buildOrders(dir) {
         rawName,
         contact,
         email,
-        eventDate,
+        eventDate: eventDate || (continuation ? orders[orders.length - 1]?.eventDate ?? '' : ''),
         eventRaw: clean(r[1]),
         fabric: readFabric(r[2]),
         code: clean(r[3]),
@@ -410,6 +422,21 @@ function importInto(db, dir, { onProgress } = {}) {
       if (!o.money.certain && (o.money.note || o.money.balance)) {
         stats.flagged.push({ client: o.rawName, text: o.money.note || String(o.money.balance) });
       }
+      // Date the order by the last thing that actually happened to it. A
+      // fitting booked for next year has not happened, so it does not count;
+      // an order with nothing dateable is left undated rather than being
+      // stamped with the import, which would float it to the top of any list
+      // sorted by recent activity.
+      const today = new Date().toISOString().slice(0, 10);
+      const past = [o.finalFitting, o.firstFitting, o.consultation, o.firstAppointment, o.eventDate]
+        .filter((dt) => dt && dt <= today)
+        .sort();
+      const started = o.consultation || o.firstAppointment || o.eventDate || '';
+      db.stampImport(projectId, {
+        createdAt: started ? `${started} 00:00:00` : '',
+        updatedAt: past.length ? `${past[past.length - 1]} 00:00:00` : '',
+      });
+
       stats.orders++;
       onProgress?.(stats.orders, orders.length);
     }
@@ -445,6 +472,7 @@ function importInto(db, dir, { onProgress } = {}) {
   });
 
   run();
+  stats.numbered = db.assignOrderRefs();
   return stats;
 }
 

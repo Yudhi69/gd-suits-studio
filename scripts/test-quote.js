@@ -24,7 +24,12 @@ app.whenReady().then(async () => {
     const wait = ms => new Promise(r => setTimeout(r, ms));
     [...document.querySelectorAll('.nav-item')].find(b=>b.textContent.includes('Orders')).click();
     await wait(800);
-    return document.querySelector('tbody tr td:nth-last-child(2)').textContent.trim();
+    // Find the Value column by its heading rather than by counting from the
+    // end - the table gains columns, and a positional selector reads whatever
+    // moved into that slot without failing.
+    const heads = [...document.querySelectorAll('thead th')].map(th => th.textContent.replace(/[↑↓]/g,'').trim());
+    const i = heads.indexOf('Value');
+    return document.querySelector('tbody tr').children[i].textContent.trim();
   })()`);
 
   // A three-piece with a custom option the shop added.
