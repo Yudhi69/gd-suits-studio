@@ -51,5 +51,5 @@ export function quoteDrift(locked, spec, overrides, steps) {
   };
 }
 
-/** An order is still open to repricing only while it is a draft. */
-export const isDraft = (status) => !status || status === 'draft';
+/** An order is still open to repricing only while it is an unsent enquiry. */
+export const isDraft = (status) => !status || status === 'enquiry' || status === 'draft';

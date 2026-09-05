@@ -5,6 +5,7 @@ import { useCatalog } from './lib/useCatalog.js';
 import brandLogo from './assets/logo-light.png';
 import { ToastProvider } from './components/ui.jsx';
 import Dashboard from './screens/Dashboard.jsx';
+import Analytics from './screens/Analytics.jsx';
 import ProjectView from './screens/ProjectView.jsx';
 import ClientFile from './screens/ClientFile.jsx';
 import Settings from './screens/Settings.jsx';
@@ -21,7 +22,8 @@ export default function App() {
   useEffect(() => {
     (async () => {
       setOverrides((await api.settings.get({ key: 'priceOverrides', fallback: {} })) ?? {});
-      setUnit((await api.settings.get({ key: 'measureUnit', fallback: 'cm' })) ?? 'cm');
+      // GD's order form asks clients for inches, so that is the default.
+      setUnit((await api.settings.get({ key: 'measureUnit', fallback: 'in' })) ?? 'in');
       // Readiness follows whichever provider is configured for renders, not
       // whichever one happens to be first.
       try {
@@ -45,6 +47,7 @@ export default function App() {
 
   const nav = [
     { key: 'dashboard', label: 'Orders' },
+    { key: 'analytics', label: 'Business' },
     { key: 'settings', label: 'Settings' },
   ];
 
@@ -130,6 +133,10 @@ export default function App() {
               onBack={() => setRoute({ name: 'dashboard' })}
               onOpenProject={(id) => setRoute({ name: 'project', id })}
             />
+          )}
+
+          {route.name === 'analytics' && (
+            <Analytics onOpenProject={(id) => setRoute({ name: 'project', id })} />
           )}
 
           {route.name === 'settings' && (

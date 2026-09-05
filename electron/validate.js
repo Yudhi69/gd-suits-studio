@@ -114,7 +114,10 @@ function modelName(value, field = 'model') {
 const PHOTO_SLOTS = ['front', 'side', 'back', 'face', 'fabric', 'lining', 'lining_collage', 'inspiration', 'fitting'];
 const GARMENTS = ['jacket', 'waistcoat', 'pants', 'shirt', ''];
 const REFERENCE_KINDS = ['style', 'fabric', 'lining', 'fit'];
-const PROJECT_STATUSES = ['draft', 'approved', 'first_fitting', 'final_fitting', 'delivered'];
+const PROJECT_STATUSES = ['enquiry', 'quoted', 'deposit_paid', 'in_production', 'first_fitting', 'alterations', 'final_fitting', 'delivered', 'draft', 'approved'];
+const PAYMENT_KINDS = ['deposit', 'balance', 'part_payment', 'refund'];
+const ALTERATION_STATUSES = ['received', 'in_progress', 'ready', 'collected', 'cancelled'];
+const EXTRA_STATUSES = ['ordered', 'received', 'fitted', 'delivered', 'cancelled'];
 const FITTING_KINDS = ['first', 'final', 'extra'];
 
 module.exports = {
@@ -122,5 +125,6 @@ module.exports = {
   id, optionalId, str, oneOf, num,
   filename, scope, dataUrl, jsonBlob, modelName,
   PHOTO_SLOTS, GARMENTS, REFERENCE_KINDS, PROJECT_STATUSES, FITTING_KINDS,
+  PAYMENT_KINDS, ALTERATION_STATUSES, EXTRA_STATUSES,
   MAX_IMAGE_BYTES,
 };

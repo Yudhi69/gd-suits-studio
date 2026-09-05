@@ -21,7 +21,7 @@
     "test:render": "cross-env DATA_DIR=.testdata/render electron scripts/test-render-pipeline.js",
     "test:tour": "cross-env DATA_DIR=.testdata/tour SHOT_DIR=.testdata/shots electron scripts/screenshot-tour.js",
     "test:security": "cross-env DATA_DIR=.testdata/security electron scripts/test-security.js",
-    "test": "npm run test:migrations && npm run test:security && npm run test:models && npm run test:updates && npm run test:catalog && npm run test:workflow && npm run test:client && npm run test:quote && npm run test:render",
+    "test": "npm run test:migrations && npm run test:security && npm run test:models && npm run test:updates && npm run test:catalog && npm run test:workflow && npm run test:client && npm run test:quote && npm run test:operations && npm run test:render",
     "test:updates": "cross-env DATA_DIR=.testdata/updates electron scripts/test-updates.js",
     "test:catalog": "cross-env DATA_DIR=.testdata/catalog electron scripts/test-catalog.js",
     "test:workflow": "cross-env DATA_DIR=.testdata/workflow electron scripts/test-workflow.js",
@@ -29,7 +29,8 @@
     "test:models": "cross-env DATA_DIR=.testdata/models electron scripts/test-models.js",
     "test:client": "cross-env DATA_DIR=.testdata/client electron scripts/test-clientnotes.js",
     "test:quote": "cross-env DATA_DIR=.testdata/quote electron scripts/test-quote.js",
-    "test:migrations": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-migrations.js"
+    "test:migrations": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-migrations.js",
+    "test:operations": "cross-env DATA_DIR=.testdata/ops electron scripts/test-operations.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",

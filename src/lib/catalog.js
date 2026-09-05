@@ -84,7 +84,7 @@ export const STEPS = [
         prompt: (v) => `a ${v} fit through the body`,
         options: [
           { key: 'slim', label: 'Slim', desc: 'Close to the body', price: 0 },
-          { key: 'medium', label: 'Medium', desc: 'In between', price: 0 },
+          { key: 'medium', label: 'Standard', desc: 'In between', price: 0 },
           { key: 'loose', label: 'Loose', desc: 'Relaxed drape', price: 0 },
         ],
       },
@@ -188,7 +188,7 @@ export const STEPS = [
       },
       {
         id: 'vents',
-        label: 'Vents',
+        label: 'Vents (slits)',
         type: 'choice',
         required: true,
         prompt: (v) => (v === 'none' ? 'no vents' : `${v} vent${v === 'double' ? 's' : ''}`),
@@ -472,25 +472,36 @@ export const STEPS = [
         options: [
           { key: 'black', label: 'Black', price: 0 },
           { key: 'white', label: 'White', price: 0 },
+          { key: 'custom', label: 'Custom Colour', desc: 'Pick below', price: 0 },
         ],
       },
+      { id: 'pipingColour', label: 'Piping colour', type: 'colour', showIf: (s) => s.stitching === 'custom',
+        default: '#c9a227', prompt: (v) => `piping in ${nameColour(v)}` },
+      { id: 'designRequests', label: 'Any other design requests', type: 'longtext',
+        placeholder: 'Anything the client asked for that is not covered above...',
+        prompt: (v) => v },
     ],
   },
 ];
 
-/** Guided measurement fields, grouped by garment. Values are in centimetres. */
+/**
+ * The measurement set, worded exactly as GD's order form asks clients for
+ * them, so a form filled in online transcribes straight across. Stored in
+ * centimetres regardless of the unit on screen.
+ */
 export const MEASUREMENTS = {
   jacket: {
     label: 'Jacket',
     fields: [
-      { id: 'chest', label: 'Chest', hint: 'Around the fullest part, tape level under the arms.' },
-      { id: 'waist', label: 'Waist (jacket)', hint: 'At the natural waist, roughly the navel.' },
-      { id: 'seat', label: 'Seat', hint: 'Fullest part of the hips.' },
-      { id: 'shoulder', label: 'Shoulder', hint: 'Seam point to seam point across the back.' },
-      { id: 'sleeve', label: 'Sleeve Length', hint: 'Shoulder point to the wrist bone, arm slightly bent.' },
-      { id: 'jacketLength', label: 'Jacket Length', hint: 'Base of the collar to the desired hem.' },
-      { id: 'bicep', label: 'Bicep', hint: 'Around the fullest part of the upper arm.' },
+      { id: 'jacketLength', label: 'Length (blazer front)', hint: 'Base of the collar to the desired hem.' },
+      { id: 'shoulder', label: 'Shoulders (shoulder to shoulder)', hint: 'Seam point to seam point across the back.' },
+      { id: 'sleeve', label: 'Sleeve length', hint: 'Shoulder point to the wrist bone, arm slightly bent.' },
+      { id: 'sleeveOpening', label: 'Sleeve opening', hint: 'Around the cuff opening.' },
+      { id: 'bicep', label: 'Bicep (flex)', hint: 'Around the fullest part of the upper arm, flexed.' },
       { id: 'neck', label: 'Neck', hint: 'Around the base of the neck, one finger of ease.' },
+      { id: 'chest', label: 'Chest / bust', hint: 'Around the fullest part, tape level under the arms.' },
+      { id: 'waist', label: 'Waist (over the belly button)', hint: 'Around the waist, level with the navel.' },
+      { id: 'seat', label: 'Hip (over groin area)', hint: 'Around the fullest part of the hips.' },
     ],
   },
   waistcoat: {
@@ -498,42 +509,50 @@ export const MEASUREMENTS = {
     fields: [
       { id: 'wcChest', label: 'Chest', hint: 'Same level as the jacket chest.' },
       { id: 'wcWaist', label: 'Waist', hint: 'Natural waist, snug.' },
-      { id: 'wcFrontLength', label: 'Front Length', hint: 'Shoulder seam to the point of the hem.' },
-      { id: 'wcBackLength', label: 'Back Length', hint: 'Base of collar to the back hem.' },
+      { id: 'wcFrontLength', label: 'Front length', hint: 'Shoulder seam to the point of the hem.' },
+      { id: 'wcBackLength', label: 'Back length', hint: 'Base of collar to the back hem.' },
     ],
   },
   pants: {
-    label: 'Pants',
+    label: 'Trousers',
     fields: [
+      { id: 'outseam', label: 'Length (outside leg)', hint: 'Waistband to the desired break at the shoe.' },
       { id: 'pantWaist', label: 'Waist', hint: 'Where the trouser is intended to sit.' },
-      { id: 'pantSeat', label: 'Seat', hint: 'Fullest part, feet together.' },
-      { id: 'thigh', label: 'Thigh', hint: 'Around the fullest part, 2cm below the crotch.' },
-      { id: 'knee', label: 'Knee', hint: 'Around the knee cap.' },
-      { id: 'hemOpening', label: 'Hem Opening', hint: 'Desired width across the opening, doubled.' },
-      { id: 'outseam', label: 'Outseam', hint: 'Waistband to the desired break at the shoe.' },
-      { id: 'inseam', label: 'Inseam', hint: 'Crotch to the hem.' },
-      { id: 'rise', label: 'Rise', hint: 'Crotch seam up to the top of the waistband.' },
+      { id: 'pantSeat', label: 'Hip loop (over groin area)', hint: 'Fullest part, feet together.' },
+      { id: 'thigh', label: 'Thigh loop', hint: 'Around the fullest part, 2cm below the crotch.' },
+      { id: 'ankleLoop', label: 'Ankle loop', hint: 'Around the ankle opening.' },
+      { id: 'rise', label: 'Crotch', hint: 'Crotch seam up to the top of the waistband.' },
+      { id: 'knee', label: 'Knee', hint: 'Around the knee cap. Not on the order form - useful for a close cut.' },
+      { id: 'inseam', label: 'Inseam', hint: 'Crotch to the hem. Not on the order form.' },
     ],
   },
 };
 
 /**
- * Order stages. A suit in fitting is either at its first fitting or its final
- * one, and the distinction matters - the first is where the big corrections
- * happen, the final is a sign-off.
+ * The order pipeline.
+ *
+ * This replaces the workbook's sheet-per-stage split - Suit Progress, Current
+ * Orders, Completed were the same orders at different points, with the client
+ * keyed by name in each. One field, one place to look.
  */
 export const PROJECT_STATUSES = [
-  { key: 'draft', label: 'Draft', pill: 'pill-quiet' },
-  { key: 'approved', label: 'Approved by client', pill: 'pill-ok' },
-  { key: 'first_fitting', label: 'First fitting', pill: 'pill-warn' },
-  { key: 'final_fitting', label: 'Final fitting', pill: 'pill-warn' },
-  { key: 'delivered', label: 'Delivery', pill: 'pill-ok' },
+  { key: 'enquiry', label: 'Enquiry', pill: 'pill-quiet', open: true },
+  { key: 'quoted', label: 'Quoted', pill: 'pill-quiet', open: true },
+  { key: 'deposit_paid', label: 'Deposit paid', pill: 'pill', open: true },
+  { key: 'in_production', label: 'In production', pill: 'pill', open: true },
+  { key: 'first_fitting', label: 'First fitting', pill: 'pill-warn', open: true },
+  { key: 'alterations', label: 'Alterations', pill: 'pill-warn', open: true },
+  { key: 'final_fitting', label: 'Final fitting', pill: 'pill-warn', open: true },
+  { key: 'delivered', label: 'Delivered', pill: 'pill-ok', open: false },
 ];
 
 export const statusLabel = (key) =>
   PROJECT_STATUSES.find((s) => s.key === key)?.label ?? key;
 export const statusPill = (key) =>
   PROJECT_STATUSES.find((s) => s.key === key)?.pill ?? 'pill-quiet';
+
+/** Orders still needing work - the old "Current Orders" sheet. */
+export const isOpenStatus = (key) => PROJECT_STATUSES.find((s) => s.key === key)?.open ?? true;
 
 /** The two fittings a suit goes through, plus room for an extra visit. */
 export const FITTING_KINDS = [
@@ -542,8 +561,31 @@ export const FITTING_KINDS = [
   { key: 'extra', label: 'Additional fitting', blurb: 'An extra visit between the two.' },
 ];
 
-export const fittingLabel = (key) =>
-  FITTING_KINDS.find((k) => k.key === key)?.label ?? 'Fitting';
+export const fittingLabel = (key) => FITTING_KINDS.find((k) => k.key === key)?.label ?? 'Fitting';
+
+/** Money in, against the 50% deposit GD's terms require before cutting. */
+export const PAYMENT_KINDS = [
+  { key: 'deposit', label: 'Deposit' },
+  { key: 'part_payment', label: 'Part payment' },
+  { key: 'balance', label: 'Balance' },
+  { key: 'refund', label: 'Refund' },
+];
+
+export const ALTERATION_STATUSES = [
+  { key: 'received', label: 'Received', pill: 'pill-quiet' },
+  { key: 'in_progress', label: 'In progress', pill: 'pill-warn' },
+  { key: 'ready', label: 'Ready', pill: 'pill' },
+  { key: 'collected', label: 'Collected', pill: 'pill-ok' },
+  { key: 'cancelled', label: 'Cancelled', pill: 'pill-quiet' },
+];
+
+export const EXTRA_STATUSES = [
+  { key: 'ordered', label: 'Ordered', pill: 'pill-quiet' },
+  { key: 'received', label: 'Received', pill: 'pill' },
+  { key: 'fitted', label: 'Fitted', pill: 'pill-warn' },
+  { key: 'delivered', label: 'Delivered', pill: 'pill-ok' },
+  { key: 'cancelled', label: 'Cancelled', pill: 'pill-quiet' },
+];
 
 /** Garments a fitting session records notes and photos against. */
 export const FITTING_GARMENTS = ['jacket', 'waistcoat', 'pants', 'shirt'];

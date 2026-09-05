@@ -6,6 +6,7 @@ import { quoteFromSpec, quoteDrift, isDraft } from '../../lib/quote.js';
 import { ConfirmButton } from '../../components/ui.jsx';
 import { EVENT_TYPES, MEASUREMENTS, statusLabel } from '../../lib/catalog.js';
 import { formatMeasure, unitLabel } from '../../lib/units.js';
+import { ORDER_TERMS, GD_CONTACT } from '../../lib/terms.js';
 import { useToast, Spinner, Banner } from '../../components/ui.jsx';
 
 /**
@@ -72,6 +73,20 @@ export default function SummaryStep({ ctx, overrides, steps, unit = 'cm' }) {
       ['first_fitting_date', 'First fitting'],
       ['final_fitting_date', 'Final fitting & delivery'],
     ].filter(([key]) => project[key]);
+    const paid = (project.payments ?? []).reduce((t, p) => t + (p.kind === 'refund' ? -p.amount : p.amount), 0);
+    const orderDetail = [
+      ['Number of suits', project.quantity ?? 1],
+      ['Fabric', project.fabric_name],
+      ['Code / colour', project.fabric_code],
+      ['Paid to date', paid ? formatMoney(paid) : ''],
+      ['Balance due', total ? formatMoney(Math.max(0, total - paid)) : ''],
+    ].filter(([, value]) => value !== '' && value !== undefined && value !== null);
+    const orderRows = orderDetail.length
+      ? `<h3>Order</h3><table>${orderDetail
+          .map(([label, value]) => `<tr><td class="k">${esc(label)}</td><td class="num">${esc(value)}</td></tr>`)
+          .join('')}</table>`
+      : '';
+
     const scheduleRows = schedule.length
       ? `<h3>Schedule</h3><table>${schedule
           .map(([key, label]) => `<tr><td class="k">${esc(label)}</td><td class="num">${esc(project[key])}</td></tr>`)
@@ -117,9 +132,13 @@ export default function SummaryStep({ ctx, overrides, steps, unit = 'cm' }) {
  .total{font-size:20px;font-weight:700;border-top:2px solid #14120f;padding-top:10px;margin-top:10px;display:flex;justify-content:space-between;font-family:system-ui}
  img{max-width:100%;border-radius:6px;margin:10px 0}
  .meta{font-family:system-ui;font-size:13px;color:#5d574c;margin-bottom:22px}
+ .terms{font-family:system-ui;font-size:12.5px;color:#14120f;line-height:1.55;padding-left:18px}
+ .terms li{margin-bottom:6px}
+ .sign{font-family:system-ui;font-size:13px;margin-top:34px;color:#14120f}
 </style></head><body>
 <img class="letterhead" src="images/gd-suits-logo.png" alt="GD Suits" onerror="this.style.display='none'">
-<h1>${esc(project.name)} ${esc(project.surname)}</h1>
+<h1>Order Form</h1>
+<p class="meta" style="margin-bottom:14px"><strong>${esc(project.name)} ${esc(project.surname)}</strong></p>
 <div class="meta">
  <strong>${esc(project.title)}</strong><br>
  ${esc(EVENT_TYPES.find((e) => e.key === project.event_type)?.label ?? '')} ${project.event_date ? `&middot; ${esc(project.event_date)}` : ''}<br>
@@ -132,9 +151,21 @@ ${scheduleRows}
 ${images ? `<h3>Approved design</h3>${images}` : ''}
 ${rows}
 ${measureRows}
+${orderRows}
 <h3>Price breakdown</h3><table>${priceRows}</table>
 <div class="total"><span>Total</span><span>${esc(formatMoney(total))}</span></div>
 ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c">Quoted ${esc(String(project.quote.at ?? '').slice(0, 10))}. This price is held for this order.</p>` : ''}
+
+<h3>Terms and conditions</h3>
+<ol class="terms">${ORDER_TERMS.map((t) => `<li>${esc(t)}</li>`).join('')}</ol>
+
+<h3>Contact us if you have any further queries</h3>
+<p class="meta">
+  ${esc(GD_CONTACT.name)}<br>${esc(GD_CONTACT.role)}<br>
+  ${esc(GD_CONTACT.phone)}<br>${esc(GD_CONTACT.email)}
+</p>
+
+<p class="sign">Client signature: ______________________________&nbsp;&nbsp;&nbsp;Date: ______________</p>
 </body></html>`;
   }
 

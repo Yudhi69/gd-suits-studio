@@ -268,6 +268,15 @@ handle('projects:update', ({ id, patch = {} }) => {
     if (patch[key] !== undefined) clean[key] = v.str(patch[key], key.replace(/_/g, ' '), 40);
   }
   if (patch.status !== undefined) clean.status = v.oneOf(patch.status, v.PROJECT_STATUSES, 'status');
+  if (patch.quantity !== undefined) clean.quantity = v.num(patch.quantity, 'quantity', { min: 1, max: 999 }) ?? 1;
+  for (const key of ['fabric_name', 'fabric_code', 'supplier']) {
+    if (patch[key] !== undefined) clean[key] = v.str(patch[key], key.replace(/_/g, ' '), 160);
+  }
+  if (patch.first_appointment !== undefined) clean.first_appointment = v.str(patch.first_appointment, 'appointment', 40);
+  if (patch.appointment_notes !== undefined) clean.appointment_notes = v.str(patch.appointment_notes, 'notes', 4000);
+  if (patch.comments !== undefined) clean.comments = v.str(patch.comments, 'comments', 8000);
+  if (patch.measurement_form_received !== undefined) clean.measurement_form_received = patch.measurement_form_received ? 1 : 0;
+  if (patch.form_printed !== undefined) clean.form_printed = patch.form_printed ? 1 : 0;
   if (patch.spec !== undefined) clean.spec = v.jsonBlob(patch.spec, 'spec');
   if (patch.analysis !== undefined) clean.analysis = v.jsonBlob(patch.analysis, 'analysis');
   return db.updateProject(v.id(id), clean);
@@ -371,6 +380,75 @@ handle('clientMeasurements:save', (m) => db.saveClientMeasurement({
 handle('clientMeasurements:list', ({ clientId }) => db.listClientMeasurements(v.id(clientId, 'clientId')));
 handle('measurements:seedFromClient', ({ projectId, clientId }) =>
   db.seedMeasurementsFromClient(v.id(projectId, 'projectId'), v.id(clientId, 'clientId')));
+
+/* money, alterations and extras - the workbook's other sheets */
+handle('payments:add', (r) => db.addPayment({
+  project_id: v.id(r.projectId, 'projectId'),
+  kind: v.oneOf(r.kind ?? 'deposit', v.PAYMENT_KINDS, 'payment kind'),
+  amount: v.num(r.amount, 'amount', { min: 0, max: 1e7 }) ?? 0,
+  paid_on: v.str(r.paidOn, 'date', 40),
+  method: v.str(r.method, 'method', 60),
+  reference: v.str(r.reference, 'reference', 120),
+  note: v.str(r.note, 'note', 500),
+}));
+handle('payments:update', ({ id, ...r }) => db.updatePayment(v.id(id), {
+  kind: r.kind === undefined ? undefined : v.oneOf(r.kind, v.PAYMENT_KINDS, 'payment kind'),
+  amount: r.amount === undefined ? undefined : v.num(r.amount, 'amount', { min: 0, max: 1e7 }) ?? 0,
+  paid_on: r.paidOn === undefined ? undefined : v.str(r.paidOn, 'date', 40),
+  method: r.method === undefined ? undefined : v.str(r.method, 'method', 60),
+  reference: r.reference === undefined ? undefined : v.str(r.reference, 'reference', 120),
+  note: r.note === undefined ? undefined : v.str(r.note, 'note', 500),
+}));
+handle('payments:delete', ({ id }) => db.deletePayment(v.id(id)));
+
+handle('alterations:add', (r) => db.addAlteration({
+  project_id: v.id(r.projectId, 'projectId'),
+  garment: v.oneOf(r.garment ?? '', v.GARMENTS, 'garment'),
+  description: v.str(r.description, 'description', 500),
+  kind: v.str(r.kind, 'alteration type', 80),
+  status: v.oneOf(r.status ?? 'received', v.ALTERATION_STATUSES, 'status'),
+  received_on: v.str(r.receivedOn, 'date', 40),
+  due_on: v.str(r.dueOn, 'date', 40),
+  confirmed_on: v.str(r.confirmedOn, 'date', 40),
+  cost: v.num(r.cost, 'cost', { min: 0, max: 1e7 }) ?? 0,
+  note: v.str(r.note, 'note', 1000),
+}));
+handle('alterations:update', ({ id, ...r }) => db.updateAlteration(v.id(id), {
+  garment: r.garment === undefined ? undefined : v.oneOf(r.garment, v.GARMENTS, 'garment'),
+  description: r.description === undefined ? undefined : v.str(r.description, 'description', 500),
+  kind: r.kind === undefined ? undefined : v.str(r.kind, 'alteration type', 80),
+  status: r.status === undefined ? undefined : v.oneOf(r.status, v.ALTERATION_STATUSES, 'status'),
+  received_on: r.receivedOn === undefined ? undefined : v.str(r.receivedOn, 'date', 40),
+  due_on: r.dueOn === undefined ? undefined : v.str(r.dueOn, 'date', 40),
+  confirmed_on: r.confirmedOn === undefined ? undefined : v.str(r.confirmedOn, 'date', 40),
+  cost: r.cost === undefined ? undefined : v.num(r.cost, 'cost', { min: 0, max: 1e7 }) ?? 0,
+  note: r.note === undefined ? undefined : v.str(r.note, 'note', 1000),
+}));
+handle('alterations:delete', ({ id }) => db.deleteAlteration(v.id(id)));
+
+handle('extras:add', (r) => db.addOrderExtra({
+  project_id: v.id(r.projectId, 'projectId'),
+  extra_type: v.str(r.extraType, 'type', 120),
+  colour: v.str(r.colour, 'colour', 80),
+  quantity: v.num(r.quantity, 'quantity', { min: 0, max: 999 }) ?? 1,
+  status: v.oneOf(r.status ?? 'ordered', v.EXTRA_STATUSES, 'status'),
+  unit_price: v.num(r.unitPrice, 'price', { min: 0, max: 1e7 }) ?? 0,
+  note: v.str(r.note, 'note', 500),
+}));
+handle('extras:update', ({ id, ...r }) => db.updateOrderExtra(v.id(id), {
+  extra_type: r.extraType === undefined ? undefined : v.str(r.extraType, 'type', 120),
+  colour: r.colour === undefined ? undefined : v.str(r.colour, 'colour', 80),
+  quantity: r.quantity === undefined ? undefined : v.num(r.quantity, 'quantity', { min: 0, max: 999 }) ?? 1,
+  status: r.status === undefined ? undefined : v.oneOf(r.status, v.EXTRA_STATUSES, 'status'),
+  unit_price: r.unitPrice === undefined ? undefined : v.num(r.unitPrice, 'price', { min: 0, max: 1e7 }) ?? 0,
+  note: r.note === undefined ? undefined : v.str(r.note, 'note', 500),
+}));
+handle('extras:delete', ({ id }) => db.deleteOrderExtra(v.id(id)));
+
+handle('analytics:get', ({ from, to } = {}) => db.analytics({
+  from: from ? v.str(from, 'from', 40) : undefined,
+  to: to ? v.str(to, 'to', 40) : undefined,
+}));
 
 /* notes, measurements, fittings */
 handle('notes:add', (n) => db.addNote({

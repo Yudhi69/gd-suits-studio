@@ -29,15 +29,22 @@ app.whenReady().then(async () => {
     const wait = ms => new Promise(r => setTimeout(r, ms));
     document.querySelector('tbody tr').click(); await wait(900);
     [...document.querySelectorAll('.step-tab')].find(t=>t.textContent.includes('Measurements')).click(); await wait(700);
-    const cm = { value: document.querySelectorAll('.measure-input')[0].value, unit: document.querySelector('.measure-unit').textContent };
-    [...document.querySelectorAll('.unit-switch button')].find(b=>b.textContent.includes('inches')).click(); await wait(700);
-    const inches = { value: document.querySelectorAll('.measure-input')[0].value, unit: document.querySelector('.measure-unit').textContent };
-    const el = document.querySelectorAll('.measure-input')[0];
-    el.focus(); el.select();
-    return JSON.stringify({ cm, inches });
+    const fieldFor = (label) => {
+      const row = [...document.querySelectorAll('.measure-row')].find(r => r.textContent.includes(label));
+      return { input: row?.querySelector('.measure-input'), unit: row?.querySelector('.measure-unit')?.textContent };
+    };
+    // GD's order form asks for inches, so that is the default now.
+    const chestInches = fieldFor('Chest');
+    const before = { value: chestInches.input.value, unit: chestInches.unit };
+    [...document.querySelectorAll('.unit-switch button')].find(b=>b.textContent.trim() === 'cm').click(); await wait(700);
+    const chestCm = fieldFor('Chest');
+    const after = { value: chestCm.input.value, unit: chestCm.unit };
+    return JSON.stringify({ before, after });
   })()`));
-  check(unitState.cm.value === '104' && unitState.cm.unit === 'cm', 'shows 104 cm by default');
-  check(unitState.inches.value === '40.94' && unitState.inches.unit === 'in', 'toggling converts the display to inches', JSON.stringify(unitState.inches));
+  check(unitState.before.value === '40.94' && unitState.before.unit === 'in',
+    'inches by default, matching the order form', JSON.stringify(unitState.before));
+  check(unitState.after.value === '104' && unitState.after.unit === 'cm',
+    'toggling converts the display to centimetres', JSON.stringify(unitState.after));
 
   // Simulated typing is not tested here on purpose. React's controlled inputs
   // only update from a genuine user keystroke - neither a programmatic `.value`
@@ -57,13 +64,17 @@ app.whenReady().then(async () => {
       document.querySelector('tbody tr').click(); await wait(900);
       [...document.querySelectorAll('.step-tab')].find(t=>t.textContent.includes('Measurements')).click(); await wait(700);
     })()`);
-    return js(`JSON.stringify({
-      unit: document.querySelector('.measure-unit').textContent,
-      value: document.querySelectorAll('.measure-input')[0].value,
-    })`);
+    return js(`(() => {
+      const row = [...document.querySelectorAll('.measure-row')].find(r => r.textContent.includes('Chest'));
+      return JSON.stringify({
+        unit: row.querySelector('.measure-unit').textContent,
+        value: row.querySelector('.measure-input').value,
+      });
+    })()`);
   }));
-  check(shown.unit === 'in', 'the inch preference survives a reload', shown.unit);
-  check(shown.value === '41', '104.14 cm stored is shown as 41 in', shown.value);
+  check(shown.unit === 'cm', 'the chosen unit survives a reload', shown.unit);
+  // Centimetres display to one decimal by design - a tailor works to the half.
+  check(shown.value === '104.1', '104.14 cm stored, shown to one decimal in cm', shown.value);
 
   /* ------------------------------------------------- custom options ---- */
   log('\n=== add an option to a built-in selector ===');

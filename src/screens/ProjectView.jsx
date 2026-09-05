@@ -8,6 +8,7 @@ import Stepper from '../components/Stepper.jsx';
 import { Spinner, Banner } from '../components/ui.jsx';
 
 import ClientStep from './project/ClientStep.jsx';
+import OrderStep from './project/OrderStep.jsx';
 import CaptureStep from './project/CaptureStep.jsx';
 import FabricStep from './project/FabricStep.jsx';
 import BuilderStep from './project/BuilderStep.jsx';
@@ -33,6 +34,7 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey, step
     const spec = project.spec ?? {};
     return [
       { key: 'client', title: 'Client', done: !!project.name },
+      { key: 'order', title: 'Order', done: !!(project.fabric_name || project.payments?.length) },
       { key: 'capture', title: 'Capture', done: project.photos.some((p) => ['front', 'side', 'back', 'face'].includes(p.slot)) },
       { key: 'fabric', title: 'Cloth', done: project.photos.some((p) => p.slot === 'fabric') || !!project.analysis?.fabricColour },
       ...catalogSteps.filter((s) => isVisible(s, spec)).map((s) => ({
@@ -82,6 +84,7 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey, step
     if (current.catalog) return <BuilderStep ctx={ctx} step={current.catalog} overrides={overrides} onCatalogChanged={onCatalogChanged} />;
     switch (current.key) {
       case 'client': return <ClientStep ctx={ctx} customOptions={customOptions} onCatalogChanged={onCatalogChanged} />;
+      case 'order': return <OrderStep ctx={ctx} />;
       case 'capture': return <CaptureStep ctx={ctx} />;
       case 'fabric': return <FabricStep ctx={ctx} />;
       case 'measurements': return <MeasureStep ctx={ctx} unit={unit} onUnitChange={onUnitChange} />;

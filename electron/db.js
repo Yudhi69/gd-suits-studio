@@ -249,6 +249,79 @@ const MIGRATIONS = [
       ALTER TABLE projects ADD COLUMN quote_json TEXT NOT NULL DEFAULT '';
     `);
   },
+
+  // v8 - the parts of the business that were living in a spreadsheet.
+  //
+  // The Excel workbook carried five sheets - Suit Progress, Current Orders,
+  // Completed, Alterations, Extras - that were really one pipeline with the
+  // same client keyed by name in each. This folds them into the order they
+  // belong to: money, alterations and extras become rows, and the stage an
+  // order sits at becomes one field instead of a column per sheet.
+  (d) => {
+    d.exec(`
+      ALTER TABLE projects ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE projects ADD COLUMN fabric_name TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN fabric_code TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN supplier TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN first_appointment TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN appointment_notes TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN measurement_form_received INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE projects ADD COLUMN form_printed INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE projects ADD COLUMN comments TEXT NOT NULL DEFAULT '';
+
+      -- Money in, against the 50% deposit rule in GD's terms.
+      CREATE TABLE IF NOT EXISTS payments (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        kind       TEXT NOT NULL DEFAULT 'deposit',
+        amount     REAL NOT NULL DEFAULT 0,
+        paid_on    TEXT NOT NULL DEFAULT '',
+        method     TEXT NOT NULL DEFAULT '',
+        reference  TEXT NOT NULL DEFAULT '',
+        note       TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_payments_project ON payments(project_id);
+
+      -- Alterations were their own sheet: work that arrives after a fitting,
+      -- with its own due date and its own cost.
+      CREATE TABLE IF NOT EXISTS alterations (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id   INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        garment      TEXT NOT NULL DEFAULT '',
+        description  TEXT NOT NULL DEFAULT '',
+        kind         TEXT NOT NULL DEFAULT '',
+        status       TEXT NOT NULL DEFAULT 'received',
+        received_on  TEXT NOT NULL DEFAULT '',
+        due_on       TEXT NOT NULL DEFAULT '',
+        confirmed_on TEXT NOT NULL DEFAULT '',
+        cost         REAL NOT NULL DEFAULT 0,
+        note         TEXT NOT NULL DEFAULT '',
+        created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_alterations_project ON alterations(project_id);
+
+      -- Extras were tracked per client with a colour, a count and a status of
+      -- their own - a shirt can be outstanding while the suit is finished.
+      CREATE TABLE IF NOT EXISTS order_extras (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        extra_type TEXT NOT NULL DEFAULT '',
+        colour     TEXT NOT NULL DEFAULT '',
+        quantity   INTEGER NOT NULL DEFAULT 1,
+        status     TEXT NOT NULL DEFAULT 'ordered',
+        unit_price REAL NOT NULL DEFAULT 0,
+        note       TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_extras_project ON order_extras(project_id);
+
+      -- One pipeline replacing the sheet-per-stage split. Existing statuses
+      -- map onto it rather than being reset.
+      UPDATE projects SET status = 'enquiry'   WHERE status = 'draft';
+      UPDATE projects SET status = 'quoted'    WHERE status = 'approved';
+    `);
+  },
 ];
 
 function open(userDataPath) {
@@ -382,6 +455,9 @@ function getProject(id) {
     measurements: d.prepare('SELECT * FROM measurements WHERE project_id = ?').all(id),
     renders: d.prepare('SELECT * FROM renders WHERE project_id = ? ORDER BY created_at DESC').all(id),
     fittings: d.prepare('SELECT * FROM fittings WHERE project_id = ? ORDER BY session_no').all(id),
+    payments: d.prepare('SELECT * FROM payments WHERE project_id = ? ORDER BY paid_on, id').all(id),
+    alterations: d.prepare('SELECT * FROM alterations WHERE project_id = ? ORDER BY due_on, id').all(id),
+    extras: d.prepare('SELECT * FROM order_extras WHERE project_id = ? ORDER BY id').all(id),
   };
 }
 
@@ -406,6 +482,9 @@ function updateProject(id, patch) {
   const allowed = [
     'title', 'event_type', 'event_other', 'event_date', 'delivery_date', 'status',
     'consultation_date', 'measurement_date', 'first_fitting_date', 'final_fitting_date',
+    'quantity', 'fabric_name', 'fabric_code', 'supplier',
+    'first_appointment', 'appointment_notes',
+    'measurement_form_received', 'form_printed', 'comments',
   ];
   const d = get();
   const sets = [];
@@ -887,6 +966,183 @@ function deleteCustomOption(id) {
   get().prepare('DELETE FROM catalog_options WHERE id = ?').run(id);
 }
 
+
+/* ------------------------------------------------ money, alterations, extras */
+
+const rowCrud = (table, columns) => ({
+  add(row) {
+    const cols = columns.join(', ');
+    const vals = columns.map((c) => `@${c}`).join(', ');
+    const info = get().prepare(`INSERT INTO ${table} (${cols}) VALUES (${vals})`).run(row);
+    return info.lastInsertRowid;
+  },
+  update(id, patch) {
+    const d = get();
+    const current = d.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
+    if (!current) return;
+    const merged = { id };
+    for (const c of columns) merged[c] = patch[c] === undefined ? current[c] : patch[c];
+    d.prepare(`UPDATE ${table} SET ${columns.map((c) => `${c} = @${c}`).join(', ')} WHERE id = @id`).run(merged);
+  },
+  remove(id) {
+    get().prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
+  },
+});
+
+const paymentsCrud = rowCrud('payments', ['project_id', 'kind', 'amount', 'paid_on', 'method', 'reference', 'note']);
+const alterationsCrud = rowCrud('alterations', ['project_id', 'garment', 'description', 'kind', 'status', 'received_on', 'due_on', 'confirmed_on', 'cost', 'note']);
+const extrasCrud = rowCrud('order_extras', ['project_id', 'extra_type', 'colour', 'quantity', 'status', 'unit_price', 'note']);
+
+const addPayment = (row) => paymentsCrud.add(row);
+const updatePayment = (id, patch) => paymentsCrud.update(id, patch);
+const deletePayment = (id) => paymentsCrud.remove(id);
+
+const addAlteration = (row) => alterationsCrud.add(row);
+const updateAlteration = (id, patch) => alterationsCrud.update(id, patch);
+const deleteAlteration = (id) => alterationsCrud.remove(id);
+
+const addOrderExtra = (row) => extrasCrud.add(row);
+const updateOrderExtra = (id, patch) => extrasCrud.update(id, patch);
+const deleteOrderExtra = (id) => extrasCrud.remove(id);
+
+
+/* ---------------------------------------------------------------- analytics */
+
+/**
+ * Business metrics, computed in SQL rather than by loading every order into
+ * the renderer. The figures GD kept by eye across five sheets - what is owed,
+ * what is in production, what is late - come out of one pass.
+ *
+ * Quoted values come from the frozen quote where there is one; an order still
+ * at enquiry has no agreed figure and is deliberately excluded from revenue.
+ */
+function analytics({ from = '0000-01-01', to = '9999-12-31' } = {}) {
+  const d = get();
+
+  const orders = d
+    .prepare(
+      `SELECT p.id, p.status, p.quantity, p.event_date, p.delivery_date, p.created_at,
+              p.fabric_name, p.fabric_code, p.event_type, p.quote_json, p.client_id,
+              c.name, c.surname,
+              (SELECT COALESCE(SUM(CASE WHEN kind = 'refund' THEN -amount ELSE amount END), 0)
+                 FROM payments y WHERE y.project_id = p.id) AS paid
+         FROM projects p JOIN clients c ON c.id = p.client_id
+        WHERE date(COALESCE(NULLIF(p.created_at,''), '0000-01-01')) BETWEEN date(@from) AND date(@to)`
+    )
+    .all({ from, to })
+    .map((row) => {
+      let quoted = 0;
+      try {
+        quoted = row.quote_json ? JSON.parse(row.quote_json).total ?? 0 : 0;
+      } catch { /* an unreadable quote counts as unquoted */ }
+      return { ...row, quoted, outstanding: Math.max(0, quoted - row.paid) };
+    });
+
+  const open = orders.filter((o) => o.status !== 'delivered');
+  const sum = (rows, key) => rows.reduce((t, r) => t + (Number(r[key]) || 0), 0);
+
+  const byStage = {};
+  for (const o of orders) {
+    byStage[o.status] ??= { orders: 0, suits: 0, quoted: 0, outstanding: 0 };
+    byStage[o.status].orders += 1;
+    byStage[o.status].suits += o.quantity || 1;
+    byStage[o.status].quoted += o.quoted;
+    byStage[o.status].outstanding += o.outstanding;
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const dueSoon = open
+    .filter((o) => o.event_date && o.event_date >= today)
+    .sort((a, b) => a.event_date.localeCompare(b.event_date))
+    .slice(0, 8);
+  const overdue = open.filter((o) => o.event_date && o.event_date < today);
+
+  // GD's terms require 50% up front before cutting. Anything already in
+  // production without it is money at risk, which is worth surfacing.
+  const depositShortfall = open
+    .filter((o) => ['in_production', 'first_fitting', 'alterations', 'final_fitting'].includes(o.status))
+    .filter((o) => o.quoted > 0 && o.paid < o.quoted * 0.5)
+    .map((o) => ({ ...o, shortfall: o.quoted * 0.5 - o.paid }));
+
+  const monthly = d
+    .prepare(
+      `SELECT substr(created_at, 1, 7) AS month, COUNT(*) AS orders, COALESCE(SUM(quantity),0) AS suits
+         FROM projects
+        WHERE created_at <> ''
+        GROUP BY month ORDER BY month DESC LIMIT 12`
+    )
+    .all();
+
+  const topBy = (column) =>
+    d
+      .prepare(
+        `SELECT ${column} AS value, COUNT(*) AS orders, COALESCE(SUM(quantity),0) AS suits
+           FROM projects WHERE ${column} <> '' GROUP BY ${column} ORDER BY orders DESC LIMIT 8`
+      )
+      .all();
+
+  const alterations = d
+    .prepare(
+      `SELECT status, COUNT(*) AS n, COALESCE(SUM(cost),0) AS cost FROM alterations GROUP BY status`
+    )
+    .all();
+  const alterationsOverdue = d
+    .prepare(`SELECT COUNT(*) AS n FROM alterations WHERE due_on <> '' AND due_on < date('now') AND status NOT IN ('collected','cancelled')`)
+    .get().n;
+
+  const extras = d
+    .prepare(`SELECT extra_type, status, COUNT(*) AS n, COALESCE(SUM(quantity),0) AS units FROM order_extras GROUP BY extra_type, status`)
+    .all();
+
+  // Lead time: how long an order actually takes from first contact to delivery.
+  const leadTimes = d
+    .prepare(
+      `SELECT julianday(final_fitting_date) - julianday(consultation_date) AS days
+         FROM projects
+        WHERE status = 'delivered' AND consultation_date <> '' AND final_fitting_date <> ''`
+    )
+    .all()
+    .map((r) => r.days)
+    .filter((n) => Number.isFinite(n) && n >= 0);
+
+  const delivered = orders.filter((o) => o.status === 'delivered');
+
+  return {
+    generatedAt: new Date().toISOString(),
+    totals: {
+      clients: d.prepare('SELECT COUNT(*) n FROM clients').get().n,
+      orders: orders.length,
+      openOrders: open.length,
+      suitsInProgress: sum(open, 'quantity'),
+      quoted: sum(orders, 'quoted'),
+      paid: sum(orders, 'paid'),
+      outstanding: sum(orders, 'outstanding'),
+      delivered: delivered.length,
+      deliveredValue: sum(delivered, 'quoted'),
+      averageOrder: orders.filter((o) => o.quoted > 0).length
+        ? sum(orders, 'quoted') / orders.filter((o) => o.quoted > 0).length
+        : 0,
+    },
+    byStage,
+    dueSoon,
+    overdue,
+    depositShortfall,
+    monthly,
+    topFabrics: topBy('fabric_name'),
+    topEvents: topBy('event_type'),
+    alterations: {
+      byStatus: alterations,
+      overdue: alterationsOverdue,
+      revenue: alterations.reduce((t, r) => t + r.cost, 0),
+    },
+    extras,
+    leadTime: {
+      samples: leadTimes.length,
+      averageDays: leadTimes.length ? leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length : null,
+    },
+  };
+}
+
 module.exports = {
   open,
   MIGRATIONS,
@@ -896,6 +1152,10 @@ module.exports = {
   linkRenderRefs, styleHistory,
   saveClientMeasurement, listClientMeasurements, seedMeasurementsFromClient,
   listProjects, getProject, createProject, updateProject, deleteProject, setQuote,
+  addPayment, updatePayment, deletePayment,
+  addAlteration, updateAlteration, deleteAlteration,
+  addOrderExtra, updateOrderExtra, deleteOrderExtra,
+  analytics,
   addPhoto, getPhoto, deletePhoto, updatePhotoMeta,
   addNote, deleteNote,
   saveMeasurement,
