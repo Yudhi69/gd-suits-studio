@@ -322,6 +322,30 @@ const MIGRATIONS = [
       UPDATE projects SET status = 'quoted'    WHERE status = 'approved';
     `);
   },
+  // v9 - what the workbook recorded that the app had no field for.
+  //
+  // These are free text as GD typed them, not selections from the catalogue:
+  // a lining code ("LN 1116"), a design written as a sentence ("PEAK LAPEL
+  // 1B2S, TUXEDO FINISH"), the shirt, and the Google Doc holding the signed
+  // measurement form. They are kept verbatim rather than forced into the
+  // pickers, because a guess at what "TBC" meant would be worse than the note.
+  //
+  // imported_balance is the balance-due figure from the sheet. It is kept
+  // apart from quote/payment arithmetic on purpose: the sheet recorded either
+  // what was owed or what had been paid, never both, so an imported balance
+  // is not a derivable figure and must not masquerade as one.
+  (d) => {
+    d.exec(`
+      ALTER TABLE projects ADD COLUMN lining TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN design TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN shirt TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN form_url TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN imported_balance REAL NOT NULL DEFAULT 0;
+      ALTER TABLE projects ADD COLUMN balance_note TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN import_source TEXT NOT NULL DEFAULT '';
+      CREATE INDEX IF NOT EXISTS idx_projects_source ON projects(import_source);
+    `);
+  },
 ];
 
 function open(userDataPath) {
@@ -485,6 +509,8 @@ function updateProject(id, patch) {
     'quantity', 'fabric_name', 'fabric_code', 'supplier',
     'first_appointment', 'appointment_notes',
     'measurement_form_received', 'form_printed', 'comments',
+    'lining', 'design', 'shirt', 'form_url',
+    'imported_balance', 'balance_note', 'import_source',
   ];
   const d = get();
   const sets = [];
@@ -1016,6 +1042,15 @@ const deleteOrderExtra = (id) => extrasCrud.remove(id);
  * Quoted values come from the frozen quote where there is one; an order still
  * at enquiry has no agreed figure and is deliberately excluded from revenue.
  */
+/**
+ * Run a batch of writes as one unit. A bulk import that fails halfway would
+ * leave the tailor with a database that is neither the old one nor the new,
+ * so the whole thing lands or none of it does.
+ */
+function tx(fn) {
+  return get().transaction(fn)();
+}
+
 function analytics({ from = '0000-01-01', to = '9999-12-31' } = {}) {
   const d = get();
 
@@ -1023,6 +1058,7 @@ function analytics({ from = '0000-01-01', to = '9999-12-31' } = {}) {
     .prepare(
       `SELECT p.id, p.status, p.quantity, p.event_date, p.delivery_date, p.created_at,
               p.fabric_name, p.fabric_code, p.event_type, p.quote_json, p.client_id,
+              p.imported_balance AS legacy_balance,
               c.name, c.surname,
               (SELECT COALESCE(SUM(CASE WHEN kind = 'refund' THEN -amount ELSE amount END), 0)
                  FROM payments y WHERE y.project_id = p.id) AS paid
@@ -1064,11 +1100,14 @@ function analytics({ from = '0000-01-01', to = '9999-12-31' } = {}) {
     .filter((o) => o.quoted > 0 && o.paid < o.quoted * 0.5)
     .map((o) => ({ ...o, shortfall: o.quoted * 0.5 - o.paid }));
 
+  // By the date the suit is needed, not the date the row was typed: imported
+  // orders all carry the same import timestamp, which would stack two years of
+  // work into a single bar.
   const monthly = d
     .prepare(
-      `SELECT substr(created_at, 1, 7) AS month, COUNT(*) AS orders, COALESCE(SUM(quantity),0) AS suits
+      `SELECT substr(event_date, 1, 7) AS month, COUNT(*) AS orders, COALESCE(SUM(quantity),0) AS suits
          FROM projects
-        WHERE created_at <> ''
+        WHERE event_date <> '' AND length(event_date) >= 7
         GROUP BY month ORDER BY month DESC LIMIT 12`
     )
     .all();
@@ -1107,6 +1146,20 @@ function analytics({ from = '0000-01-01', to = '9999-12-31' } = {}) {
 
   const delivered = orders.filter((o) => o.status === 'delivered');
 
+  // Balances carried over from the spreadsheet. The sheet recorded either what
+  // was owed or what had been paid, never both, so these cannot be folded into
+  // quoted-minus-paid without inventing a quote. They are reported on their
+  // own, and split, because a balance sitting on an order delivered a year ago
+  // was almost certainly settled off-sheet - only the open ones are a question.
+  const legacy = d
+    .prepare(
+      `SELECT CASE WHEN status = 'delivered' THEN 'settledLikely' ELSE 'open' END AS bucket,
+              COUNT(*) AS orders, COALESCE(SUM(imported_balance), 0) AS total
+         FROM projects WHERE imported_balance > 0 GROUP BY bucket`
+    )
+    .all()
+    .reduce((acc, r) => ({ ...acc, [r.bucket]: { orders: r.orders, total: r.total } }), {});
+
   return {
     generatedAt: new Date().toISOString(),
     totals: {
@@ -1128,6 +1181,11 @@ function analytics({ from = '0000-01-01', to = '9999-12-31' } = {}) {
     overdue,
     depositShortfall,
     monthly,
+    legacy: {
+      open: legacy.open ?? { orders: 0, total: 0 },
+      settledLikely: legacy.settledLikely ?? { orders: 0, total: 0 },
+      imported: d.prepare(`SELECT COUNT(*) n FROM projects WHERE import_source <> ''`).get().n,
+    },
     topFabrics: topBy('fabric_name'),
     topEvents: topBy('event_type'),
     alterations: {
@@ -1156,6 +1214,7 @@ module.exports = {
   addAlteration, updateAlteration, deleteAlteration,
   addOrderExtra, updateOrderExtra, deleteOrderExtra,
   analytics,
+  tx,
   addPhoto, getPhoto, deletePhoto, updatePhotoMeta,
   addNote, deleteNote,
   saveMeasurement,

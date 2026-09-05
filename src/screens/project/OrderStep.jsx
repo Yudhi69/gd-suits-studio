@@ -150,6 +150,41 @@ export default function OrderStep({ ctx }) {
         </div>
       </div>
 
+      {/* Free text as GD wrote it in the spreadsheet. Shown as a record
+          rather than as pickers, because these predate the catalogue. */}
+      {project.import_source && (
+        <div className="card">
+          <div className="card-head">
+            <h3>From the workbook</h3>
+            <div className="spacer" />
+            <span className="tiny faint">Imported from the {project.import_source.toLowerCase()} sheet</span>
+          </div>
+          <div className="card-pad">
+            {[['Design', project.design], ['Lining', project.lining], ['Shirt', project.shirt]]
+              .filter(([, v]) => v)
+              .map(([label, value]) => (
+                <div className="field" key={label}>
+                  <label>{label}</label>
+                  <DebouncedInput as="textarea" className="textarea" value={value}
+                    onCommit={(v) => updateProject({ [label.toLowerCase()]: v })} />
+                </div>
+              ))}
+            {project.imported_balance > 0 && (
+              <div className="banner banner-warn">
+                Balance on the sheet: <strong>{formatMoney(project.imported_balance)}</strong>
+                {project.balance_note && <> — written as "{project.balance_note}"</>}
+                . Not counted in the figures above until it is confirmed and recorded as a payment.
+              </div>
+            )}
+            {project.form_url && (
+              <p className="small" style={{ margin: '10px 0 0' }}>
+                Measurement form: <span className="mono tiny">{project.form_url}</span>
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ------------------------------------------------- alterations --- */}
       <div className="card">
         <div className="card-head">

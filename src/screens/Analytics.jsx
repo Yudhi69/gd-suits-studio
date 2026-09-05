@@ -29,6 +29,8 @@ export default function Analytics({ onOpenProject }) {
 
   const t = data.totals;
   const money = data.depositShortfall.reduce((s, o) => s + o.shortfall, 0);
+  const legacy = data.legacy ?? { open: { orders: 0, total: 0 }, settledLikely: { orders: 0, total: 0 }, imported: 0 };
+  const quotedCount = t.quoted > 0 ? Math.max(1, Math.round(t.quoted / (t.averageOrder || t.quoted))) : 0;
 
   return (
     <>
@@ -42,9 +44,16 @@ export default function Analytics({ onOpenProject }) {
         {/* Headline figures are values, not shapes - tiles, not charts. */}
         <div className="grid grid-4" style={{ marginBottom: 18 }}>
           <Stat label="Open orders" value={t.openOrders} sub={`${plural(t.suitsInProgress, 'suit')} in progress`} />
-          <Stat label="Outstanding" value={formatMoney(t.outstanding)} sub={`of ${formatMoney(t.quoted)} quoted`} tone={t.outstanding > 0 ? 'warn' : undefined} />
-          <Stat label="Delivered" value={formatMoney(t.deliveredValue)} sub={`${t.delivered} order${t.delivered === 1 ? '' : 's'}`} tone="good" />
-          <Stat label="Average order" value={formatMoney(t.averageOrder)} sub={`${t.clients} client${t.clients === 1 ? '' : 's'} on file`} />
+          <Stat label="Payments received" value={formatMoney(t.paid)} sub={`across ${plural(t.orders, 'order')}`} tone="good" />
+          {/* Quoted figures only describe orders that carry a quote. Most of
+              the imported history does not, so the tile says how many. */}
+          <Stat
+            label="Outstanding on quotes"
+            value={formatMoney(t.outstanding)}
+            sub={quotedCount ? `${plural(quotedCount, 'order')} quoted in the app` : 'no orders quoted yet'}
+            tone={t.outstanding > 0 ? 'warn' : undefined}
+          />
+          <Stat label="Delivered" value={t.delivered} sub={`${plural(t.clients, 'client')} on file`} />
         </div>
 
         {/* Things that need doing today, before anything decorative. */}
@@ -58,16 +67,22 @@ export default function Analytics({ onOpenProject }) {
                   tone="critical"
                   rows={data.depositShortfall}
                   onOpen={onOpenProject}
-                  columns={(o) => [statusLabel(o.status), formatMoney(o.paid) + ' of ' + formatMoney(o.quoted * 0.5), formatMoney(o.shortfall) + ' short']}
+                  columns={(o) => [statusLabel(o.status), `${formatMoney(o.paid)} of ${formatMoney(o.quoted * 0.5)}`, `${formatMoney(o.shortfall)} short`]}
                 />
               )}
               {data.overdue.length > 0 && (
                 <ActionTable
-                  title={`${data.overdue.length} order${data.overdue.length === 1 ? '' : 's'} past the event date`}
+                  title={`${data.overdue.length} order${data.overdue.length === 1 ? '' : 's'} past the event date${data.overdue.length > 10 ? ' - showing the 10 oldest' : ''}`}
                   tone="serious"
-                  rows={data.overdue}
+                  rows={data.overdue.slice(0, 10)}
                   onOpen={onOpenProject}
-                  columns={(o) => [statusLabel(o.status), 'Event ' + o.event_date, formatMoney(o.outstanding) + ' due']}
+                  columns={(o) => [
+                    statusLabel(o.status),
+                    'Event ' + o.event_date,
+                    o.quoted > 0 ? formatMoney(o.outstanding) + ' due'
+                      : o.legacy_balance > 0 ? formatMoney(o.legacy_balance) + ' on the sheet'
+                      : o.fabric_name || 'not quoted',
+                  ]}
                 />
               )}
               {data.alterations.overdue > 0 && (
@@ -76,6 +91,37 @@ export default function Analytics({ onOpenProject }) {
                   {data.alterations.overdue === 1 ? ' is' : 's are'} past their due date.
                 </p>
               )}
+            </div>
+          </div>
+        )}
+
+        {legacy.imported > 0 && (
+          <div className="card" style={{ marginBottom: 18 }}>
+            <div className="card-head">
+              <h3>Carried over from the spreadsheet</h3>
+              <div className="spacer" />
+              <span className="tiny faint">{plural(legacy.imported, 'order')} imported</span>
+            </div>
+            <div className="card-pad">
+              <div className="price-line">
+                <span>
+                  <strong>{formatMoney(legacy.open.total)}</strong> on {plural(legacy.open.orders, 'open order')}
+                  <span className="tiny faint" style={{ display: 'block' }}>Worth confirming - these orders are not finished</span>
+                </span>
+                <span className="pill pill-warn">Check</span>
+              </div>
+              <div className="price-line">
+                <span>
+                  {formatMoney(legacy.settledLikely.total)} on {plural(legacy.settledLikely.orders, 'delivered order')}
+                  <span className="tiny faint" style={{ display: 'block' }}>Almost certainly settled off-sheet; kept for the record</span>
+                </span>
+                <span className="pill pill-quiet">Historical</span>
+              </div>
+              <p className="tiny faint" style={{ margin: '10px 0 0' }}>
+                The workbook's balance column recorded either what was owed or what had been paid,
+                never both, so these figures are shown as they were written rather than folded into
+                the totals above.
+              </p>
             </div>
           </div>
         )}
@@ -106,9 +152,9 @@ export default function Analytics({ onOpenProject }) {
 
             <div className="card" style={{ marginTop: 16 }}>
               <div className="card-head">
-                <h3>Orders taken by month</h3>
+                <h3>Suits by event month</h3>
                 <div className="spacer" />
-                <span className="tiny faint">Last 12 months</span>
+                <span className="tiny faint">When the suits are needed</span>
               </div>
               <div className="card-pad">
                 {data.monthly.length === 0
@@ -210,19 +256,30 @@ function BarRows({ rows, unit }) {
   );
 }
 
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 function MonthBars({ rows }) {
   const max = Math.max(1, ...rows.map((r) => r.orders));
   return (
     <div className="month-bars">
-      {rows.map((r) => (
-        <div className="month-col" key={r.month} title={`${r.month}: ${r.orders} orders, ${r.suits} suits`}>
-          <div className="month-value">{r.orders || ''}</div>
-          <div className="month-track">
-            <div className="month-fill" style={{ height: `${(r.orders / max) * 100}%` }} />
+      {rows.map((r, i) => {
+        const [year, month] = r.month.split('-');
+        // The run can cross a year end, and "12, 02, 03" with no year is a
+        // trap - so the year is shown on the first bar and whenever it turns.
+        const turned = i === 0 || rows[i - 1].month.slice(0, 4) !== year;
+        return (
+          <div className="month-col" key={r.month} title={`${r.month}: ${r.orders} orders, ${r.suits} suits`}>
+            <div className="month-value">{r.orders || ''}</div>
+            <div className="month-track">
+              <div className="month-fill" style={{ height: `${(r.orders / max) * 100}%` }} />
+            </div>
+            <div className="month-label">
+              {MONTH_NAMES[Number(month) - 1] ?? month}
+              {turned && <span style={{ display: 'block', opacity: 0.7 }}>{year}</span>}
+            </div>
           </div>
-          <div className="month-label">{r.month.slice(5)}</div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

@@ -275,6 +275,14 @@ handle('projects:update', ({ id, patch = {} }) => {
   if (patch.first_appointment !== undefined) clean.first_appointment = v.str(patch.first_appointment, 'appointment', 40);
   if (patch.appointment_notes !== undefined) clean.appointment_notes = v.str(patch.appointment_notes, 'notes', 4000);
   if (patch.comments !== undefined) clean.comments = v.str(patch.comments, 'comments', 8000);
+  for (const key of ['lining', 'design', 'shirt', 'balance_note']) {
+    if (patch[key] !== undefined) clean[key] = v.str(patch[key], key, 2000);
+  }
+  // A URL from the workbook is stored and shown, never fetched by the app.
+  if (patch.form_url !== undefined) clean.form_url = v.str(patch.form_url, 'form link', 500);
+  if (patch.imported_balance !== undefined) {
+    clean.imported_balance = v.num(patch.imported_balance, 'balance', { min: 0, max: 1e7 }) ?? 0;
+  }
   if (patch.measurement_form_received !== undefined) clean.measurement_form_received = patch.measurement_form_received ? 1 : 0;
   if (patch.form_printed !== undefined) clean.form_printed = patch.form_printed ? 1 : 0;
   if (patch.spec !== undefined) clean.spec = v.jsonBlob(patch.spec, 'spec');
