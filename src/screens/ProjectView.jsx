@@ -1,10 +1,14 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { STEPS, isVisible } from '../lib/catalog.js';
+import React, { useEffect, useMemo, useState } from 'react';
+import { isVisible, statusLabel, statusPill } from '../lib/catalog.js';
 import { useProject } from '../lib/useProject.js';
+import { quoteFromSpec, isDraft } from '../lib/quote.js';
+import { api } from '../lib/api.js';
 import PriceBar from '../components/PriceBar.jsx';
+import Stepper from '../components/Stepper.jsx';
 import { Spinner, Banner } from '../components/ui.jsx';
 
 import ClientStep from './project/ClientStep.jsx';
+import OrderStep from './project/OrderStep.jsx';
 import CaptureStep from './project/CaptureStep.jsx';
 import FabricStep from './project/FabricStep.jsx';
 import BuilderStep from './project/BuilderStep.jsx';
@@ -20,28 +24,20 @@ import SummaryStep from './project/SummaryStep.jsx';
  * asks for it to feel like a game, one decision at a time, with the running
  * price always in view.
  */
-export default function ProjectView({ projectId, onBack, overrides, hasKey }) {
+export default function ProjectView({ projectId, onBack, overrides, hasKey, steps: catalogSteps, unit, onUnitChange, customOptions, onCatalogChanged }) {
   const ctx = useProject(projectId);
   const [stepKey, setStepKey] = useState('client');
-  const stepperRef = useRef(null);
   const { project, loading, error } = ctx;
-
-  // The stepper scrolls horizontally once there are enough steps; keep the
-  // current one on screen so the tailor can always see where they are.
-  useEffect(() => {
-    stepperRef.current
-      ?.querySelector('.step-tab.active')
-      ?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
-  }, [stepKey]);
 
   const steps = useMemo(() => {
     if (!project) return [];
     const spec = project.spec ?? {};
     return [
       { key: 'client', title: 'Client', done: !!project.name },
+      { key: 'order', title: 'Order', done: !!(project.fabric_name || project.payments?.length) },
       { key: 'capture', title: 'Capture', done: project.photos.some((p) => ['front', 'side', 'back', 'face'].includes(p.slot)) },
       { key: 'fabric', title: 'Cloth', done: project.photos.some((p) => p.slot === 'fabric') || !!project.analysis?.fabricColour },
-      ...STEPS.filter((s) => isVisible(s, spec)).map((s) => ({
+      ...catalogSteps.filter((s) => isVisible(s, spec)).map((s) => ({
         key: s.key,
         title: s.title,
         catalog: s,
@@ -52,7 +48,22 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey }) {
       { key: 'fitting', title: 'Fitting', done: project.fittings.length > 0 },
       { key: 'summary', title: 'Summary', done: project.renders.some((r) => r.approved) },
     ];
-  }, [project]);
+  }, [project, catalogSteps]);
+
+  // Any status past draft means a figure has been shown to a client, so the
+  // quote is frozen at that point, whichever screen moved the status - the
+  // fitting step sets it too. Declared before the early returns below: a hook
+  // that only runs on some renders breaks React's hook ordering.
+  useEffect(() => {
+    if (!project || project.quote || isDraft(project.status)) return;
+    api.projects
+      .setQuote({
+        id: project.id,
+        quote: quoteFromSpec(project.spec, overrides, catalogSteps, project.status),
+      })
+      .then(() => ctx.reload())
+      .catch(() => {});
+  }, [project?.status, project?.quote]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) {
     return <div className="content center" style={{ paddingTop: 80 }}><Spinner /></div>;
@@ -70,15 +81,16 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey }) {
   const index = steps.indexOf(current);
 
   function body() {
-    if (current.catalog) return <BuilderStep ctx={ctx} step={current.catalog} overrides={overrides} />;
+    if (current.catalog) return <BuilderStep ctx={ctx} step={current.catalog} overrides={overrides} onCatalogChanged={onCatalogChanged} />;
     switch (current.key) {
-      case 'client': return <ClientStep ctx={ctx} />;
+      case 'client': return <ClientStep ctx={ctx} customOptions={customOptions} onCatalogChanged={onCatalogChanged} />;
+      case 'order': return <OrderStep ctx={ctx} />;
       case 'capture': return <CaptureStep ctx={ctx} />;
       case 'fabric': return <FabricStep ctx={ctx} />;
-      case 'measurements': return <MeasureStep ctx={ctx} />;
-      case 'preview': return <PreviewStep ctx={ctx} hasKey={hasKey} />;
+      case 'measurements': return <MeasureStep ctx={ctx} unit={unit} onUnitChange={onUnitChange} />;
+      case 'preview': return <PreviewStep ctx={ctx} hasKey={hasKey} steps={catalogSteps} />;
       case 'fitting': return <FittingStep ctx={ctx} />;
-      case 'summary': return <SummaryStep ctx={ctx} overrides={overrides} />;
+      case 'summary': return <SummaryStep ctx={ctx} overrides={overrides} steps={catalogSteps} unit={unit} />;
       default: return null;
     }
   }
@@ -92,21 +104,23 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey }) {
           <div className="tiny faint">{project.title}</div>
         </div>
         <div className="spacer" />
-        <span className={`pill ${project.status === 'draft' ? 'pill-quiet' : 'pill-ok'}`}>{project.status}</span>
+        <span className={`pill ${statusPill(project.status)}`}>{statusLabel(project.status)}</span>
       </div>
 
       <div className="content wide">
-        <div className="stepper" ref={stepperRef} style={{ marginBottom: 20 }}>
-          {steps.map((s, i) => (
-            <button
-              key={s.key}
-              className={`step-tab ${s.key === current.key ? 'active' : ''} ${s.done ? 'done' : ''}`}
-              onClick={() => setStepKey(s.key)}
-            >
-              <span className="num">{s.done && s.key !== current.key ? '✓' : i + 1}</span>
-              {s.title}
-            </button>
-          ))}
+        <div style={{ marginBottom: 20 }}>
+          <Stepper scrollKey={current.key}>
+            {steps.map((s, i) => (
+              <button
+                key={s.key}
+                className={`step-tab ${s.key === current.key ? 'active' : ''} ${s.done ? 'done' : ''}`}
+                onClick={() => setStepKey(s.key)}
+              >
+                <span className="num">{s.done && s.key !== current.key ? '✓' : i + 1}</span>
+                {s.title}
+              </button>
+            ))}
+          </Stepper>
         </div>
 
         {body()}
@@ -115,11 +129,13 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey }) {
           <PriceBar
             spec={project.spec}
             overrides={overrides}
+            steps={catalogSteps}
+            quote={project.quote}
             right={
               <>
                 <button
                   className="btn btn-sm"
-                  style={{ background: 'transparent', borderColor: 'var(--ink-line)', color: 'var(--on-dark)' }}
+                  style={{ background: 'transparent', borderColor: 'var(--sidebar-line)', color: 'var(--sidebar-text)' }}
                   disabled={index <= 0}
                   onClick={() => setStepKey(steps[index - 1].key)}
                 >

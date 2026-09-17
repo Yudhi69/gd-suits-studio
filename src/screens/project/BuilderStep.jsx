@@ -1,12 +1,22 @@
 import React from 'react';
 import { isVisible } from '../../lib/catalog.js';
 import Field from '../../components/Field.jsx';
+import { projectMedia } from '../../lib/api.js';
 import NotesPanel from '../../components/NotesPanel.jsx';
 
 /** Renders any catalog step. All the builder screens are this one component. */
-export default function BuilderStep({ ctx, step, overrides }) {
-  const { project, updateSpec, addNote, deleteNote } = ctx;
+export default function BuilderStep({ ctx, step, overrides, onCatalogChanged }) {
+  const { project, updateSpec, addNote, deleteNote, savePhoto, deletePhoto } = ctx;
   const spec = project.spec ?? {};
+
+  // Image fields attach files to the order rather than setting a spec value,
+  // so they get the media handlers instead of onChange.
+  const media = {
+    photosFor: (slot) => project.photos.filter((p) => p.slot === slot && !p.fitting_id),
+    urlFor: (filename) => projectMedia(project.id, filename),
+    add: ({ slot, dataUrl, meta }) => savePhoto({ slot, dataUrl, meta }),
+    remove: (id) => deletePhoto(id),
+  };
 
   const fields = step.fields.filter((f) => isVisible(f, spec));
 
@@ -28,6 +38,8 @@ export default function BuilderStep({ ctx, step, overrides }) {
                 spec={spec}
                 overrides={overrides}
                 onChange={updateSpec}
+                onCatalogChanged={onCatalogChanged}
+                media={media}
               />
             ))}
           </div>

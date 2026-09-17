@@ -36,9 +36,33 @@ function explain(status, body) {
     return new GeminiError('The API key is missing permission for this model, or billing is not enabled on the Google account.', { status, code: 'forbidden' });
   }
   if (status === 404) {
-    return new GeminiError(`That model is not available on this key. Open Settings and pick a model from the list.`, { status, code: 'no_model' });
+    // Google names the replacement when a model is retired, which is far more
+    // use than a generic "not available".
+    const suggested = /use\s+models\/([\w.-]+)/i.exec(apiMessage)?.[1];
+    if (/no longer available|deprecated/i.test(apiMessage)) {
+      return new GeminiError(
+        `That model has been retired${suggested ? ` - Google suggests ${suggested}` : ''}. Pick a current one in Settings > AI rendering.`,
+        { status, code: 'retired_model' }
+      );
+    }
+    return new GeminiError(
+      'That model is not available on this key. Open Settings > AI rendering and choose one from the list.',
+      { status, code: 'no_model' }
+    );
   }
   if (status === 429) {
+    // A used-up free allowance and a momentary throttle are both 429s, and the
+    // advice for each is the opposite of the other: one clears in seconds, the
+    // other not until tomorrow.
+    const quota = body?.error?.details?.find((d) => String(d['@type'] ?? '').includes('QuotaFailure'));
+    const freeTier = JSON.stringify(quota ?? '').includes('FreeTier') || /free_tier/i.test(apiMessage);
+    if (freeTier) {
+      return new GeminiError(
+        'The free daily quota for this model is used up. It resets at midnight Pacific time, ' +
+        'or enable billing in Google AI Studio to lift the cap. Everything except rendering keeps working meanwhile.',
+        { status, code: 'free_quota', retryable: false }
+      );
+    }
     return new GeminiError('Google rate-limited the request. Wait a moment and try again.', { status, code: 'rate_limit', retryable: true });
   }
   if (status >= 500) {
@@ -114,13 +138,29 @@ async function listModels(apiKey) {
     methods: m.supportedGenerationMethods ?? [],
   }));
 
+  // This app calls :generateContent, so anything that does not support it
+  // cannot be used no matter what it is named.
   const usable = models.filter((m) => m.methods.includes('generateContent'));
+
+  // Named for the job in most cases, but not always - "nano-banana" is an
+  // image model with no "image" in its name - so the description is checked
+  // too rather than trusting the naming convention to hold.
+  const isImage = (m) =>
+    !/embedding/i.test(m.name) &&
+    (/image|nano-?banana|imagen/i.test(m.name) || /image generation|generates images/i.test(m.description ?? ''));
+  const isVision = (m) => /gemini/i.test(m.name) && !/image|embedding|tts|live|audio/i.test(m.name);
+
+  const image = usable.filter(isImage);
+  const vision = usable.filter(isVision);
+
   return {
     all: usable,
-    // Image-capable models are the ones whose name marks them as image models;
-    // Google has shipped these under several names, so match on the family.
-    image: usable.filter((m) => /image/i.test(m.name) && !/embedding|vision-embed/i.test(m.name)),
-    vision: usable.filter((m) => /gemini/i.test(m.name) && !/image|embedding|tts|live/i.test(m.name)),
+    image,
+    vision,
+    // Everything else that could still be selected by hand. Google renames
+    // these families often, so the picker offers the full list as a fallback
+    // rather than trapping the tailor behind a guess about naming.
+    other: usable.filter((m) => !isImage(m) && !isVision(m)),
   };
 }
 
@@ -131,15 +171,29 @@ async function listModels(apiKey) {
 async function generateImage({ apiKey, model = DEFAULTS.imageModel, prompt, images = [], timeoutMs }) {
   const parts = [{ text: prompt }, ...images.map(imagePart)];
 
-  const json = await call(
-    apiKey,
-    model,
-    {
-      contents: [{ role: 'user', parts }],
-      generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
-    },
-    { timeoutMs }
-  );
+  let json;
+  try {
+    json = await call(
+      apiKey,
+      model,
+      {
+        contents: [{ role: 'user', parts }],
+        generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+      },
+      { timeoutMs }
+    );
+  } catch (err) {
+    // Asking a text model for an image is answered with a 404, which reads as
+    // "no such model" but actually means "that model cannot return one".
+    // Saying so is the difference between a fixable message and a dead end.
+    if (err.code === 'no_model') {
+      throw new GeminiError(
+        `"${model}" cannot produce images - it is a text model. Open Settings > AI rendering and choose one from the Image models group.`,
+        { status: err.status, code: 'not_image_model' }
+      );
+    }
+    throw err;
+  }
 
   const candidate = json?.candidates?.[0];
 

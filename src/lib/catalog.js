@@ -84,7 +84,7 @@ export const STEPS = [
         prompt: (v) => `a ${v} fit through the body`,
         options: [
           { key: 'slim', label: 'Slim', desc: 'Close to the body', price: 0 },
-          { key: 'medium', label: 'Medium', desc: 'In between', price: 0 },
+          { key: 'medium', label: 'Standard', desc: 'In between', price: 0 },
           { key: 'loose', label: 'Loose', desc: 'Relaxed drape', price: 0 },
         ],
       },
@@ -188,7 +188,7 @@ export const STEPS = [
       },
       {
         id: 'vents',
-        label: 'Vents',
+        label: 'Vents (slits)',
         type: 'choice',
         required: true,
         prompt: (v) => (v === 'none' ? 'no vents' : `${v} vent${v === 'double' ? 's' : ''}`),
@@ -199,15 +199,28 @@ export const STEPS = [
         ],
       },
       {
-        id: 'sleeveButtons',
-        label: 'Sleeve Buttons',
+        id: 'buttonColour',
+        label: 'Button Finish',
         type: 'choice',
         required: true,
-        prompt: (v) => `${v} working cuff buttons`,
+        prompt: (v, spec) =>
+          v === 'custom'
+            ? `buttons in ${nameColour(spec.buttonColourCustom || '#c9a227')}`
+            : `${v} buttons`,
         options: [
-          { key: '3', label: '3 Buttons', price: 0 },
-          { key: '4', label: '4 Buttons', price: 0 },
+          { key: 'neutral', label: 'Neutral', desc: 'Matched to the cloth', price: 0 },
+          { key: 'gold', label: 'Gold', price: 180 },
+          { key: 'silver', label: 'Silver', price: 180 },
+          { key: 'custom', label: 'Custom Colour', desc: 'Pick below', price: 240 },
         ],
+      },
+      {
+        id: 'buttonColourCustom',
+        label: 'Button Colour',
+        type: 'colour',
+        showIf: (s) => s.buttonColour === 'custom',
+        default: '#c9a227',
+        prompt: () => null, // already named by the finish clause above
       },
     ],
   },
@@ -264,6 +277,22 @@ export const STEPS = [
           { key: 'clips', label: 'Clips', price: 0 },
           { key: 'single_button', label: 'Single Button', price: 0 },
           { key: 'double_button', label: 'Double Button', price: 80 },
+        ],
+      },
+      {
+        id: 'bottomFinish',
+        label: 'Bottom Finish',
+        type: 'choice',
+        required: true,
+        prompt: (v) => ({
+          straight: 'a straight cut through the bottom of the leg',
+          tapered: 'a tapered finish through the bottom of the leg',
+          slim: 'a slim fit through the bottom of the leg',
+        })[v],
+        options: [
+          { key: 'straight', label: 'Straight Cut', price: 0 },
+          { key: 'tapered', label: 'Tapered Finish', price: 0 },
+          { key: 'slim', label: 'Slim Fit', price: 0 },
         ],
       },
       {
@@ -370,7 +399,6 @@ export const STEPS = [
           { key: 'wing', label: 'Wing', desc: 'Black tie', price: 90 },
         ],
       },
-      { id: 'shirtButtonColour', label: 'Button Colour', type: 'colour', showIf: (s) => s.shirt, default: '#ffffff', prompt: () => null },
       {
         id: 'shirtCuff',
         label: 'Cuff Style',
@@ -423,6 +451,12 @@ export const STEPS = [
         ],
       },
       { id: 'liningColour', label: 'Lining Colour', type: 'colour', showIf: (s) => s.liningMode === 'colour', default: '#1b2a4a', prompt: () => null },
+      { id: 'liningCollage', label: 'Custom lining - upload collage', type: 'images', slot: 'lining_collage',
+        showIf: (s) => s.liningMode === 'pattern',
+        hint: 'The artwork the lining is printed from. Several images can be added.',
+        prompt: () => null },
+      { id: 'monogramCollar', label: 'Monogram - jacket collar', type: 'text', price: 200, maxLength: 24,
+        placeholder: 'e.g. G.D.', prompt: (v) => `a monogram reading "${v}" under the jacket collar` },
       { id: 'monogramPocket', label: 'Monogram - pocket', type: 'text', price: 200, maxLength: 24, placeholder: 'e.g. G.D.',
         prompt: (v) => `a monogram reading "${v}" on the pocket` },
       { id: 'monogramLining', label: 'Monogram - lining', type: 'text', price: 200, maxLength: 40, placeholder: 'e.g. Tailored for Sipho, 2026',
@@ -438,25 +472,36 @@ export const STEPS = [
         options: [
           { key: 'black', label: 'Black', price: 0 },
           { key: 'white', label: 'White', price: 0 },
+          { key: 'custom', label: 'Custom Colour', desc: 'Pick below', price: 0 },
         ],
       },
+      { id: 'pipingColour', label: 'Piping colour', type: 'colour', showIf: (s) => s.stitching === 'custom',
+        default: '#c9a227', prompt: (v) => `piping in ${nameColour(v)}` },
+      { id: 'designRequests', label: 'Any other design requests', type: 'longtext',
+        placeholder: 'Anything the client asked for that is not covered above...',
+        prompt: (v) => v },
     ],
   },
 ];
 
-/** Guided measurement fields, grouped by garment. Values are in centimetres. */
+/**
+ * The measurement set, worded exactly as GD's order form asks clients for
+ * them, so a form filled in online transcribes straight across. Stored in
+ * centimetres regardless of the unit on screen.
+ */
 export const MEASUREMENTS = {
   jacket: {
     label: 'Jacket',
     fields: [
-      { id: 'chest', label: 'Chest', hint: 'Around the fullest part, tape level under the arms.' },
-      { id: 'waist', label: 'Waist (jacket)', hint: 'At the natural waist, roughly the navel.' },
-      { id: 'seat', label: 'Seat', hint: 'Fullest part of the hips.' },
-      { id: 'shoulder', label: 'Shoulder', hint: 'Seam point to seam point across the back.' },
-      { id: 'sleeve', label: 'Sleeve Length', hint: 'Shoulder point to the wrist bone, arm slightly bent.' },
-      { id: 'jacketLength', label: 'Jacket Length', hint: 'Base of the collar to the desired hem.' },
-      { id: 'bicep', label: 'Bicep', hint: 'Around the fullest part of the upper arm.' },
+      { id: 'jacketLength', label: 'Length (blazer front)', hint: 'Base of the collar to the desired hem.' },
+      { id: 'shoulder', label: 'Shoulders (shoulder to shoulder)', hint: 'Seam point to seam point across the back.' },
+      { id: 'sleeve', label: 'Sleeve length', hint: 'Shoulder point to the wrist bone, arm slightly bent.' },
+      { id: 'sleeveOpening', label: 'Sleeve opening', hint: 'Around the cuff opening.' },
+      { id: 'bicep', label: 'Bicep (flex)', hint: 'Around the fullest part of the upper arm, flexed.' },
       { id: 'neck', label: 'Neck', hint: 'Around the base of the neck, one finger of ease.' },
+      { id: 'chest', label: 'Chest / bust', hint: 'Around the fullest part, tape level under the arms.' },
+      { id: 'waist', label: 'Waist (over the belly button)', hint: 'Around the waist, level with the navel.' },
+      { id: 'seat', label: 'Hip (over groin area)', hint: 'Around the fullest part of the hips.' },
     ],
   },
   waistcoat: {
@@ -464,24 +509,83 @@ export const MEASUREMENTS = {
     fields: [
       { id: 'wcChest', label: 'Chest', hint: 'Same level as the jacket chest.' },
       { id: 'wcWaist', label: 'Waist', hint: 'Natural waist, snug.' },
-      { id: 'wcFrontLength', label: 'Front Length', hint: 'Shoulder seam to the point of the hem.' },
-      { id: 'wcBackLength', label: 'Back Length', hint: 'Base of collar to the back hem.' },
+      { id: 'wcFrontLength', label: 'Front length', hint: 'Shoulder seam to the point of the hem.' },
+      { id: 'wcBackLength', label: 'Back length', hint: 'Base of collar to the back hem.' },
     ],
   },
   pants: {
-    label: 'Pants',
+    label: 'Trousers',
     fields: [
+      { id: 'outseam', label: 'Length (outside leg)', hint: 'Waistband to the desired break at the shoe.' },
       { id: 'pantWaist', label: 'Waist', hint: 'Where the trouser is intended to sit.' },
-      { id: 'pantSeat', label: 'Seat', hint: 'Fullest part, feet together.' },
-      { id: 'thigh', label: 'Thigh', hint: 'Around the fullest part, 2cm below the crotch.' },
-      { id: 'knee', label: 'Knee', hint: 'Around the knee cap.' },
-      { id: 'hemOpening', label: 'Hem Opening', hint: 'Desired width across the opening, doubled.' },
-      { id: 'outseam', label: 'Outseam', hint: 'Waistband to the desired break at the shoe.' },
-      { id: 'inseam', label: 'Inseam', hint: 'Crotch to the hem.' },
-      { id: 'rise', label: 'Rise', hint: 'Crotch seam up to the top of the waistband.' },
+      { id: 'pantSeat', label: 'Hip loop (over groin area)', hint: 'Fullest part, feet together.' },
+      { id: 'thigh', label: 'Thigh loop', hint: 'Around the fullest part, 2cm below the crotch.' },
+      { id: 'ankleLoop', label: 'Ankle loop', hint: 'Around the ankle opening.' },
+      { id: 'rise', label: 'Crotch', hint: 'Crotch seam up to the top of the waistband.' },
+      { id: 'knee', label: 'Knee', hint: 'Around the knee cap. Not on the order form - useful for a close cut.' },
+      { id: 'inseam', label: 'Inseam', hint: 'Crotch to the hem. Not on the order form.' },
     ],
   },
 };
+
+/**
+ * The order pipeline.
+ *
+ * This replaces the workbook's sheet-per-stage split - Suit Progress, Current
+ * Orders, Completed were the same orders at different points, with the client
+ * keyed by name in each. One field, one place to look.
+ */
+export const PROJECT_STATUSES = [
+  { key: 'enquiry', label: 'Enquiry', pill: 'pill-quiet', open: true },
+  { key: 'quoted', label: 'Quoted', pill: 'pill-quiet', open: true },
+  { key: 'deposit_paid', label: 'Deposit paid', pill: 'pill', open: true },
+  { key: 'in_production', label: 'In production', pill: 'pill', open: true },
+  { key: 'first_fitting', label: 'First fitting', pill: 'pill-warn', open: true },
+  { key: 'alterations', label: 'Alterations', pill: 'pill-warn', open: true },
+  { key: 'final_fitting', label: 'Final fitting', pill: 'pill-warn', open: true },
+  { key: 'delivered', label: 'Delivered', pill: 'pill-ok', open: false },
+];
+
+export const statusLabel = (key) =>
+  PROJECT_STATUSES.find((s) => s.key === key)?.label ?? key;
+export const statusPill = (key) =>
+  PROJECT_STATUSES.find((s) => s.key === key)?.pill ?? 'pill-quiet';
+
+/** Orders still needing work - the old "Current Orders" sheet. */
+export const isOpenStatus = (key) => PROJECT_STATUSES.find((s) => s.key === key)?.open ?? true;
+
+/** The two fittings a suit goes through, plus room for an extra visit. */
+export const FITTING_KINDS = [
+  { key: 'first', label: 'First fitting', blurb: 'Where the real corrections are marked up.' },
+  { key: 'final', label: 'Final fitting', blurb: 'Sign-off before delivery.' },
+  { key: 'extra', label: 'Additional fitting', blurb: 'An extra visit between the two.' },
+];
+
+export const fittingLabel = (key) => FITTING_KINDS.find((k) => k.key === key)?.label ?? 'Fitting';
+
+/** Money in, against the 50% deposit GD's terms require before cutting. */
+export const PAYMENT_KINDS = [
+  { key: 'deposit', label: 'Deposit' },
+  { key: 'part_payment', label: 'Part payment' },
+  { key: 'balance', label: 'Balance' },
+  { key: 'refund', label: 'Refund' },
+];
+
+export const ALTERATION_STATUSES = [
+  { key: 'received', label: 'Received', pill: 'pill-quiet' },
+  { key: 'in_progress', label: 'In progress', pill: 'pill-warn' },
+  { key: 'ready', label: 'Ready', pill: 'pill' },
+  { key: 'collected', label: 'Collected', pill: 'pill-ok' },
+  { key: 'cancelled', label: 'Cancelled', pill: 'pill-quiet' },
+];
+
+export const EXTRA_STATUSES = [
+  { key: 'ordered', label: 'Ordered', pill: 'pill-quiet' },
+  { key: 'received', label: 'Received', pill: 'pill' },
+  { key: 'fitted', label: 'Fitted', pill: 'pill-warn' },
+  { key: 'delivered', label: 'Delivered', pill: 'pill-ok' },
+  { key: 'cancelled', label: 'Cancelled', pill: 'pill-quiet' },
+];
 
 /** Garments a fitting session records notes and photos against. */
 export const FITTING_GARMENTS = ['jacket', 'waistcoat', 'pants', 'shirt'];
@@ -496,4 +600,140 @@ export function fieldById(id) {
 /** True when a step or field should be visible for the given spec. */
 export function isVisible(node, spec) {
   return typeof node.showIf === 'function' ? !!node.showIf(spec) : true;
+}
+
+
+/* ------------------------------------------- the tailor's own catalog ------ */
+
+/**
+ * Turns a stored custom item into a catalog field.
+ *
+ * The shape is identical to a built-in field, which is the point: once merged,
+ * a custom item renders in the builder, prices into the quote, appears on the
+ * spec sheet and reaches the render prompt through exactly the same code paths
+ * as everything shipped in this file.
+ */
+export function customItemToField(item) {
+  const base = {
+    id: item.field_id,
+    label: item.label,
+    desc: item.description || '',
+    custom: true,
+    itemId: item.id,
+  };
+
+  if (item.kind === 'choice') {
+    return {
+      ...base,
+      type: 'choice',
+      options: (item.options ?? []).map((o) => ({
+        key: o.key,
+        label: o.label,
+        desc: o.desc ?? '',
+        price: Number(o.price) || 0,
+      })),
+      // A phrase supplied by the tailor wins; otherwise the label and the
+      // chosen option are read out plainly.
+      prompt: (value, spec) => {
+        const chosen = (item.options ?? []).find((o) => o.key === value);
+        if (!chosen) return null;
+        return item.prompt
+          ? `${item.prompt}: ${chosen.label.toLowerCase()}`
+          : `${item.label.toLowerCase()}: ${chosen.label.toLowerCase()}`;
+      },
+    };
+  }
+
+  return {
+    ...base,
+    type: 'toggle',
+    price: Number(item.price) || 0,
+    prompt: (value) => (value ? item.prompt || item.label.toLowerCase() : null),
+  };
+}
+
+/**
+ * The effective builder flow: the built-in steps with any custom items folded
+ * into them, followed by whatever categories the shop has added of its own.
+ */
+/**
+ * Appends the shop's own options to a selector that already exists.
+ *
+ * These extend a field rather than adding one - another lapel shape, another
+ * event type - so they are merged onto the end of the option list and behave
+ * identically from there on.
+ */
+export function withCustomOptions(field, customOptions = []) {
+  if (field.type !== 'choice') return field;
+  const mine = customOptions.filter((o) => o.field_id === field.id && o.active !== 0);
+  if (!mine.length) return field;
+
+  const extra = mine.map((o) => ({
+    key: o.option_key,
+    label: o.label,
+    desc: o.description || '',
+    price: Number(o.price) || 0,
+    custom: true,
+    optionId: o.id,
+    promptText: o.prompt || '',
+  }));
+
+  const options = [...(field.options ?? []), ...extra];
+  const originalPrompt = field.prompt;
+
+  return {
+    ...field,
+    options,
+    // A built-in field's phrasing function knows nothing about these keys, so
+    // custom choices are described from their own wording (or their label)
+    // and everything else falls through to the original.
+    prompt: (value, spec) => {
+      const mineChosen = extra.find((o) => o.key === value);
+      if (mineChosen) {
+        return mineChosen.promptText || `${field.label.toLowerCase()}: ${mineChosen.label.toLowerCase()}`;
+      }
+      if (typeof originalPrompt === 'function') return originalPrompt(value, spec);
+      const opt = options.find((o) => o.key === value);
+      return opt ? `${field.label.toLowerCase()}: ${opt.label.toLowerCase()}` : null;
+    },
+  };
+}
+
+/** Event types, with any the shop has added of its own. */
+export function eventTypesWith(customOptions = []) {
+  const mine = customOptions
+    .filter((o) => o.field_id === 'eventType' && o.active !== 0)
+    .map((o) => ({ key: o.option_key, label: o.label, custom: true, optionId: o.id }));
+  return [...EVENT_TYPES, ...mine];
+}
+
+export function buildSteps(customCategories = [], customItems = [], customOptions = []) {
+  const active = customItems.filter((i) => i.active !== 0);
+  const byCategory = active.reduce((acc, item) => {
+    (acc[item.category] ??= []).push(item);
+    return acc;
+  }, {});
+
+  const decorate = (fields) => fields.map((f) => withCustomOptions(f, customOptions));
+
+  const builtIn = STEPS.map((step) => {
+    const extra = byCategory[step.key] ?? [];
+    return { ...step, fields: decorate([...step.fields, ...extra.map(customItemToField)]) };
+  });
+
+  const added = customCategories.map((category) => ({
+    key: category.key,
+    title: category.title,
+    blurb: category.blurb || '',
+    custom: true,
+    categoryId: category.id,
+    fields: decorate((byCategory[category.key] ?? []).map(customItemToField)),
+  }));
+
+  return [...builtIn, ...added];
+}
+
+/** Flattened fields for any step list, custom or not. */
+export function allFieldsOf(steps) {
+  return steps.flatMap((step) => step.fields.map((f) => ({ ...f, step: step.key })));
 }

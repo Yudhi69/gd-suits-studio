@@ -1,7 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { api } from './lib/api.js';
+import { useTheme, THEMES } from './lib/useTheme.js';
+import { useCatalog } from './lib/useCatalog.js';
+import brandLogo from './assets/logo-light.png';
 import { ToastProvider } from './components/ui.jsx';
 import Dashboard from './screens/Dashboard.jsx';
+import Analytics from './screens/Analytics.jsx';
 import ProjectView from './screens/ProjectView.jsx';
 import ClientFile from './screens/ClientFile.jsx';
 import Settings from './screens/Settings.jsx';
@@ -10,16 +14,40 @@ export default function App() {
   const [route, setRoute] = useState({ name: 'dashboard' });
   const [overrides, setOverrides] = useState({});
   const [keyState, setKeyState] = useState(null);
+  const [unit, setUnit] = useState('cm');
+  const theme = useTheme();
+  const catalog = useCatalog();
+  const [updateReady, setUpdateReady] = useState(null);
 
   useEffect(() => {
     (async () => {
       setOverrides((await api.settings.get({ key: 'priceOverrides', fallback: {} })) ?? {});
-      setKeyState(await api.secrets.describe({ name: 'gemini' }));
+      // GD's order form asks clients for inches, so that is the default.
+      setUnit((await api.settings.get({ key: 'measureUnit', fallback: 'in' })) ?? 'in');
+      // Readiness follows whichever provider is configured for renders, not
+      // whichever one happens to be first.
+      try {
+        const { providers, config } = await api.ai.providers();
+        const active = providers.find((p) => p.id === config.image.provider);
+        setKeyState({ ...(active?.key ?? { present: false }), providerLabel: active?.label ?? '' });
+      } catch {
+        setKeyState({ present: false });
+      }
+
+      // Only if the tailor asked for it. Nothing about them is sent - it is a
+      // plain GET for the latest published version number.
+      if (await api.settings.get({ key: 'autoCheckUpdates', fallback: false })) {
+        api.updates
+          .check()
+          .then((result) => result.updateAvailable && setUpdateReady(result))
+          .catch(() => {});
+      }
     })();
   }, []);
 
   const nav = [
     { key: 'dashboard', label: 'Orders' },
+    { key: 'analytics', label: 'Business' },
     { key: 'settings', label: 'Settings' },
   ];
 
@@ -28,11 +56,7 @@ export default function App() {
       <div className="app">
         <aside className="sidebar">
           <div className="brand">
-            <div className="brand-mark">
-              <span className="brand-gd">GD</span>
-              <span style={{ letterSpacing: '.14em' }}>SUITS</span>
-            </div>
-            <div className="brand-tag">A style tailored for you</div>
+            <img className="brand-logo" src={brandLogo} alt="GD Suits - A style tailored for you" />
           </div>
 
           <nav className="nav">
@@ -49,7 +73,28 @@ export default function App() {
           </nav>
 
           <div className="sidebar-foot">
-            <div>{keyState?.present ? 'AI rendering ready' : 'Offline mode - no API key'}</div>
+            <div className="theme-switch" role="group" aria-label="Appearance">
+              {THEMES.map((t) => (
+                <button
+                  key={t.key}
+                  className={theme.preference === t.key ? 'active' : ''}
+                  aria-pressed={theme.preference === t.key}
+                  onClick={() => theme.choose(t.key)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            {updateReady && (
+              <button className="update-flag" onClick={() => setRoute({ name: 'settings' })}>
+                Version {updateReady.version} available
+              </button>
+            )}
+            <div>
+              {keyState?.present
+                ? `AI rendering ready${keyState.providerLabel ? ` · ${keyState.providerLabel}` : ''}`
+                : 'Offline mode - no API key'}
+            </div>
             <div style={{ opacity: .6 }}>Local data, on this machine</div>
           </div>
         </aside>
@@ -57,6 +102,9 @@ export default function App() {
         <main className="main">
           {route.name === 'dashboard' && (
             <Dashboard
+              steps={catalog.steps}
+              overrides={overrides}
+              customOptions={catalog.options}
               onOpenProject={(id) => setRoute({ name: 'project', id })}
               onOpenClient={(id) => setRoute({ name: 'client', id })}
             />
@@ -65,7 +113,12 @@ export default function App() {
           {route.name === 'project' && (
             <ProjectView
               projectId={route.id}
+              steps={catalog.steps}
               overrides={overrides}
+              unit={unit}
+              onUnitChange={async (u) => { setUnit(u); await api.settings.set({ key: 'measureUnit', value: u }); }}
+              customOptions={catalog.options}
+              onCatalogChanged={catalog.reload}
               hasKey={!!keyState?.present}
               onBack={() => setRoute({ name: 'dashboard' })}
             />
@@ -74,13 +127,21 @@ export default function App() {
           {route.name === 'client' && (
             <ClientFile
               clientId={route.id}
+              steps={catalog.steps}
+              overrides={overrides}
+              unit={unit}
               onBack={() => setRoute({ name: 'dashboard' })}
               onOpenProject={(id) => setRoute({ name: 'project', id })}
             />
           )}
 
+          {route.name === 'analytics' && (
+            <Analytics onOpenProject={(id) => setRoute({ name: 'project', id })} />
+          )}
+
           {route.name === 'settings' && (
             <Settings
+              catalog={catalog}
               overrides={overrides}
               onOverridesChanged={setOverrides}
               keyState={keyState}

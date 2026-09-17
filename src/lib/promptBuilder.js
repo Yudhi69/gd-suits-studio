@@ -14,10 +14,10 @@ export const VIEWS = [
  * anything without one falls back to "Label: Value" so a newly added option
  * still reaches the render instead of being silently dropped.
  */
-export function describeGarment(spec = {}) {
+export function describeGarment(spec = {}, steps = STEPS) {
   const clauses = [];
 
-  for (const step of STEPS) {
+  for (const step of steps) {
     if (!isVisible(step, spec)) continue;
 
     for (const field of step.fields) {
@@ -63,9 +63,9 @@ function skinToneClause(analysis = {}) {
  * `refs` describes which reference images are attached, in order, so the model
  * is told what each attachment is for instead of guessing.
  */
-export function buildRenderPrompt({ spec = {}, client = {}, analysis = {}, view = 'front', refs = [], notes = '' }) {
+export function buildRenderPrompt({ spec = {}, client = {}, analysis = {}, view = 'front', refs = [], notes = '', steps = STEPS }) {
   const viewDef = VIEWS.find((v) => v.key === view) ?? VIEWS[0];
-  const clauses = describeGarment(spec);
+  const clauses = describeGarment(spec, steps);
 
   const refLines = refs.map((r, i) => {
     const n = i + 1;
@@ -125,9 +125,9 @@ export function buildTweakPrompt({ instruction, spec = {}, view = 'front' }) {
 }
 
 /** Plain-language spec sheet shown to the client and stored with the order. */
-export function buildSpecSheet(spec = {}) {
+export function buildSpecSheet(spec = {}, steps = STEPS) {
   const sections = [];
-  for (const step of STEPS) {
+  for (const step of steps) {
     if (!isVisible(step, spec)) continue;
     const rows = [];
     for (const field of step.fields) {

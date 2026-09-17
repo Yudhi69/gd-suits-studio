@@ -1,10 +1,11 @@
 import React from 'react';
 import { api } from '../../lib/api.js';
-import { EVENT_TYPES } from '../../lib/catalog.js';
-import { DebouncedInput, useToast } from '../../components/ui.jsx';
+import { eventTypesWith, PROJECT_STATUSES } from '../../lib/catalog.js';
+import { AddOptionTile } from '../../components/AddOption.jsx';
+import { DebouncedInput, Switch, useToast } from '../../components/ui.jsx';
 import NotesPanel from '../../components/NotesPanel.jsx';
 
-export default function ClientStep({ ctx }) {
+export default function ClientStep({ ctx, customOptions = [], onCatalogChanged }) {
   const { project, updateProject, reload, addNote, deleteNote } = ctx;
   const toast = useToast();
 
@@ -16,6 +17,11 @@ export default function ClientStep({ ctx }) {
         surname: project.surname,
         contact: project.contact,
         email: project.email,
+        isMinor: !!project.is_minor,
+        secondaryName: project.secondary_name,
+        secondaryRelationship: project.secondary_relationship,
+        secondaryContact: project.secondary_contact,
+        secondaryEmail: project.secondary_email,
         ...patch,
       });
       await reload();
@@ -54,6 +60,73 @@ export default function ClientStep({ ctx }) {
         </div>
 
         <div className="card" style={{ marginTop: 16 }}>
+          <div className="card-head">
+            <h3>Parent or guardian</h3>
+            <div className="spacer" />
+            <div className="inline">
+              <span className="tiny faint">Client is under 18</span>
+              <Switch
+                checked={!!project.is_minor}
+                onChange={(val) => saveClient({ isMinor: val })}
+              />
+            </div>
+          </div>
+          <div className="card-pad">
+            {!project.is_minor ? (
+              <p className="small muted" style={{ margin: 0 }}>
+                Switch this on for a matric ball or any client under 18 - the person who signs off and pays is
+                usually not the person being measured, and both need to be on the file.
+              </p>
+            ) : (
+              <>
+                <div className="row">
+                  <div className="field">
+                    <label>Name</label>
+                    <DebouncedInput
+                      className="input"
+                      value={project.secondary_name}
+                      placeholder="Parent or guardian"
+                      onCommit={(val) => saveClient({ secondaryName: val })}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Relationship</label>
+                    <DebouncedInput
+                      className="input"
+                      value={project.secondary_relationship}
+                      placeholder="Mother, father, guardian..."
+                      onCommit={(val) => saveClient({ secondaryRelationship: val })}
+                    />
+                  </div>
+                </div>
+                <div className="row">
+                  <div className="field">
+                    <label>Contact number</label>
+                    <DebouncedInput
+                      className="input"
+                      value={project.secondary_contact}
+                      onCommit={(val) => saveClient({ secondaryContact: val })}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Email</label>
+                    <DebouncedInput
+                      className="input"
+                      type="email"
+                      value={project.secondary_email}
+                      onCommit={(val) => saveClient({ secondaryEmail: val })}
+                    />
+                  </div>
+                </div>
+                <p className="tiny faint" style={{ margin: 0 }}>
+                  Approvals and the quote should go to this person.
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="card" style={{ marginTop: 16 }}>
           <div className="card-head"><h3>The occasion</h3></div>
           <div className="card-pad">
             <div className="field">
@@ -64,7 +137,7 @@ export default function ClientStep({ ctx }) {
             <div className="field">
               <label>Event type</label>
               <div className="options">
-                {EVENT_TYPES.map((e) => (
+                {eventTypesWith(customOptions).map((e) => (
                   <button
                     key={e.key}
                     className={`option ${project.event_type === e.key ? 'selected' : ''}`}
@@ -73,6 +146,9 @@ export default function ClientStep({ ctx }) {
                     <div className="option-label">{e.label}</div>
                   </button>
                 ))}
+                {onCatalogChanged && (
+                  <AddOptionTile fieldId="eventType" fieldLabel="Event type" onAdded={onCatalogChanged} />
+                )}
               </div>
             </div>
 
@@ -94,15 +170,45 @@ export default function ClientStep({ ctx }) {
                 <div className="hint">{deliveryWarning(project)}</div>
               </div>
             </div>
+          </div>
+        </div>
+
+        <div className="card" style={{ marginTop: 16 }}>
+          <div className="card-head">
+            <h3>Schedule</h3>
+            <div className="spacer" />
+            <span className="tiny faint">The dates the order actually runs to</span>
+          </div>
+          <div className="card-pad">
+            <div className="grid grid-2">
+              {[
+                ['consultation_date', 'First consultation'],
+                ['measurement_date', 'Measurements'],
+                ['first_fitting_date', 'First fitting'],
+                ['final_fitting_date', 'Final fitting & delivery'],
+              ].map(([key, label]) => (
+                <div className="field" key={key} style={{ marginBottom: 0 }}>
+                  <label>{label}</label>
+                  <DebouncedInput
+                    className="input"
+                    type="date"
+                    value={project[key]}
+                    onCommit={(val) => updateProject({ [key]: val })}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="hint" style={{ marginTop: 12 }}>{scheduleWarning(project)}</div>
 
             <div className="field">
               <label>Status</label>
               <select className="select" value={project.status} onChange={(e) => updateProject({ status: e.target.value })}>
-                <option value="draft">Draft</option>
-                <option value="approved">Approved by client</option>
-                <option value="fitting">In fitting</option>
-                <option value="delivered">Delivered</option>
+                {PROJECT_STATUSES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
               </select>
+              <div className="hint">
+                A suit in fitting is either at its first fitting or its final one - the first is where the
+                corrections are marked up, the final is a sign-off.
+              </div>
             </div>
           </div>
         </div>
@@ -118,6 +224,36 @@ export default function ClientStep({ ctx }) {
       </div>
     </div>
   );
+}
+
+/**
+ * Reads the schedule as a sequence rather than four independent fields - a
+ * final fitting booked after the event is the kind of mistake that is obvious
+ * once stated and invisible in a form.
+ */
+function scheduleWarning(project) {
+  const steps = [
+    ['consultation_date', 'first consultation'],
+    ['measurement_date', 'measurements'],
+    ['first_fitting_date', 'first fitting'],
+    ['final_fitting_date', 'final fitting'],
+  ]
+    .map(([key, label]) => ({ label, date: project[key] ? new Date(project[key]) : null }))
+    .filter((s) => s.date && !Number.isNaN(s.date.valueOf()));
+
+  for (let i = 1; i < steps.length; i++) {
+    if (steps[i].date < steps[i - 1].date) {
+      return `The ${steps[i].label} is booked before the ${steps[i - 1].label}.`;
+    }
+  }
+
+  const event = project.event_date ? new Date(project.event_date) : null;
+  const last = steps[steps.length - 1];
+  if (event && last && !Number.isNaN(event.valueOf()) && last.date > event) {
+    return `The ${last.label} is after the event date.`;
+  }
+  if (!steps.length) return 'Fill these in as the order moves, so the dashboard shows where it stands.';
+  return `${steps.length} of 4 dates set.`;
 }
 
 /** Flags a delivery date that leaves no room before the event. */

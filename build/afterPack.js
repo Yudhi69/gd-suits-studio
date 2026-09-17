@@ -3,6 +3,7 @@
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { flipFuses, FuseVersion, FuseV1Options } = require('@electron/fuses');
 
 /**
  * Ad-hoc signs the macOS bundle after packing, so the app runs on Apple
@@ -42,7 +43,40 @@ function collect(dir, test, out = []) {
   return out;
 }
 
+/**
+ * Build-time flags compiled into the Electron binary.
+ *
+ * `RunAsNode` is the one that matters: left on, the shipped app can be driven
+ * as a plain Node process, which sidesteps every renderer control in
+ * security.js. The rest close the neighbouring doors - NODE_OPTIONS injection,
+ * --inspect attaching a debugger to the process holding the API key, and
+ * loading an `app/` folder in place of the archive.
+ *
+ * These have to be flipped before signing: writing the fuse wire modifies the
+ * binary and invalidates any signature already on it.
+ */
+async function applyFuses(context) {
+  const appName = `${context.packager.appInfo.productFilename}.app`;
+  const target =
+    context.electronPlatformName === 'darwin'
+      ? path.join(context.appOutDir, appName)
+      : path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.exe`);
+
+  await flipFuses(target, {
+    version: FuseVersion.V1,
+    resetAdHocDarwinSignature: false, // the signing step below does it properly
+    [FuseV1Options.RunAsNode]: false,
+    [FuseV1Options.EnableCookieEncryption]: true,
+    [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
+    [FuseV1Options.EnableNodeCliInspectArguments]: false,
+    [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
+    [FuseV1Options.OnlyLoadAppFromAsar]: true,
+  });
+  console.log('  • fuses flipped (RunAsNode off, asar integrity enforced)');
+}
+
 exports.default = async function afterPack(context) {
+  await applyFuses(context);
   if (context.electronPlatformName !== 'darwin') return;
   if (context.packager.config?.mac?.identity) return; // a real identity is configured
 

@@ -1,4 +1,4 @@
-import { STEPS, ALL_FIELDS, CURRENCY, isVisible } from './catalog.js';
+import { STEPS, CURRENCY, isVisible, allFieldsOf } from './catalog.js';
 
 /**
  * Price overrides are stored as a flat map so the tailor can retune the price
@@ -25,10 +25,10 @@ function resolve(overrides, key, fallback) {
  * Only visible fields are charged - hiding a field (e.g. waistcoat options on a
  * 2-piece) must never leave a stale charge on the invoice.
  */
-export function buildBreakdown(spec = {}, overrides = {}) {
+export function buildBreakdown(spec = {}, overrides = {}, steps = STEPS) {
   const lines = [];
 
-  for (const step of STEPS) {
+  for (const step of steps) {
     if (!isVisible(step, spec)) continue;
 
     for (const field of step.fields) {
@@ -40,23 +40,28 @@ export function buildBreakdown(spec = {}, overrides = {}) {
         const opt = field.options?.find((o) => o.key === value);
         if (!opt) continue;
 
-        // The suit type carries the base garment price rather than a delta.
+        // An option is either the base garment price or a delta on top of it -
+        // never both. They share one override key, so charging both would
+        // double the base price the moment a tailor edited it in Settings.
+        const key = priceKeyForOption(field.id, opt.key);
+
         if (typeof opt.basePrice === 'number') {
           lines.push({
             group: 'Base',
             label: `${opt.label} suit`,
-            amount: resolve(overrides, priceKeyForOption(field.id, opt.key), opt.basePrice),
-            key: priceKeyForOption(field.id, opt.key),
+            amount: resolve(overrides, key, opt.basePrice),
+            key,
           });
+          continue;
         }
 
-        const delta = resolve(overrides, priceKeyForOption(field.id, opt.key), opt.price ?? 0);
+        const delta = resolve(overrides, key, opt.price ?? 0);
         if (delta) {
           lines.push({
             group: step.title,
             label: `${field.label}: ${opt.label}`,
             amount: delta,
-            key: priceKeyForOption(field.id, opt.key),
+            key,
           });
         }
       } else if (field.price) {
@@ -83,9 +88,9 @@ export function formatMoney(amount) {
 }
 
 /** Every price the tailor can override, for the Settings price-list editor. */
-export function priceCatalogEntries() {
+export function priceCatalogEntries(steps = STEPS) {
   const entries = [];
-  for (const field of ALL_FIELDS) {
+  for (const field of allFieldsOf(steps)) {
     if (field.type === 'choice') {
       for (const opt of field.options ?? []) {
         const base = typeof opt.basePrice === 'number' ? opt.basePrice : opt.price ?? 0;
@@ -95,6 +100,8 @@ export function priceCatalogEntries() {
           step: field.step,
           isBase: typeof opt.basePrice === 'number',
           defaultAmount: base,
+          custom: !!field.custom,
+          itemId: field.itemId,
         });
       }
     } else if (field.price) {
@@ -104,6 +111,8 @@ export function priceCatalogEntries() {
         step: field.step,
         isBase: false,
         defaultAmount: field.price,
+        custom: !!field.custom,
+        itemId: field.itemId,
       });
     }
   }

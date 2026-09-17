@@ -1,12 +1,17 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import { Switch, DebouncedInput } from './ui.jsx';
+import ColourPicker from './ColourPicker.jsx';
+import { AddOptionTile, OptionEditor } from './AddOption.jsx';
+import { fileToDataUrl } from '../lib/image.js';
+import { useToast, ConfirmButton } from './ui.jsx';
 import { formatMoney } from '../lib/pricing.js';
 
 /**
  * Renders one catalog field. Every control in the builder comes through here,
  * so adding an option to `catalog.js` is all it takes to extend the flow.
  */
-export default function Field({ field, spec, overrides = {}, onChange }) {
+export default function Field({ field, spec, overrides = {}, onChange, onCatalogChanged, media }) {
+  const [editingOption, setEditingOption] = useState(null);
   const value = spec[field.id];
 
   const priceFor = (opt) => {
@@ -37,10 +42,41 @@ export default function Field({ field, spec, overrides = {}, onChange }) {
                     {typeof opt.basePrice === 'number' ? '' : '+'}{formatMoney(amount)}
                   </div>
                 )}
+                {opt.custom && (
+                  <span
+                    className="option-edit"
+                    role="button"
+                    tabIndex={0}
+                    title="Edit this option"
+                    onClick={(e) => { e.stopPropagation(); setEditingOption(opt); }}
+                    onKeyDown={(e) => e.key === 'Enter' && (e.stopPropagation(), setEditingOption(opt))}
+                  >
+                    edit
+                  </span>
+                )}
               </button>
             );
           })}
+          {onCatalogChanged && (
+            <AddOptionTile fieldId={field.id} fieldLabel={field.label} onAdded={onCatalogChanged} />
+          )}
         </div>
+
+        {editingOption && (
+          <OptionEditor
+            fieldId={field.id}
+            fieldLabel={field.label}
+            existing={{
+              id: editingOption.optionId,
+              label: editingOption.label,
+              price: editingOption.price,
+              description: editingOption.desc,
+              prompt: editingOption.promptText,
+            }}
+            onClose={() => setEditingOption(null)}
+            onSaved={() => { setEditingOption(null); onCatalogChanged?.(); }}
+          />
+        )}
       </div>
     );
   }
@@ -59,27 +95,12 @@ export default function Field({ field, spec, overrides = {}, onChange }) {
     );
   }
 
+  if (field.type === 'images') {
+    return <ImageField field={field} media={media} />;
+  }
+
   if (field.type === 'colour') {
-    const current = value ?? field.default ?? '#000000';
-    return (
-      <div className="field">
-        <label>{field.label}</label>
-        <div className="inline">
-          <input
-            type="color"
-            value={current}
-            onChange={(e) => onChange(field.id, e.target.value)}
-            style={{ width: 52, height: 38, padding: 2, border: '1px solid var(--line)', borderRadius: 8, background: 'var(--card)', cursor: 'pointer' }}
-          />
-          <DebouncedInput
-            className="input mono"
-            style={{ maxWidth: 130 }}
-            value={current}
-            onCommit={(v) => /^#[0-9a-f]{6}$/i.test(v) && onChange(field.id, v)}
-          />
-        </div>
-      </div>
-    );
+    return <ColourField field={field} value={value} onChange={onChange} />;
   }
 
   if (field.type === 'number') {
@@ -127,6 +148,113 @@ export default function Field({ field, spec, overrides = {}, onChange }) {
         maxLength={field.maxLength}
         value={value ?? ''}
         onCommit={(v) => onChange(field.id, v)}
+      />
+    </div>
+  );
+}
+
+
+/**
+ * A colour field opens the wheel in place rather than in a dialog - picking a
+ * lining colour is a small decision and should not take over the screen.
+ */
+function ColourField({ field, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const current = value ?? field.default ?? '#000000';
+
+  return (
+    <div className="field">
+      <label>{field.label}</label>
+      <button type="button" className="colour-trigger" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        <span className="swatch" style={{ background: current }} />
+        <span className="mono">{current}</span>
+        <span className="tiny faint" style={{ marginLeft: 'auto' }}>{open ? 'Done' : 'Change'}</span>
+      </button>
+      {open && (
+        <div className="colour-panel">
+          <ColourPicker label={field.id} value={current} onChange={(v) => onChange(field.id, v)} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+/**
+ * A set of images attached to the order rather than a value on the spec - the
+ * lining collage is artwork, not a choice. Several can be added, because a
+ * collage is usually assembled from more than one picture.
+ */
+function ImageField({ field, media }) {
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+
+  if (!media) return null;
+  const images = media.photosFor(field.slot);
+
+  async function add(files) {
+    const picked = [...files].filter((f) => f.type.startsWith('image/'));
+    if (!picked.length) return;
+    setBusy(true);
+    try {
+      for (const file of picked) {
+        const { dataUrl, width, height } = await fileToDataUrl(file);
+        await media.add({ slot: field.slot, dataUrl, meta: { width, height } });
+      }
+    } catch (err) {
+      toast(err.message, 'err');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="field">
+      <label>{field.label}</label>
+      {field.hint && <div className="hint" style={{ marginTop: -2 }}>{field.hint}</div>}
+
+      <div
+        className="swatch-row"
+        style={{ marginTop: 8 }}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files); }}
+      >
+        {images.map((photo) => (
+          <div key={photo.id} style={{ position: 'relative' }}>
+            <img
+              src={media.urlFor(photo.filename)}
+              alt=""
+              style={{ width: 92, height: 92, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--line)' }}
+            />
+            <ConfirmButton
+              className="ref-star"
+              confirmLabel="!"
+              onConfirm={() => media.remove(photo.id)}
+            >
+              x
+            </ConfirmButton>
+          </div>
+        ))}
+
+        <button
+          type="button"
+          className="btn"
+          style={{ width: 92, height: 92, display: 'grid', placeItems: 'center' }}
+          onClick={() => inputRef.current?.click()}
+          disabled={busy}
+        >
+          {busy ? '...' : '+'}
+        </button>
+      </div>
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={(e) => { add(e.target.files); e.target.value = ''; }}
       />
     </div>
   );

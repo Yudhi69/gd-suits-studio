@@ -1,6 +1,7 @@
 'use strict';
 
 const { contextBridge, ipcRenderer } = require('electron');
+const media = require('./mediaUrl');
 
 /**
  * The renderer gets exactly these channels and nothing else - no node, no fs,
@@ -9,19 +10,27 @@ const { contextBridge, ipcRenderer } = require('electron');
  */
 const CHANNELS = [
   'clients:list', 'clients:get', 'clients:save', 'clients:delete',
-  'projects:list', 'projects:get', 'projects:create', 'projects:update', 'projects:delete',
+  'projects:list', 'projects:get', 'projects:create', 'projects:update', 'projects:delete', 'projects:setQuote',
   'photos:add', 'photos:delete', 'photos:meta',
   'references:add', 'references:list', 'references:update', 'references:delete', 'references:history',
   'clientMeasurements:save', 'clientMeasurements:list', 'measurements:seedFromClient',
+  'payments:add', 'payments:update', 'payments:delete',
+  'alterations:add', 'alterations:update', 'alterations:delete',
+  'extras:add', 'extras:update', 'extras:delete',
+  'analytics:get',
   'notes:add', 'notes:delete',
   'measurements:save',
   'fittings:add', 'fittings:update', 'fittings:delete',
+  'catalog:list', 'catalog:addCategory', 'catalog:updateCategory', 'catalog:deleteCategory',
+  'catalog:addItem', 'catalog:updateItem', 'catalog:deleteItem',
+  'catalog:addOption', 'catalog:updateOption', 'catalog:deleteOption',
   'settings:get', 'settings:set',
   'secrets:describe', 'secrets:set',
-  'ai:test', 'ai:models', 'ai:render', 'ai:analyse',
+  'ai:test', 'ai:models', 'ai:render', 'ai:analyse', 'ai:providers', 'ai:setConfig',
   'renders:approve', 'renders:delete',
   'project:export',
-  'app:info', 'app:openDataFolder',
+  'app:info', 'app:openDataFolder', 'app:security',
+  'updates:check', 'updates:download', 'updates:defaultFeed',
 ];
 
 /**
@@ -43,8 +52,8 @@ for (const channel of CHANNELS) {
 }
 
 /** Media URL helpers, so the UI never hand-builds a gdmedia:// string. */
-api.mediaUrl = (scope, filename) => (filename ? `gdmedia://${scope}/${encodeURIComponent(filename)}` : null);
-api.projectMedia = (projectId, filename) => api.mediaUrl(projectId, filename);
-api.clientMedia = (clientId, filename) => api.mediaUrl(`client-${clientId}`, filename);
+api.mediaUrl = media.mediaUrl;
+api.projectMedia = media.projectMedia;
+api.clientMedia = media.clientMedia;
 
 contextBridge.exposeInMainWorld('gd', api);

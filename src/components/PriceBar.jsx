@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
 import { buildBreakdown, formatMoney } from '../lib/pricing.js';
+import { quoteDrift } from '../lib/quote.js';
 import { Modal } from './ui.jsx';
 
 /** Running total, always visible while the tailor builds - the brief's
  *  "all custom selections must dynamically add to the total price". */
-export default function PriceBar({ spec, overrides, right }) {
+export default function PriceBar({ spec, overrides, right, steps, quote }) {
   const [open, setOpen] = useState(false);
-  const { lines, total } = buildBreakdown(spec, overrides);
+  const live = buildBreakdown(spec, overrides, steps);
+  const drift = quoteDrift(quote, spec, overrides, steps);
+  // Once agreed, the agreed figure is the one on show.
+  const { lines, total } = quote ?? live;
 
   const groups = lines.reduce((acc, line) => {
     (acc[line.group] ??= []).push(line);
@@ -17,14 +21,19 @@ export default function PriceBar({ spec, overrides, right }) {
     <>
       <div className="price-bar">
         <div>
-          <div className="tiny" style={{ color: 'var(--on-dark-soft)', textTransform: 'uppercase', letterSpacing: '.08em' }}>
-            Running total
+          <div className="tiny" style={{ color: 'var(--sidebar-soft)', textTransform: 'uppercase', letterSpacing: '.08em' }}>
+            {quote ? 'Agreed quote' : 'Running total'}
           </div>
           <div className="price-total">{formatMoney(total)}</div>
         </div>
-        <button className="btn btn-sm" onClick={() => setOpen(true)} style={{ background: 'transparent', borderColor: 'var(--ink-line)', color: 'var(--on-dark)' }}>
+        <button className="btn btn-sm" onClick={() => setOpen(true)} style={{ background: 'transparent', borderColor: 'var(--sidebar-line)', color: 'var(--sidebar-text)' }}>
           {lines.length} line{lines.length === 1 ? '' : 's'} - view breakdown
         </button>
+        {drift && (
+          <span className="pill pill-warn" title={`Today's price list would make this ${formatMoney(drift.live.total)}`}>
+            price list moved {drift.label}
+          </span>
+        )}
         <div style={{ flex: 1 }} />
         {right}
       </div>
