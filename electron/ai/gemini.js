@@ -56,9 +56,19 @@ function explain(status, body) {
     // other not until tomorrow.
     const quota = body?.error?.details?.find((d) => String(d['@type'] ?? '').includes('QuotaFailure'));
     const freeTier = JSON.stringify(quota ?? '').includes('FreeTier') || /free_tier/i.test(apiMessage);
+
+    // "limit: 0" is not an allowance that has been used up - it is a model
+    // the free tier never had any access to at all. Every image model is now
+    // paid-tier only, so telling the tailor to wait until midnight would have
+    // them wait for a reset that is never coming. The fix is billing, not time.
+    const noFreeAllowance = freeTier && /limit:\s*0\b/.test(apiMessage);
     if (freeTier) {
       return new GeminiError(
-        'The free daily quota for this model is used up. It resets at midnight Pacific time, ' +
+        noFreeAllowance
+        ? 'This model needs a paid Google project - image generation has no free allowance at all, ' +
+          'so there is nothing to wait for. Link a billing account to this key\'s project at ' +
+          'aistudio.google.com (Settings > Plan), then try again; it takes effect within a minute.'
+        : 'The free daily quota for this model is used up. It resets at midnight Pacific time, ' +
         'or enable billing in Google AI Studio to lift the cap. Everything except rendering keeps working meanwhile.',
         { status, code: 'free_quota', retryable: false }
       );
