@@ -11,6 +11,24 @@ global.fetch = async (url, opts) => {
   // 401 for the fake key, which is not what it was asserting.
   const stubbed = u.includes('generativelanguage.googleapis.com') || u.includes('api.openai.com');
   if (!stubbed) return realFetch(url, opts);
+  // Google's real 429 for an image model on a free-tier project, captured
+  // live. "limit: 0" is the tell: the free tier never had any allowance for
+  // this model, so there is no reset to wait for.
+  if (u.includes('no-free-allowance:generateContent')) {
+    return new Response(JSON.stringify({
+      error: {
+        code: 429,
+        message: 'You exceeded your current quota, please check your plan and billing details.\n' +
+          '* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, ' +
+          'limit: 0, model: gemini-2.5-flash-preview-image',
+        status: 'RESOURCE_EXHAUSTED',
+        details: [{
+          '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+          violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }],
+        }],
+      },
+    }), { status: 429, headers: { 'content-type': 'application/json' } });
+  }
   if (u.includes('api.openai.com/v1/models')) {
     return new Response(JSON.stringify({ data: [{ id: 'gpt-image-1' }, { id: 'gpt-4o' }] }),
       { status: 200, headers: { 'content-type': 'application/json' } });
@@ -171,6 +189,19 @@ app.whenReady().then(async () => {
   log('\n=== a custom endpoint must be https ===');
   const bad = await js(`window.gd.ai.setConfig({ image:{provider:'custom',model:'x'}, vision:{provider:'gemini',model:'gemini-2.5-flash'}, customBaseUrl: 'http://insecure.example' }).then(r => r.ok ? 'ALLOWED' : r.error.message)`);
   check(bad !== 'ALLOWED' && /https/i.test(bad), 'a plain http endpoint is refused', bad);
+
+  log('\n=== a model with no free allowance is not a model to wait on ===');
+  const gem = require('../electron/ai/gemini.js');
+  let quotaMsg = '';
+  try {
+    await gem.generateImage({ apiKey: 'AIza-test', model: 'no-free-allowance', prompt: 'a navy suit' });
+    quotaMsg = '(no error thrown)';
+  } catch (err) {
+    quotaMsg = err.message;
+  }
+  check(/billing/i.test(quotaMsg), 'it says the fix is billing', quotaMsg.slice(0, 90));
+  check(!/midnight/i.test(quotaMsg), 'and does NOT send the tailor away to wait for a reset', quotaMsg.slice(0, 90));
+  check(/aistudio\.google\.com/.test(quotaMsg), 'and names where to go', quotaMsg.slice(0, 120));
 
   log(`\n${fail === 0 ? 'ALL MODEL CHECKS PASSED' : 'FAILED'} — ${pass} passed, ${fail} failed`);
   app.exit(fail === 0 ? 0 : 1);
