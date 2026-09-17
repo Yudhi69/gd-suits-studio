@@ -51,7 +51,25 @@ function set(name, value) {
 function get(name) {
   const entry = readAll()[name];
   if (!entry) return null;
-  if (entry.plain) return entry.plain;
+
+  // A key written while the OS keychain was unavailable stays in plain text
+  // for the rest of its life, because only set() ever encrypts. Any read is
+  // a chance to put that right: if the keychain is available now, the entry
+  // is upgraded in place before being handed back.
+  if (entry.plain) {
+    if (safeStorage.isEncryptionAvailable()) {
+      try {
+        const store = readAll();
+        store[name] = { enc: safeStorage.encryptString(entry.plain).toString('base64') };
+        writeAll(store);
+      } catch {
+        // Upgrading is best-effort; failing to do so must not stop the tailor
+        // using a key that already works.
+      }
+    }
+    return entry.plain;
+  }
+
   try {
     return safeStorage.decryptString(Buffer.from(entry.enc, 'base64'));
   } catch {
