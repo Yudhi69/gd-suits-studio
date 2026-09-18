@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { api, projectMedia, clientMedia, messageFor } from '../../lib/api.js';
+import { api, projectMedia, clientMedia, brandedRender, messageFor } from '../../lib/api.js';
+import DownloadButton from '../../components/DownloadButton.jsx';
 import { buildRenderPrompt, buildTweakPrompt, VIEWS, describeGarment } from '../../lib/promptBuilder.js';
 import { Banner, Modal, Spinner, useToast, ConfirmButton } from '../../components/ui.jsx';
 import ReferenceLibrary from '../../components/ReferenceLibrary.jsx';
@@ -181,7 +182,9 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
                     </div>
                   </div>
                 ) : active ? (
-                  <img src={projectMedia(project.id, active.filename)} alt="Suit visualisation" />
+                  // Shown with its badge, exactly as the client will receive it. The
+                  // file on disk stays clean so refining it does not feed the mark back in.
+                  <img src={brandedRender(project.id, active.filename)} alt="Suit visualisation" />
                 ) : (
                   <div className="center progress-note">
                     Nothing rendered yet.
@@ -213,6 +216,13 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
                 <button className="btn" onClick={() => setPickingRefs(true)}>
                   Reference images{selectedRefs.length ? ` (${selectedRefs.length})` : ''}
                 </button>
+                {active && !busy && (
+                  <DownloadButton
+                    src={projectMedia(project.id, active.filename)}
+                    name={`${project.order_ref || 'GD Suits'} ${active.view} render`}
+                    label="Download render"
+                  />
+                )}
                 <button
                   className="btn btn-ghost btn-sm"
                   onClick={() => { setPromptDraft(effectivePrompt); setShowPrompt(true); }}

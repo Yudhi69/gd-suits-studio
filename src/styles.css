@@ -676,7 +676,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   overflow: hidden; background: var(--card); position: relative;
 }
 .ref-card.picked { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(201,162,39,.16); }
-.ref-thumb { aspect-ratio: 1; background: var(--judge-bg); cursor: pointer; }
+.ref-thumb { aspect-ratio: 1; background: var(--judge-bg); cursor: pointer; position: relative; }
 .ref-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .ref-body { padding: 9px 11px; }
 .ref-star {
@@ -760,3 +760,17 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* An order number is read as one token, so it never breaks across lines. */
 .order-ref { white-space: nowrap; }
 .th-sort { white-space: nowrap; }
+
+/* Save-a-copy on thumbnails. Bottom-right, because the top corners already
+   carry the pin, the remove button and the "used" count. Always visible
+   rather than on hover, so it can be found on a touchscreen too. */
+.dl-chip {
+  position: absolute; bottom: 5px; right: 5px;
+  width: 24px; height: 24px; border-radius: 50%; border: 0;
+  background: rgba(14, 13, 11, .66); color: #fff;
+  display: grid; place-items: center; font-size: 13px; line-height: 1;
+  cursor: pointer; transition: background .12s ease;
+}
+.dl-chip:hover { background: var(--gold); color: #241d05; }
+.dl-chip:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.dl-chip:disabled { opacity: .6; cursor: progress; }

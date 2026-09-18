@@ -18,6 +18,7 @@ const CHANNELS = [
   'alterations:add', 'alterations:update', 'alterations:delete',
   'extras:add', 'extras:update', 'extras:delete',
   'analytics:get',
+  'media:download',
   'notes:add', 'notes:delete',
   'measurements:save',
   'fittings:add', 'fittings:update', 'fittings:delete',
@@ -55,5 +56,6 @@ for (const channel of CHANNELS) {
 api.mediaUrl = media.mediaUrl;
 api.projectMedia = media.projectMedia;
 api.clientMedia = media.clientMedia;
+api.brandedRender = media.brandedRender;
 
 contextBridge.exposeInMainWorld('gd', api);
