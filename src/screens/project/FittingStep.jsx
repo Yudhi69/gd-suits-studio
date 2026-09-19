@@ -3,6 +3,7 @@ import { api, projectMedia } from '../../lib/api.js';
 import { FITTING_GARMENTS, FITTING_KINDS, fittingLabel } from '../../lib/catalog.js';
 import { fileToDataUrl } from '../../lib/image.js';
 import { ConfirmButton, DebouncedInput, Empty, useToast } from '../../components/ui.jsx';
+import DownloadButton from '../../components/DownloadButton.jsx';
 
 const ANGLES = ['front', 'side', 'back'];
 
@@ -177,6 +178,7 @@ function FittingCard({ fitting, project, garments, onReload, onSavePhoto, onDele
                             alt=""
                             style={{ width: 74, height: 96, objectFit: 'cover', borderRadius: 7, border: '1px solid var(--line)' }}
                           />
+                          <DownloadButton chip src={projectMedia(project.id, p.filename)} name={`${angle} fitting photo`} />
                           <button
                             className="ref-star"
                             style={{ width: 20, height: 20, fontSize: 11, top: 3, right: 3 }}

@@ -4,6 +4,7 @@ import ColourPicker from './ColourPicker.jsx';
 import { AddOptionTile, OptionEditor } from './AddOption.jsx';
 import { fileToDataUrl } from '../lib/image.js';
 import { useToast, ConfirmButton } from './ui.jsx';
+import DownloadButton from './DownloadButton.jsx';
 import { formatMoney } from '../lib/pricing.js';
 
 /**
@@ -227,6 +228,7 @@ function ImageField({ field, media }) {
               alt=""
               style={{ width: 92, height: 92, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--line)' }}
             />
+            <DownloadButton chip src={media.urlFor(photo.filename)} name={field.label} />
             <ConfirmButton
               className="ref-star"
               confirmLabel="!"

@@ -30,7 +30,7 @@ const GROUPS = [
   'clients', 'projects', 'photos', 'references', 'clientMeasurements',
   'notes', 'measurements', 'fittings', 'settings', 'secrets',
   'ai', 'renders', 'project', 'app', 'updates', 'catalog',
-  'payments', 'alterations', 'extras', 'analytics',
+  'payments', 'alterations', 'extras', 'analytics', 'media',
 ];
 
 export const api = {};
@@ -45,6 +45,7 @@ for (const group of GROUPS) {
 export const mediaUrl = bridge.mediaUrl;
 export const projectMedia = bridge.projectMedia;
 export const clientMedia = bridge.clientMedia;
+export const brandedRender = bridge.brandedRender;
 
 /** Turns any thrown error into the sentence shown in the UI. */
 export function messageFor(err) {

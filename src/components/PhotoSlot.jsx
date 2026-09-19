@@ -2,12 +2,13 @@ import React, { useRef, useState } from 'react';
 import CameraCapture from './CameraCapture.jsx';
 import { fileToDataUrl, imageFileFrom } from '../lib/image.js';
 import { useToast } from './ui.jsx';
+import DownloadButton from './DownloadButton.jsx';
 
 /**
  * One capture slot. Accepts a file picker, a drag-and-drop, a paste, or a
  * live camera shot - whichever is quickest for the tailor in the moment.
  */
-export default function PhotoSlot({ slot, photo, onSave, onClear, onOpen }) {
+export default function PhotoSlot({ slot, photo, onSave, onClear, onOpen, downloadName }) {
   const inputRef = useRef(null);
   const [dragging, setDragging] = useState(false);
   const [camera, setCamera] = useState(false);
@@ -60,6 +61,7 @@ export default function PhotoSlot({ slot, photo, onSave, onClear, onOpen }) {
         <div className="photo-actions">
           <button className="btn btn-sm btn-ghost" onClick={() => inputRef.current?.click()} disabled={busy}>File</button>
           <button className="btn btn-sm btn-ghost" onClick={() => setCamera(true)} disabled={busy}>Camera</button>
+          {photo && <DownloadButton src={photo.url} name={downloadName || slot.label} className="btn-sm btn-ghost" />}
           {photo && <button className="btn btn-sm btn-ghost btn-danger" onClick={() => onClear(photo)}>Clear</button>}
         </div>
 

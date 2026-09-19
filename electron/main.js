@@ -12,6 +12,7 @@ const gemini = require('./ai/gemini');
 const aiProviders = require('./ai/registry');
 const security = require('./security');
 const media = require('./mediaUrl');
+const brand = require('./brand');
 const updater = require('./updater');
 const v = require('./validate');
 
@@ -158,9 +159,24 @@ function startup() {
 
   protocol.handle('gdmedia', async (request) => {
     try {
-      // gdmedia://media/<scope>/<filename>
-      const { scope, filename } = media.parseMediaPath(new URL(request.url).pathname);
+      // gdmedia://media/<scope>/<filename>[?branded=1]
+      const url = new URL(request.url);
+      const { scope, filename } = media.parseMediaPath(url.pathname);
       const buffer = storage.readImage(scope, filename);
+
+      // The badge is added for renders only, decided against the database.
+      // Asking for it on a client's photograph is ignored rather than obeyed.
+      if (url.searchParams.get('branded') === '1' && isRenderMedia(scope, filename)) {
+        const format = brand.formatFor(filename);
+        try {
+          return new Response(brand.stampCached(`${scope}/${filename}`, buffer, format), {
+            headers: { 'content-type': brand.mimeFor(format), 'cache-control': 'no-store' },
+          });
+        } catch {
+          // A preview that shows the render unbadged beats one that shows
+          // nothing. Downloads do not get this leniency.
+        }
+      }
       return new Response(buffer, {
         headers: { 'content-type': storage.mimeForFile(filename), 'cache-control': 'no-store' },
       });
@@ -733,6 +749,61 @@ handle('renders:delete', ({ id }) => {
   if (row) storage.deleteImage(storage.scopeForProject(row.project_id), row.filename);
 });
 
+/**
+ * Whether a stored file is a render - the only thing that gets the "Generated
+ * by GD Suits" badge. Answered from the renders table, so nothing the
+ * interface sends can put that claim on a client's photograph.
+ */
+function isRenderMedia(scope, filename) {
+  const m = /^project-(\d+)$/.exec(String(scope));
+  return !!m && db.isRenderFile(Number(m[1]), filename);
+}
+
+/** A default file name the tailor can accept or change - never a path. */
+const cleanFileName = (name) =>
+  String(name ?? '').normalize('NFKD').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').slice(0, 80);
+
+/**
+ * Saves a copy of any stored image wherever the tailor chooses, as often as
+ * they like - nothing is moved or consumed, so a download can always be done
+ * again.
+ *
+ * The interface names the image by the gdmedia:// address it is already
+ * showing, never by a path. Where the bytes come from is resolved and confined
+ * to the media folder here; where they go is chosen by the tailor in the save
+ * dialog. So a hostile page gains nothing it could not already see, and cannot
+ * write anywhere the tailor did not pick.
+ *
+ * Renders always leave with the badge. A stamping failure is an error rather
+ * than a quiet fallback to the unbadged original.
+ */
+handle('media:download', async ({ url, name } = {}) => {
+  url = v.str(url, 'image', 2048);
+  let parsed;
+  try { parsed = new URL(url); } catch { throw new Error('Image not found.'); }
+  if (parsed.protocol !== `${media.SCHEME}:` || parsed.host !== media.HOST) throw new Error('Image not found.');
+
+  const { scope, filename } = media.parseMediaPath(parsed.pathname);
+  let bytes;
+  try { bytes = storage.readImage(scope, filename); } catch { throw new Error('Image not found.'); }
+
+  const render = isRenderMedia(scope, filename);
+  if (render) bytes = brand.stamp(bytes, brand.formatFor(filename));
+
+  const ext = path.extname(filename).toLowerCase() || '.png';
+  const base = cleanFileName(name) || (render ? 'gd-suits-render' : 'gd-suits-image');
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: render ? 'Save render' : 'Save image',
+    defaultPath: path.join(app.getPath('downloads'), base + ext),
+    buttonLabel: 'Save',
+    filters: [{ name: 'Image', extensions: [ext.slice(1)] }],
+  });
+  if (canceled || !filePath) return { saved: false };
+
+  fs.writeFileSync(filePath, bytes);
+  return { saved: true, name: path.basename(filePath), branded: render };
+});
+
 /* export - the "client file" the brief asks the system to keep */
 handle('project:export', async ({ projectId, html }) => {
   projectId = v.id(projectId, 'projectId');
@@ -755,11 +826,21 @@ handle('project:export', async ({ projectId, html }) => {
 
   const projectScope = storage.scopeForProject(projectId);
   const refRows = db.listReferences(project.client_id);
-  for (const row of [...project.photos, ...project.renders]) {
+  for (const row of project.photos) {
     try {
       fs.copyFileSync(storage.resolveSafe(projectScope, row.filename), path.join(imagesDir, row.filename));
     } catch {
       /* a missing file must not abort the whole export */
+    }
+  }
+  // Renders leave the app badged, like every other way out. Same filename,
+  // same format, because the exported order form links to them by name.
+  for (const row of project.renders) {
+    try {
+      const stamped = brand.stamp(storage.readImage(projectScope, row.filename), brand.formatFor(row.filename));
+      fs.writeFileSync(path.join(imagesDir, row.filename), stamped);
+    } catch {
+      /* a missing or unreadable render must not abort the whole export */
     }
   }
 

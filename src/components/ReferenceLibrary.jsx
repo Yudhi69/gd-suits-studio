@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import { api, clientMedia } from '../lib/api.js';
 import { fileToDataUrl, imageFileFrom } from '../lib/image.js';
 import { ConfirmButton, Empty, Modal, useToast, DebouncedInput } from './ui.jsx';
+import DownloadButton from './DownloadButton.jsx';
 
 const KINDS = [
   { key: 'style', label: 'Style' },
@@ -109,6 +110,7 @@ export default function ReferenceLibrary({
                   title={selectable ? 'Use in the next render' : 'Edit details'}
                 >
                   <img src={clientMedia(clientId, ref.filename)} alt={ref.title || 'Reference'} />
+                  <DownloadButton chip src={clientMedia(clientId, ref.filename)} name={ref.title || 'reference'} />
                 </div>
                 {ref.times_used > 0 && <div className="ref-badge">used {ref.times_used}x</div>}
                 <button
@@ -170,6 +172,7 @@ export default function ReferenceLibrary({
               alt=""
               style={{ maxWidth: 220, borderRadius: 10, border: '1px solid var(--line)' }}
             />
+            <DownloadButton src={clientMedia(clientId, editing.filename)} name={editing.title || 'reference'} className="btn-sm" />
             <div style={{ flex: 2 }}>
               <div className="field">
                 <label>Title</label>

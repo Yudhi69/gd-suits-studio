@@ -3,6 +3,7 @@ import { api, projectMedia, messageFor } from '../../lib/api.js';
 import { PHOTO_SLOTS } from '../../lib/catalog.js';
 import { suggestFabrics } from '../../lib/colour.js';
 import PhotoSlot from '../../components/PhotoSlot.jsx';
+import DownloadButton from '../../components/DownloadButton.jsx';
 import ColourSampler from '../../components/ColourSampler.jsx';
 import NotesPanel from '../../components/NotesPanel.jsx';
 import { Banner, Modal, Spinner, useToast } from '../../components/ui.jsx';
@@ -87,6 +88,7 @@ export default function CaptureStep({ ctx }) {
                   onSave={({ dataUrl, meta }) => savePhoto({ slot: slot.key, dataUrl, meta })}
                   onClear={(p) => deletePhoto(p.id)}
                   onOpen={(p) => setViewing(p)}
+                  downloadName={`${project.name} ${project.surname} ${slot.label}`}
                 />
               );
             })}
@@ -214,6 +216,12 @@ export default function CaptureStep({ ctx }) {
       {viewing && (
         <Modal title="Photo" onClose={() => setViewing(null)} wide>
           <img src={projectMedia(project.id, viewing.filename)} alt="" style={{ width: '100%', borderRadius: 10 }} />
+          <div className="inline" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
+            <DownloadButton
+              src={projectMedia(project.id, viewing.filename)}
+              name={`${project.name} ${project.surname} ${viewing.slot || 'photo'}`}
+            />
+          </div>
         </Modal>
       )}
     </div>
