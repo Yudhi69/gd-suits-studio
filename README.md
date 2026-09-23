@@ -12,14 +12,15 @@ Everything except rendering works with no internet at all.
 ## Running it
 
 **As an installed app.** Open the installer in `release/` and drag the app
-across.
-
-- macOS, Apple Silicon: `GD Suits Studio-0.1.0-arm64.dmg`
-- macOS, Intel: `GD Suits Studio-0.1.0.dmg`
-- Windows: `GD Suits Studio Setup 0.1.0.exe`
+across. Three are built: a `-arm64.dmg` for Apple Silicon, a plain `.dmg` for
+Intel, and a `Setup ... .exe` for Windows.
 
 The builds are **ad-hoc signed, not notarised**, so the first launch on macOS
 needs a right-click → *Open* to get past Gatekeeper. See *Signing* below.
+
+[**docs/installing.md**](docs/installing.md) is the same thing written for the
+tailor rather than for a developer - which file to take, what each warning
+screen says, and why it appears. It is what goes out with a build.
 
 **From source.**
 
