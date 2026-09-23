@@ -7,8 +7,7 @@
  * answers prices, describes and prints all of them.
  */
 const { app, BrowserWindow } = require('electron');
-const path = require('path');
-app.setPath('userData', path.resolve(process.env.DATA_DIR));
+require('./fresh.js').freshUserData(app);
 require('../electron/main.js');
 const db = require('../electron/db.js');
 

@@ -1,5 +1,5 @@
 const { app, BrowserWindow } = require('electron');
-app.setPath('userData', require('path').resolve(process.env.DATA_DIR));
+require('./fresh.js').freshUserData(app);
 
 const log = (...a) => process.stdout.write(a.join(' ') + '\n');
 

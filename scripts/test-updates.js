@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-app.setPath('userData', path.resolve(process.env.DATA_DIR));
+require('./fresh.js').freshUserData(app);
 
 // Downloads land in the Downloads folder. Here that is a folder of our own,
 // so a test run cannot put anything in the real one.
@@ -169,9 +169,16 @@ app.whenReady().then(async () => {
   const surface = JSON.parse(await run(`JSON.stringify(Object.keys(window.gd.updates))`));
   check(!surface.includes('fetchFrom') && surface.includes('fetch'),
     'there is no channel that takes an address to download', JSON.stringify(surface));
-  r = JSON.parse(await run(`gd.updates.fetch({ url: 'https://evil.example/x.dmg', name: 'x.dmg' }).then(JSON.stringify)`));
-  const strayed = fs.readdirSync(DOWNLOADS).some((f) => f.startsWith('x'));
-  check(!strayed, 'an address passed anyway is ignored', fs.readdirSync(DOWNLOADS).join(', '));
+  // elsewhere.example is a host this test's stub really does serve, so a
+  // version that honoured the address would put a file on the disk, and this
+  // would say so. Naming a host that does not answer would let the check pass
+  // for the wrong reason.
+  const beforeHostile = fs.readdirSync(DOWNLOADS);
+  r = JSON.parse(await run(`gd.updates.fetch({ url: 'https://elsewhere.example/x.dmg', name: 'x.dmg' }).then(JSON.stringify)`));
+  const added = fs.readdirSync(DOWNLOADS).filter((f) => !beforeHostile.includes(f));
+  check(r.ok && added.length === 1 && added[0].startsWith('GD Suits Studio-0.9.0'),
+    'an address and a name passed anyway are both ignored - what arrives is the release',
+    JSON.stringify({ added, error: r.error }));
 
   log('\n=== the buttons a tailor actually presses ===');
   mode = 'newer'; assetHost = 'github.com'; served = null; redirectTo = null;
