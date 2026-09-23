@@ -464,6 +464,97 @@ const MIGRATIONS = [
       if (touched) save.run(JSON.stringify(spec), row.id);
     }
   },
+  // v13 - an order can carry more than one person, and a person more than one
+  // suit.
+  //
+  // A wedding is one order with a groom, his groomsmen and often his father,
+  // each in their own cloth. The spreadsheet handled that by writing the
+  // client once and leaving the rows underneath nameless, which is how twelve
+  // real suits nearly went missing in the import.
+  //
+  // A person here is a client record, not a name on an order. That is the
+  // whole point: a groomsman measured today has a body record, a photograph
+  // and a reference history, and when he comes back on his own next year they
+  // are already there. It also fills the client database GD asked for, from
+  // the work he is doing anyway.
+  //
+  // "garment" was taken - measurements use it for jacket, waistcoat or pants -
+  // so a whole outfit is a suit.
+  (d) => {
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS order_members (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        client_id  INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        role       TEXT NOT NULL DEFAULT '',
+        position   INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(project_id, client_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_members_project ON order_members(project_id);
+
+      CREATE TABLE IF NOT EXISTS suits (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        client_id   INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        label       TEXT NOT NULL DEFAULT '',
+        spec_json   TEXT NOT NULL DEFAULT '{}',
+        fabric_name TEXT NOT NULL DEFAULT '',
+        fabric_code TEXT NOT NULL DEFAULT '',
+        supplier    TEXT NOT NULL DEFAULT '',
+        quantity    INTEGER NOT NULL DEFAULT 1,
+        position    INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_suits_project ON suits(project_id);
+
+      -- What belongs to which suit. Nullable, because a photograph of the
+      -- client belongs to the person rather than to any one suit.
+      ALTER TABLE renders      ADD COLUMN suit_id INTEGER REFERENCES suits(id) ON DELETE SET NULL;
+      ALTER TABLE fittings     ADD COLUMN suit_id INTEGER REFERENCES suits(id) ON DELETE SET NULL;
+      ALTER TABLE measurements ADD COLUMN suit_id INTEGER REFERENCES suits(id) ON DELETE SET NULL;
+      ALTER TABLE photos       ADD COLUMN suit_id INTEGER REFERENCES suits(id) ON DELETE SET NULL;
+      -- And which person a photograph is of.
+      ALTER TABLE photos       ADD COLUMN client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL;
+    `);
+
+    // Every order that exists becomes an order of one person with one suit,
+    // which is what it already was. The spec moves onto the suit; the column
+    // on projects is left where it is rather than dropped, so a database
+    // opened by an older build still finds what it expects.
+    const projects = d.prepare('SELECT id, client_id, spec_json, fabric_name, fabric_code, supplier, quantity FROM projects').all();
+    const addMember = d.prepare(
+      `INSERT OR IGNORE INTO order_members (project_id, client_id, role, position) VALUES (?, ?, 'Client', 0)`
+    );
+    const addSuit = d.prepare(
+      `INSERT INTO suits (project_id, client_id, label, spec_json, fabric_name, fabric_code, supplier, quantity, position)
+       VALUES (@project_id, @client_id, '', @spec_json, @fabric_name, @fabric_code, @supplier, @quantity, 0)`
+    );
+    const claim = {
+      renders: d.prepare('UPDATE renders SET suit_id = ? WHERE project_id = ? AND suit_id IS NULL'),
+      fittings: d.prepare('UPDATE fittings SET suit_id = ? WHERE project_id = ? AND suit_id IS NULL'),
+      measurements: d.prepare('UPDATE measurements SET suit_id = ? WHERE project_id = ? AND suit_id IS NULL'),
+      photos: d.prepare('UPDATE photos SET suit_id = ?, client_id = ? WHERE project_id = ? AND suit_id IS NULL'),
+    };
+
+    for (const p of projects) {
+      addMember.run(p.id, p.client_id);
+      const suitId = addSuit.run({
+        project_id: p.id,
+        client_id: p.client_id,
+        spec_json: p.spec_json || '{}',
+        fabric_name: p.fabric_name || '',
+        fabric_code: p.fabric_code || '',
+        supplier: p.supplier || '',
+        quantity: p.quantity || 1,
+      }).lastInsertRowid;
+      claim.renders.run(suitId, p.id);
+      claim.fittings.run(suitId, p.id);
+      claim.measurements.run(suitId, p.id);
+      claim.photos.run(suitId, p.client_id, p.id);
+    }
+  },
 ];
 
 function open(userDataPath) {
@@ -580,6 +671,89 @@ function listProjects(clientId) {
   return clientId ? d.prepare(sql).all(clientId) : d.prepare(sql).all();
 }
 
+/* ------------------------------------------------- people and their suits */
+
+/**
+ * The people on an order, in the order GD entered them. Each is a client
+ * record, so what is captured here - measurements, photographs, references -
+ * is theirs and follows them to whatever they order next.
+ */
+function listMembers(projectId) {
+  return get()
+    .prepare(`SELECT m.*, c.name, c.surname, c.contact, c.email, c.dob, c.is_minor
+                FROM order_members m JOIN clients c ON c.id = m.client_id
+               WHERE m.project_id = ? ORDER BY m.position, m.id`)
+    .all(projectId);
+}
+
+function addMember({ projectId, clientId, role = '' }) {
+  const d = get();
+  const next = d.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS n FROM order_members WHERE project_id = ?').get(projectId).n;
+  d.prepare(`INSERT OR IGNORE INTO order_members (project_id, client_id, role, position) VALUES (?, ?, ?, ?)`)
+    .run(projectId, clientId, role, next);
+  return d.prepare('SELECT id FROM order_members WHERE project_id = ? AND client_id = ?').get(projectId, clientId)?.id;
+}
+
+function updateMember(id, { role, position }) {
+  const sets = [];
+  const params = { id };
+  if (role !== undefined) { sets.push('role = @role'); params.role = role; }
+  if (position !== undefined) { sets.push('position = @position'); params.position = position; }
+  if (!sets.length) return;
+  get().prepare(`UPDATE order_members SET ${sets.join(', ')} WHERE id = @id`).run(params);
+}
+
+/**
+ * Takes a person off an order along with the suits they were having. Their
+ * client record stays: the person still exists, they are simply not on this
+ * order any more.
+ */
+function removeMember(id) {
+  const d = get();
+  const row = d.prepare('SELECT project_id, client_id FROM order_members WHERE id = ?').get(id);
+  if (!row) return;
+  d.prepare('DELETE FROM suits WHERE project_id = ? AND client_id = ?').run(row.project_id, row.client_id);
+  d.prepare('DELETE FROM order_members WHERE id = ?').run(id);
+}
+
+function listSuits(projectId) {
+  return get()
+    .prepare(`SELECT s.*, c.name, c.surname
+                FROM suits s JOIN clients c ON c.id = s.client_id
+               WHERE s.project_id = ? ORDER BY s.position, s.id`)
+    .all(projectId)
+    .map((row) => ({ ...row, spec: JSON.parse(row.spec_json || '{}') }));
+}
+
+function addSuit({ projectId, clientId, label = '' }) {
+  const d = get();
+  const next = d.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS n FROM suits WHERE project_id = ?').get(projectId).n;
+  return d
+    .prepare(`INSERT INTO suits (project_id, client_id, label, position) VALUES (?, ?, ?, ?)`)
+    .run(projectId, clientId, label, next).lastInsertRowid;
+}
+
+function updateSuit(id, patch) {
+  const allowed = ['label', 'fabric_name', 'fabric_code', 'supplier', 'quantity', 'position', 'client_id'];
+  const sets = [];
+  const params = { id, updated_at: nowStamp() };
+  for (const [k, v] of Object.entries(patch)) {
+    if (allowed.includes(k)) { sets.push(`${k} = @${k}`); params[k] = v; }
+  }
+  if (patch.spec !== undefined) { sets.push('spec_json = @spec_json'); params.spec_json = JSON.stringify(patch.spec); }
+  if (!sets.length) return;
+  get().prepare(`UPDATE suits SET ${sets.join(', ')}, updated_at = @updated_at WHERE id = @id`).run(params);
+}
+
+function removeSuit(id) {
+  get().prepare('DELETE FROM suits WHERE id = ?').run(id);
+}
+
+/** The suit an order is about when nothing says otherwise - the first one. */
+function primarySuitId(projectId) {
+  return get().prepare('SELECT id FROM suits WHERE project_id = ? ORDER BY position, id LIMIT 1').get(projectId)?.id ?? null;
+}
+
 function getProject(id) {
   const d = get();
   const project = d
@@ -592,9 +766,19 @@ function getProject(id) {
     .get(id);
   if (!project) return null;
 
+  const suits = listSuits(id);
+  // Until the interface is per-suit, an order still reads as one suit: the
+  // first one. The spec lives on the suit now, so there is one writer and
+  // nothing to drift - `spec_json` on the order is left behind, untouched,
+  // for an older build that still expects to find it.
+  const primary = suits[0] ?? null;
+
   return {
     ...project,
-    spec: JSON.parse(project.spec_json || '{}'),
+    members: listMembers(id),
+    suits,
+    primarySuitId: primary?.id ?? null,
+    spec: primary ? primary.spec : JSON.parse(project.spec_json || '{}'),
     analysis: JSON.parse(project.analysis_json || '{}'),
     quote: project.quote_json ? JSON.parse(project.quote_json) : null,
     photos: d.prepare('SELECT * FROM photos WHERE project_id = ? ORDER BY created_at').all(id)
@@ -692,7 +876,15 @@ function createProject({ clientId, title, eventType, eventOther, eventDate, deli
       deliveryDate: deliveryDate ?? '',
       orderRef: nextOrderRef(get()),
     });
-  return info.lastInsertRowid;
+  const projectId = info.lastInsertRowid;
+
+  // Every order has at least one person and one suit from the moment it
+  // exists. Without this a new order would have nowhere to put its spec, and
+  // only orders that predate this migration would work - which is exactly the
+  // kind of split that hides until someone starts a real consultation.
+  addMember({ projectId, clientId, role: 'Client' });
+  addSuit({ projectId, clientId });
+  return projectId;
 }
 
 function updateProject(id, patch) {
@@ -716,15 +908,35 @@ function updateProject(id, patch) {
       params[k] = v;
     }
   }
-  if (patch.spec !== undefined) {
+  // The spec belongs to a suit. Written there and only there, so the two
+  // cannot disagree; the cloth is written through to the suit as well, so the
+  // per-suit pages arrive with it already correct.
+  const suitId = primarySuitId(id);
+  if (patch.spec !== undefined && suitId) {
+    updateSuit(suitId, { spec: patch.spec });
+  } else if (patch.spec !== undefined) {
     sets.push('spec_json = @spec_json');
     params.spec_json = JSON.stringify(patch.spec);
+  }
+  if (suitId) {
+    const throughToSuit = {};
+    for (const key of ['fabric_name', 'fabric_code', 'supplier', 'quantity']) {
+      if (patch[key] !== undefined) throughToSuit[key] = patch[key];
+    }
+    if (Object.keys(throughToSuit).length) updateSuit(suitId, throughToSuit);
   }
   if (patch.analysis !== undefined) {
     sets.push('analysis_json = @analysis_json');
     params.analysis_json = JSON.stringify(patch.analysis);
   }
-  if (!sets.length) return;
+  // Editing a suit is working on the order, so the order counts as touched
+  // even when nothing on the order row itself changed. Without this a spec
+  // edit would write to the suit and leave the order looking untouched, and
+  // the list that sorts by what was last worked on would be wrong.
+  if (!sets.length) {
+    d.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(nowStamp(), id);
+    return;
+  }
 
   d.prepare(`UPDATE projects SET ${sets.join(', ')}, updated_at = @updated_at WHERE id = @id`).run(params);
 }
@@ -1413,6 +1625,8 @@ module.exports = {
   addPayment, updatePayment, deletePayment,
   addAlteration, updateAlteration, deleteAlteration,
   addOrderExtra, updateOrderExtra, deleteOrderExtra,
+  listMembers, addMember, updateMember, removeMember,
+  listSuits, addSuit, updateSuit, removeSuit, primarySuitId,
   analytics,
   tx,
   nextOrderRef, assignOrderRefs, stampImport, isRenderFile,

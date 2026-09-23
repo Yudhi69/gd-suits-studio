@@ -407,6 +407,54 @@ handle('clientMeasurements:list', ({ clientId }) => db.listClientMeasurements(v.
 handle('measurements:seedFromClient', ({ projectId, clientId }) =>
   db.seedMeasurementsFromClient(v.id(projectId, 'projectId'), v.id(clientId, 'clientId')));
 
+/* the people on an order, and the suits they are having */
+
+/**
+ * Adds a person to an order. They become a client in their own right, so a
+ * groomsman measured today has a body record and a photograph of his own, and
+ * when he comes back next year on his own account they are already there.
+ */
+handle('members:add', (r) => {
+  const projectId = v.id(r.projectId, 'projectId');
+  const clientId = r.clientId
+    ? v.id(r.clientId, 'clientId')
+    : db.upsertClient({
+        name: v.str(r.name, 'name', 120),
+        surname: v.str(r.surname, 'surname', 120),
+        contact: v.str(r.contact, 'contact number', 60),
+        email: v.str(r.email, 'email', 200),
+      });
+  const memberId = db.addMember({ projectId, clientId, role: v.str(r.role, 'role', 60) });
+  // A person on an order is there to be measured for something, so they
+  // arrive with a suit rather than an empty row to be filled in later.
+  if (r.withSuit !== false) db.addSuit({ projectId, clientId, label: v.str(r.label, 'label', 80) });
+  return { memberId, clientId };
+});
+handle('members:list', ({ projectId }) => db.listMembers(v.id(projectId, 'projectId')));
+handle('members:update', ({ id, role, position }) => db.updateMember(v.id(id), {
+  role: role === undefined ? undefined : v.str(role, 'role', 60),
+  position: position === undefined ? undefined : v.num(position, 'position', { min: 0, max: 999 }),
+}));
+handle('members:remove', ({ id }) => db.removeMember(v.id(id)));
+
+handle('suits:list', ({ projectId }) => db.listSuits(v.id(projectId, 'projectId')));
+handle('suits:add', (r) => db.addSuit({
+  projectId: v.id(r.projectId, 'projectId'),
+  clientId: v.id(r.clientId, 'clientId'),
+  label: v.str(r.label, 'label', 80),
+}));
+handle('suits:update', ({ id, patch = {} }) => {
+  const clean = {};
+  for (const key of ['label', 'fabric_name', 'fabric_code', 'supplier']) {
+    if (patch[key] !== undefined) clean[key] = v.str(patch[key], key.replace(/_/g, ' '), 160);
+  }
+  if (patch.quantity !== undefined) clean.quantity = v.num(patch.quantity, 'quantity', { min: 1, max: 999 }) ?? 1;
+  if (patch.position !== undefined) clean.position = v.num(patch.position, 'position', { min: 0, max: 999 }) ?? 0;
+  if (patch.spec !== undefined) clean.spec = v.jsonBlob(patch.spec, 'spec', 256 * 1024);
+  return db.updateSuit(v.id(id), clean);
+});
+handle('suits:remove', ({ id }) => db.removeSuit(v.id(id)));
+
 /* money, alterations and extras - the workbook's other sheets */
 handle('payments:add', (r) => db.addPayment({
   project_id: v.id(r.projectId, 'projectId'),
