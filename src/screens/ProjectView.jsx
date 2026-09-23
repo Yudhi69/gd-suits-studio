@@ -25,7 +25,7 @@ import SummaryStep from './project/SummaryStep.jsx';
  * asks for it to feel like a game, one decision at a time, with the running
  * price always in view.
  */
-export default function ProjectView({ projectId, onBack, overrides, hasKey, steps: catalogSteps, unit, onUnitChange, customOptions, onCatalogChanged }) {
+export default function ProjectView({ projectId, onBack, overrides, business, hasKey, steps: catalogSteps, unit, onUnitChange, customOptions, onCatalogChanged }) {
   const ctx = useProject(projectId);
   const [stepKey, setStepKey] = useState('client');
   const { project, loading, error } = ctx;
@@ -88,13 +88,13 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey, step
     if (current.catalog) return <BuilderStep ctx={ctx} step={current.catalog} overrides={overrides} onCatalogChanged={onCatalogChanged} />;
     switch (current.key) {
       case 'client': return <ClientStep ctx={ctx} customOptions={customOptions} onCatalogChanged={onCatalogChanged} />;
-      case 'order': return <OrderStep ctx={ctx} />;
+      case 'order': return <OrderStep ctx={ctx} business={business} />;
       case 'capture': return <CaptureStep ctx={ctx} />;
       case 'fabric': return <FabricStep ctx={ctx} />;
-      case 'measurements': return <MeasureStep ctx={ctx} unit={unit} onUnitChange={onUnitChange} />;
+      case 'measurements': return <MeasureStep ctx={ctx} unit={unit} onUnitChange={onUnitChange} business={business} />;
       case 'preview': return <PreviewStep ctx={ctx} hasKey={hasKey} steps={catalogSteps} />;
       case 'fitting': return <FittingStep ctx={ctx} />;
-      case 'summary': return <SummaryStep ctx={ctx} overrides={overrides} steps={catalogSteps} unit={unit} />;
+      case 'summary': return <SummaryStep ctx={ctx} overrides={overrides} steps={catalogSteps} unit={unit} business={business} />;
       default: return null;
     }
   }

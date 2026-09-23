@@ -14,9 +14,10 @@ const security = require('./security');
 const media = require('./mediaUrl');
 const brand = require('./brand');
 const mail = require('./mailTemplate');
+const business = require('./business');
 
-// GD's own details, as they appear on the order form he signs with clients.
-const GD = { name: 'Gareth Duncan', role: 'GD Suits Owner', phone: '0824856941', email: 'gareth@gdsuits.co.za' };
+/** The shop's details as they are set today, never as they were compiled. */
+const shop = () => business.withDefaults(db.getSetting('business', null));
 const updater = require('./updater');
 const v = require('./validate');
 
@@ -663,7 +664,7 @@ handle('catalog:deleteItem', ({ id }) => db.deleteCustomItem(v.id(id)));
 
 /* settings + secrets */
 const SETTING_KEYS = ['priceOverrides', 'imageModel', 'visionModel', 'theme', 'updateFeed', 'autoCheckUpdates', 'measureUnit', 'aiConfig',
-  'quoteEmailTemplate', 'quoteEmailSubject'];
+  'quoteEmailTemplate', 'quoteEmailSubject', 'business'];
 handle('settings:get', ({ key, fallback }) => db.getSetting(v.oneOf(key, SETTING_KEYS, 'setting'), fallback ?? null));
 handle('settings:set', ({ key, value }) => {
   const name = v.oneOf(key, SETTING_KEYS, 'setting');
@@ -676,6 +677,7 @@ handle('settings:set', ({ key, value }) => {
   // The mail wording is text, not a structure - jsonBlob would refuse it.
   if (name === 'quoteEmailTemplate') return db.setSetting(name, v.str(value, 'message', 8 * 1024));
   if (name === 'quoteEmailSubject') return db.setSetting(name, v.str(value, 'subject', 300));
+  if (name === 'business') return db.setSetting(name, business.withDefaults(v.jsonBlob(value, 'business details', 16 * 1024)));
   return db.setSetting(name, v.jsonBlob(value, 'value', 128 * 1024));
 });
 const SECRET_NAMES = [...aiProviders.SECRET_NAMES, 'updateToken'];
@@ -912,6 +914,8 @@ handle('forms:save', async ({ projectId, html, name }) => {
   return { saved: true, name: path.basename(filePath) };
 });
 
+handle('business:get', () => shop());
+
 handle('quote:template', () => ({
   template: db.getSetting('quoteEmailTemplate', mail.DEFAULT_TEMPLATE),
   subject: db.getSetting('quoteEmailSubject', mail.DEFAULT_SUBJECT),
@@ -924,6 +928,7 @@ handle('quote:email', ({ projectId }) => {
   if (!project) throw new Error('Order not found');
   if (!project.email) throw new Error('This client has no email address on their file yet.');
 
+  const GD = shop();
   const money = (n) => `R${Math.round(Number(n) || 0).toLocaleString('en-ZA')}`;
   const quote = project.quote;
   const suits = project.suits ?? [];
@@ -942,7 +947,7 @@ handle('quote:email', ({ projectId }) => {
        ...quote.lines.map((l) => `  ${l.label}  ${money(l.amount)}`),
        '',
        `Total: ${money(quote.total)}`,
-       `Deposit to start (50%): ${money((quote.total ?? 0) * 0.5)}`].join('\n')
+       `Deposit to start (${Math.round(GD.depositFraction * 100)}%): ${money((quote.total ?? 0) * GD.depositFraction)}`].join('\n')
     : 'I will follow up with the figures shortly.';
 
   const values = {
@@ -957,8 +962,9 @@ handle('quote:email', ({ projectId }) => {
     event_line: project.event_date ? `Needed by: ${project.event_date}` : '',
     quote_block: quoteBlock,
     total: quote ? money(quote.total) : '',
-    deposit: quote ? money((quote.total ?? 0) * 0.5) : '',
+    deposit: quote ? money((quote.total ?? 0) * GD.depositFraction) : '',
     gd_name: GD.name, gd_role: GD.role, gd_phone: GD.phone, gd_email: GD.email,
+    business_name: GD.businessName,
   };
 
   const template = db.getSetting('quoteEmailTemplate', mail.DEFAULT_TEMPLATE);

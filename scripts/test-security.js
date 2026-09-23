@@ -89,7 +89,7 @@ app.whenReady().then(async () => {
 
     // --- the renderer must have no Node ----------------------------------
     out.nodeExposed = typeof require !== 'undefined' || typeof process !== 'undefined' || typeof module !== 'undefined';
-    out.bridgeKeys = Object.keys(window.gd).length;
+    out.bridge = Object.keys(window.gd).sort();
 
     // --- the API key must never be readable from the renderer ------------
     const desc = (await call(gd.secrets.describe({ name: 'gemini' }))).data;
@@ -121,7 +121,20 @@ app.whenReady().then(async () => {
   check(results.rendererNetwork === 'blocked', 'renderer cannot reach the internet', results.rendererNetwork);
   check(results.rendererGoogle === 'blocked', 'renderer cannot even reach Google directly', results.rendererGoogle);
   check(results.nodeExposed === false, 'no Node primitives in the renderer');
-  check(results.bridgeKeys > 0 && results.bridgeKeys < 30, 'bridge exposes only the declared surface (' + results.bridgeKeys + ' groups)');
+  // The surface the renderer is given, declared rather than counted. A new
+  // group is a new way into the main process, so it should have to be written
+  // down here and read by someone, not slip in under a number.
+  const DECLARED = [
+    'ai', 'alterations', 'analytics', 'app', 'brandedRender', 'business', 'catalog',
+    'clientMeasurements', 'clients', 'clientMedia', 'extras', 'fittings', 'forms',
+    'measurements', 'media', 'mediaUrl', 'members', 'notes', 'payments', 'photos',
+    'projectMedia', 'project', 'projects', 'quote', 'references', 'renders',
+    'secrets', 'settings', 'suits', 'updates',
+  ].sort();
+  const extra = results.bridge.filter((k) => !DECLARED.includes(k));
+  const missing = DECLARED.filter((k) => !results.bridge.includes(k));
+  check(extra.length === 0, 'the bridge exposes nothing that is not declared', extra.join(', '));
+  check(missing.length === 0, 'and everything declared is actually there', missing.join(', '));
   check(!/AIza|github_pat|sk-/.test(results.keyLeak), 'no raw key material reaches the renderer', results.keyLeak);
 
   log(`\n${fail === 0 ? 'ALL SECURITY CHECKS PASSED' : 'SECURITY CHECKS FAILED'} — ${pass} passed, ${fail} failed`);

@@ -88,6 +88,61 @@ app.whenReady().then(async () => {
   check(/email address/i.test(refused.error ?? ''), 'is refused with a reason a tailor can act on', JSON.stringify(refused));
   check(opened.length === 1, 'and no draft is opened', String(opened.length));
 
+  log('\n=== the details of the shop belong to the shop ===');
+  const shop = await call('business.get', {});
+  check(shop.data?.email === 'gareth@gdsuits.co.za', 'they start as what was hardcoded', JSON.stringify(shop.data?.email));
+  check(shop.data?.depositFraction === 0.5, 'including the deposit rule', String(shop.data?.depositFraction));
+
+  await call('settings.set', { key: 'business', value: {
+    ...shop.data, name: 'G. Duncan', phone: '021 000 0000', email: 'orders@gdsuits.co.za',
+    depositFraction: 0.4, terms: ['Half up front.', 'No refunds on deposits.'],
+  } });
+  opened.length = 0;
+  await call('quote.email', { projectId });
+  const signed = decodeURIComponent(opened[0]);
+  check(/G\. Duncan/.test(signed), 'a changed name signs the quote', signed.slice(-90));
+  check(/orders@gdsuits\.co\.za/.test(signed), 'and a changed address');
+  check(/Deposit to start \(40%\): R1,900/.test(signed), 'a changed deposit changes what is asked for', (signed.match(/Deposit[^\n]*/) || [''])[0]);
+
+  // The dashboard checks orders against the same number.
+  db.addPayment({ project_id: projectId, kind: 'deposit', amount: 1800, paid_on: '', method: '', reference: '', note: '' });
+  db.updateProject(projectId, { status: 'in_production' });
+  const short = db.analytics().depositShortfall.find((o) => o.id === projectId);
+  check(!!short && Math.round(short.shortfall) === 100,
+    'and the Business page flags the shortfall against it, not against 50%', JSON.stringify(short?.shortfall));
+
+  const nonsense = await call('settings.set', { key: 'business', value: { ...shop.data, depositFraction: 7 } });
+  const afterNonsense = await call('business.get', {});
+  check(afterNonsense.data?.depositFraction === 0.5,
+    'a deposit of 700% is a typo, and is refused rather than stored', String(afterNonsense.data?.depositFraction));
+
+  await call('settings.set', { key: 'business', value: shop.data });
+
+  log('\n=== keys stay masked ===');
+  win.webContents.reload(); await wait(2200);
+  const masked = JSON.parse(await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    [...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('Settings')).click(); await wait(1500);
+    const secrets = [...document.querySelectorAll('.secret-field input')];
+    const reveal0 = [...document.querySelectorAll('.secret-reveal')];
+    // The shop's own details live on their own page, not under the price list.
+    [...document.querySelectorAll('.step-tab')].find(t => t.textContent.includes('Your business'))?.click();
+    await wait(1200);
+    const reveals = reveal0;
+    const shopFields = [...document.querySelectorAll('.field label')].map(l => l.textContent.trim());
+    return JSON.stringify({
+      secretCount: secrets.length,
+      allPassword: secrets.every(i => i.type === 'password'),
+      reveals: reveals.length,
+      hasShop: shopFields.includes('Telephone') && shopFields.includes('Deposit before cutting'),
+      hasTerms: shopFields.includes('Terms and conditions'),
+    });
+  })()`));
+  check(masked.secretCount > 0 && masked.allPassword, 'every key is hidden until asked for', JSON.stringify(masked));
+  check(masked.reveals === masked.secretCount, 'each with an eye to show it', JSON.stringify(masked));
+  check(masked.hasShop, 'the shop details are editable in Settings', JSON.stringify(masked));
+  check(masked.hasTerms, 'terms included');
+
   log('\n=== the measurement form is one file ===');
   const scope = storage.scopeForProject(projectId);
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');

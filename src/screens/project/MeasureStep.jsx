@@ -28,7 +28,7 @@ const ADVICE_SCHEMA = {
 
 const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
-export default function MeasureStep({ ctx, unit = 'cm', onUnitChange }) {
+export default function MeasureStep({ ctx, unit = 'cm', onUnitChange, business }) {
   const { project, saveMeasurement, addNote, deleteNote } = ctx;
   const [checking, setChecking] = useState(false);
   const [advice, setAdvice] = useState(null);
@@ -111,7 +111,7 @@ ${table}
 ${pictures ? `<h3>Photographs</h3><div class="pics">${pictures}</div>` : ''}
 ${refs ? `<h3>Design reference</h3><div class="pics">${refs}</div>` : ''}
 <p class="sign">Measured by: ______________________  Date: ____________</p>
-<p class="meta" style="margin-top:22px">Gareth Duncan &middot; GD Suits &middot; 0824856941 &middot; gareth@gdsuits.co.za</p>
+<p class="meta" style="margin-top:22px">${esc(business?.name ?? '')} &middot; ${esc(business?.businessName ?? '')} &middot; ${esc(business?.phone ?? '')} &middot; ${esc(business?.email ?? '')}</p>
 </body></html>`;
 
       const res = await api.forms.save({

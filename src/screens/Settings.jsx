@@ -5,6 +5,87 @@ import { CURRENCY } from '../lib/catalog.js';
 import { Banner, Collapsible, ConfirmButton, DebouncedInput, Modal, SecretInput, Spinner, Switch, useToast } from '../components/ui.jsx';
 
 /**
+ * The shop's own details.
+ *
+ * Whose name goes on the order form, what number a client rings, what the
+ * terms say, and how much has to be in before cutting starts. All of it was
+ * written into the code, which meant a new telephone number needed a new
+ * build.
+ */
+function BusinessDetails() {
+  const [shop, setShop] = useState(null);
+  const toast = useToast();
+
+  useEffect(() => { api.business.get().then(setShop).catch(() => {}); }, []);
+  if (!shop) return null;
+
+  const save = async (patch) => {
+    const next = { ...shop, ...patch };
+    setShop(next);
+    await api.settings.set({ key: 'business', value: next });
+  };
+
+  const field = (key, label, hint) => (
+    <div className="field">
+      <label>{label}</label>
+      <DebouncedInput className="input" value={shop[key] ?? ''} onCommit={(v) => save({ [key]: v })} />
+      {hint && <div className="hint">{hint}</div>}
+    </div>
+  );
+
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div className="card-head">
+        <h3>Your details</h3>
+        <div className="spacer" />
+        <span className="tiny faint">Printed on the order form and signed off on every quote</span>
+      </div>
+      <div className="card-pad">
+        <div className="grid grid-2">
+          {field('businessName', 'Business name')}
+          {field('name', 'Your name')}
+          {field('role', 'Title')}
+          {field('phone', 'Telephone')}
+        </div>
+        {field('email', 'Email', 'Where clients reply when you send them a quote.')}
+
+        <div className="field" style={{ maxWidth: 220 }}>
+          <label>Deposit before cutting</label>
+          <div className="inline">
+            <DebouncedInput
+              className="input measure-input"
+              type="number"
+              min="0"
+              max="100"
+              value={Math.round((shop.depositFraction ?? 0.5) * 100)}
+              onCommit={(v) => {
+                const pct = Number(v);
+                if (!Number.isFinite(pct) || pct < 0 || pct > 100) { toast('A deposit is between 0 and 100 percent.', 'err'); return; }
+                save({ depositFraction: pct / 100 });
+              }}
+            />
+            <span className="muted">%</span>
+          </div>
+          <div className="hint">The Business page flags any order cut before this much is paid.</div>
+        </div>
+
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label>Terms and conditions</label>
+          <DebouncedInput
+            as="textarea"
+            className="textarea"
+            style={{ minHeight: 170 }}
+            value={(shop.terms ?? []).join('\n')}
+            onCommit={(v) => save({ terms: v.split('\n').map((t) => t.trim()).filter(Boolean) })}
+          />
+          <div className="hint">One clause per line. These print on the order form the client signs.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * The wording of the quote email.
  *
  * It is GD's letter, not the app's, so he writes it once here and every quote
@@ -218,6 +299,7 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
         <div className="stepper" style={{ marginBottom: 20 }}>
           <button className={`step-tab ${tab === 'ai' ? 'active' : ''}`} onClick={() => setTab('ai')}>AI rendering</button>
           <button className={`step-tab ${tab === 'prices' ? 'active' : ''}`} onClick={() => setTab('prices')}>Price list</button>
+          <button className={`step-tab ${tab === 'business' ? 'active' : ''}`} onClick={() => setTab('business')}>Your business</button>
           <button className={`step-tab ${tab === 'updates' ? 'active' : ''}`} onClick={() => setTab('updates')}>
             Updates{update?.updateAvailable ? ' •' : ''}
           </button>
@@ -299,9 +381,15 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
           </div>
         )}
 
+        {tab === 'business' && (
+          <>
+            <BusinessDetails />
+            <QuoteEmail />
+          </>
+        )}
+
         {tab === 'prices' && (
           <div className="card">
-          <QuoteEmail />
 
             <div className="card-head">
               <h3>Price list</h3>
