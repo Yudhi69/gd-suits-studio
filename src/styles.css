@@ -363,6 +363,19 @@ button, input, select, textarea { font: inherit; color: inherit; }
   background: var(--selected-bg);
   box-shadow: 0 0 0 3px rgba(201,162,39,.14);
 }
+/* Lapel drawings on the option tiles.
+   They are drawn in currentColor, so they take the tile's own ink and follow
+   the theme without a second set of colours to keep in step. */
+.sketch {
+  display: block; width: 100%; max-width: 88px; height: auto; margin: 2px auto 8px;
+  fill: none; stroke: currentColor; stroke-width: 2.2;
+  stroke-linejoin: round; stroke-linecap: round;
+  color: var(--text-soft);
+}
+.option.selected .sketch { color: var(--gold-deep); }
+.sketch-lapel { fill: currentColor; fill-opacity: .15; }
+.sketch-collar { fill: currentColor; fill-opacity: .32; }
+
 .option-label { font-weight: 600; font-size: 13.5px; padding-right: 46px; }
 .option-desc { font-size: 12px; color: var(--text-faint); margin-top: 2px; padding-right: 46px; }
 .option-price {

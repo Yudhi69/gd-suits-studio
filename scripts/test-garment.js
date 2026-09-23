@@ -85,6 +85,54 @@ app.whenReady().then(async () => {
   check(j.indexOf('Button Finish') < j.indexOf('Pockets'), 'the button finish sits with the buttons, above the pockets', j);
   check(/Other Colour/.test(ui.Jacket.options.join(' | ')), 'and its last option is "other colour"');
 
+  log('\n=== the lapel drawings ===');
+  setSpec({ suitType: 'two_piece' });
+  await open();
+  const drawn = JSON.parse(await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    [...document.querySelectorAll('.step-tab')].find(t => t.textContent.includes('Jacket')).click();
+    await wait(700);
+    const fieldNamed = (name) => [...document.querySelectorAll('.field')]
+      .find(f => f.querySelector('label')?.textContent.trim() === name);
+    const tiles = (name) => [...(fieldNamed(name)?.querySelectorAll('.option') ?? [])]
+      .map(t => ({
+        label: t.querySelector('.option-label')?.textContent.trim(),
+        svg: t.querySelector('svg.sketch')?.outerHTML ?? null,
+      }));
+    const lapel = tiles('Lapel'), width = tiles('Lapel Width'), fit = tiles('Fit');
+    // Click the drawing itself, not the tile around it: an SVG inside a
+    // button is exactly the thing that swallows the click.
+    const notch = [...document.querySelectorAll('.option')]
+      .find(t => t.querySelector('.option-label')?.textContent.trim() === 'Notch');
+    const inside = notch?.querySelector('svg.sketch') ?? null;
+    inside?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await wait(700);
+    return JSON.stringify({
+      lapel, width, insideTheTile: !!inside,
+      fitHasNone: fit.every(t => t.svg === null),
+      chosen: [...document.querySelectorAll('.option.selected .option-label')].map(e => e.textContent.trim()),
+    });
+  })()`));
+  check(drawn.lapel.length >= 3 && drawn.lapel.slice(0, 3).every((t) => t.svg),
+    'notch, peak and shawl are each drawn', JSON.stringify(drawn.lapel.map((t) => [t.label, !!t.svg])));
+  check(drawn.width.filter((t) => t.svg).length === 4,
+    'and each of the four widths', JSON.stringify(drawn.width.map((t) => [t.label, !!t.svg])));
+  check(drawn.width.find((t) => t.label === 'Custom')?.svg === null,
+    'while "custom" - which has no shape to draw - has none');
+  check(drawn.fitHasNone, 'and a field with nothing to draw carries no empty frame');
+  check(drawn.insideTheTile && drawn.chosen.includes('Notch'),
+    'clicking the drawing itself chooses the lapel', JSON.stringify(drawn));
+
+  // The three shapes have to differ, or they are decoration. Comparing the
+  // markup catches the mistake of wiring the same drawing to all three.
+  const shapes = drawn.lapel.slice(0, 3).map((t) => t.svg);
+  check(new Set(shapes).size === 3, 'the three lapels are three different drawings');
+  check(new Set(drawn.width.filter((t) => t.svg).map((t) => t.svg)).size === 4, 'and the four widths, four');
+  check(shapes.every((svg) => !/#[0-9a-f]{3,6}|rgb\(/i.test(svg)),
+    'no drawing names a colour of its own, so all of them follow the theme');
+  check(/notch/i.test(db.getProject(projectId).spec.lapel ?? ''), 'and the choice reached the order', 
+    JSON.stringify(db.getProject(projectId).spec.lapel));
+
   log('\n=== a waistcoat counts its buttons by how it fastens ===');
   setSpec({ suitType: 'three_piece', wcBreast: 'single' });
   await open();
