@@ -119,6 +119,31 @@ app.whenReady().then(async () => {
   check(chests.find((m) => m.suit_id === groomSuitNow.id)?.value === 104, "the groom keeps his 104");
   check(chests.find((m) => m.suit_id === thaboSuitNow.id)?.value === 92, 'and the groomsman his 92');
 
+  log('\n=== a photograph belongs to the man in it ===');
+  // Re-shooting a slot replaces the photograph in it. Scoped to the order
+  // rather than the person, photographing the best man would have deleted the
+  // groom's front shot with no error and no undo.
+  const tinyPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const groomSuitP = db.listSuits(projectId).find((x) => x.client_id === groomId);
+  const thaboSuitP = db.listSuits(projectId).find((x) => x.client_id === added.data.clientId);
+  await call('photos.add', { projectId, clientId: groomId, suitId: groomSuitP.id, slot: 'front', dataUrl: tinyPng });
+  await call('photos.add', { projectId, clientId: added.data.clientId, suitId: thaboSuitP.id, slot: 'front', dataUrl: tinyPng });
+  const fronts = db.getProject(projectId).photos.filter((p) => p.slot === 'front' && !p.fitting_id);
+  check(fronts.length === 2, 'both men keep their front shot', `${fronts.length} kept`);
+  check(fronts.some((p) => p.client_id === groomId) && fronts.some((p) => p.client_id === added.data.clientId),
+    'one each, filed under the man it is of');
+
+  // Re-shooting the groom replaces only his.
+  await call('photos.add', { projectId, clientId: groomId, suitId: groomSuitP.id, slot: 'front', dataUrl: tinyPng });
+  const afterReshoot = db.getProject(projectId).photos.filter((p) => p.slot === 'front' && !p.fitting_id);
+  check(afterReshoot.length === 2, 're-shooting one man replaces only his', `${afterReshoot.length} kept`);
+
+  // A swatch is the suit's, not the person's.
+  await call('photos.add', { projectId, clientId: groomId, suitId: groomSuitP.id, slot: 'fabric', dataUrl: tinyPng });
+  await call('photos.add', { projectId, clientId: added.data.clientId, suitId: thaboSuitP.id, slot: 'fabric', dataUrl: tinyPng });
+  const swatches = db.getProject(projectId).photos.filter((p) => p.slot === 'fabric');
+  check(swatches.length === 2, 'each suit keeps its own cloth swatch', `${swatches.length} kept`);
+
   log('\n=== the interface stays out of the way ===');
   win.webContents.reload(); await wait(2200);
   const ui = JSON.parse(await js(`(async () => {

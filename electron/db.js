@@ -586,6 +586,23 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_measurements_suit ON measurements(suit_id);
     `);
   },
+  // v15 - a photograph says whose it is.
+  //
+  // v13 stamped the photographs that existed then, but anything taken between
+  // that migration and the capture page learning about people carries neither
+  // a person nor a suit. On a single-person order a strict filter would then
+  // show an empty capture page with the photographs still sitting on disk.
+  (d) => {
+    d.exec(`
+      UPDATE photos
+         SET suit_id = (SELECT id FROM suits WHERE suits.project_id = photos.project_id ORDER BY position, id LIMIT 1)
+       WHERE suit_id IS NULL;
+
+      UPDATE photos
+         SET client_id = (SELECT client_id FROM projects WHERE projects.id = photos.project_id)
+       WHERE client_id IS NULL;
+    `);
+  },
 ];
 
 function open(userDataPath) {
@@ -783,6 +800,20 @@ function updateSuit(id, patch) {
 
 function removeSuit(id) {
   get().prepare('DELETE FROM suits WHERE id = ?').run(id);
+}
+
+/**
+ * Who a photograph belongs to when the caller did not say. Every photograph
+ * has an owner; one that has neither a person nor a suit would sit on disk
+ * and never appear on any page.
+ */
+function defaultPhotoOwner(projectId) {
+  const suit = get()
+    .prepare('SELECT id, client_id FROM suits WHERE project_id = ? ORDER BY position, id LIMIT 1')
+    .get(projectId);
+  if (suit) return { suitId: suit.id, clientId: suit.client_id };
+  const project = get().prepare('SELECT client_id FROM projects WHERE id = ?').get(projectId);
+  return { suitId: null, clientId: project?.client_id ?? null };
 }
 
 /** The suit an order is about when nothing says otherwise - the first one. */
@@ -993,19 +1024,36 @@ function deleteProject(id) {
 
 /* ----------------------------------------------------------------- photos */
 
-function addPhoto({ projectId, slot, filename, mime, garment, fittingId, meta }) {
+function addPhoto({ projectId, clientId, suitId, slot, filename, mime, garment, fittingId, meta }) {
   const d = get();
-  // Capture slots hold one current photo each; re-shooting replaces the old row.
-  if (!fittingId && ['front', 'side', 'back', 'face', 'fabric', 'lining'].includes(slot)) {
-    d.prepare('DELETE FROM photos WHERE project_id = ? AND slot = ? AND fitting_id IS NULL').run(projectId, slot);
+
+  // A capture slot holds one current photograph, and re-shooting replaces it.
+  // Whose slot, though: a front shot belongs to the person, and a fabric
+  // swatch to the suit. Scoped to the order alone, photographing the best man
+  // would have deleted the groom's front shot without a word.
+  const SUBJECT = ['front', 'side', 'back', 'face'];
+  const SWATCH = ['fabric', 'lining'];
+  if (!fittingId && [...SUBJECT, ...SWATCH].includes(slot)) {
+    if (SUBJECT.includes(slot) && clientId) {
+      d.prepare('DELETE FROM photos WHERE project_id = ? AND slot = ? AND fitting_id IS NULL AND client_id = ?')
+        .run(projectId, slot, clientId);
+    } else if (SWATCH.includes(slot) && suitId) {
+      d.prepare('DELETE FROM photos WHERE project_id = ? AND slot = ? AND fitting_id IS NULL AND suit_id = ?')
+        .run(projectId, slot, suitId);
+    } else {
+      d.prepare('DELETE FROM photos WHERE project_id = ? AND slot = ? AND fitting_id IS NULL').run(projectId, slot);
+    }
   }
+
   const info = d
     .prepare(
-      `INSERT INTO photos (project_id, fitting_id, slot, garment, filename, mime, meta_json)
-       VALUES (@projectId, @fittingId, @slot, @garment, @filename, @mime, @meta)`
+      `INSERT INTO photos (project_id, client_id, suit_id, fitting_id, slot, garment, filename, mime, meta_json)
+       VALUES (@projectId, @clientId, @suitId, @fittingId, @slot, @garment, @filename, @mime, @meta)`
     )
     .run({
       projectId,
+      clientId: clientId ?? null,
+      suitId: suitId ?? null,
       fittingId: fittingId ?? null,
       slot,
       garment: garment ?? '',
@@ -1666,7 +1714,7 @@ module.exports = {
   addAlteration, updateAlteration, deleteAlteration,
   addOrderExtra, updateOrderExtra, deleteOrderExtra,
   listMembers, addMember, updateMember, removeMember,
-  listSuits, addSuit, updateSuit, removeSuit, primarySuitId,
+  listSuits, addSuit, updateSuit, removeSuit, primarySuitId, defaultPhotoOwner,
   analytics,
   tx,
   nextOrderRef, assignOrderRefs, stampImport, isRenderFile,

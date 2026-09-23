@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 
 /**
@@ -12,6 +12,7 @@ export function useProject(projectId) {
   // Which suit the garment pages are editing. Null means the order's first,
   // which is the only one on a single-person order.
   const [activeSuitId, setActiveSuitId] = useState(null);
+  const activeSuitRef = useRef(null);
   const [references, setReferences] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -74,7 +75,15 @@ export function useProject(projectId) {
 
   const savePhoto = useCallback(
     async ({ slot, dataUrl, meta, garment, fittingId }) => {
-      await api.photos.add({ projectId, slot, dataUrl, meta, garment, fittingId });
+      // A photograph of the client belongs to the person; a swatch belongs to
+      // the suit it is cut from. Both are taken from whichever suit is being
+      // worked on, which on an order of one is the only one there is.
+      await api.photos.add({
+        projectId,
+        clientId: activeSuitRef.current?.client_id,
+        suitId: activeSuitRef.current?.id,
+        slot, dataUrl, meta, garment, fittingId,
+      });
       await reload();
     },
     [projectId, reload]
@@ -107,6 +116,9 @@ export function useProject(projectId) {
   /** Measurements are written to the order and to the client's running body record. */
   const suits = project?.suits ?? [];
   const activeSuit = suits.find((s) => s.id === activeSuitId) ?? suits[0] ?? null;
+  // savePhoto is defined above this point, so it reaches the current selection
+  // through a ref rather than closing over a stale one.
+  activeSuitRef.current = activeSuit;
 
   const saveMeasurement = useCallback(
     async (garment, fieldId, value) => {
@@ -127,9 +139,20 @@ export function useProject(projectId) {
     setReferences(await api.references.list({ clientId: project.client_id }));
   }, [project?.client_id]);
 
+  // Subject shots are the person's, swatches are the suit's. On an order of
+  // one both resolve to the same single owner, so this reads as it always did.
+  const SUBJECT_SLOTS = ['front', 'side', 'back', 'face'];
   const photoBySlot = useCallback(
-    (slot) => project?.photos?.find((p) => p.slot === slot && !p.fitting_id) ?? null,
-    [project]
+    (slot) => {
+      const photos = project?.photos ?? [];
+      const mine = photos.filter((p) => p.slot === slot && !p.fitting_id);
+      if (!activeSuit) return mine[0] ?? null;
+      const owned = SUBJECT_SLOTS.includes(slot)
+        ? mine.filter((p) => p.client_id === activeSuit.client_id)
+        : mine.filter((p) => p.suit_id === activeSuit.id);
+      return owned[0] ?? null;
+    },
+    [project, activeSuit]
   );
 
   return {

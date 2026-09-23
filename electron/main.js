@@ -339,12 +339,17 @@ handle('projects:delete', ({ id }) => {
 });
 
 /* photos */
-handle('photos:add', ({ projectId, slot, dataUrl, garment, fittingId, meta }) => {
+handle('photos:add', ({ projectId, clientId, suitId, slot, dataUrl, garment, fittingId, meta }) => {
   const pid = v.id(projectId, 'projectId');
   const scope = storage.scopeForProject(pid);
   const saved = storage.saveDataUrl(scope, v.dataUrl(dataUrl), v.oneOf(slot, v.PHOTO_SLOTS, 'slot'));
+  // A caller that does not name an owner gets the order's first suit and the
+  // person it is for, which on an order of one is the only answer there is.
+  const fallback = db.defaultPhotoOwner(pid);
   const id = db.addPhoto({
     projectId: pid,
+    clientId: v.optionalId(clientId, 'clientId') ?? fallback.clientId,
+    suitId: v.optionalId(suitId, 'suitId') ?? fallback.suitId,
     slot: v.oneOf(slot, v.PHOTO_SLOTS, 'slot'),
     filename: saved.filename,
     mime: saved.mime,
