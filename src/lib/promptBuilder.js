@@ -1,4 +1,4 @@
-import { STEPS, isVisible } from './catalog.js';
+import { STEPS, isVisible, valueOf } from './catalog.js';
 import { nameColour } from './colour.js';
 
 export const VIEWS = [
@@ -46,7 +46,7 @@ export function describeGarment(spec = {}, steps = STEPS) {
 
     for (const field of step.fields) {
       if (!isVisible(field, spec)) continue;
-      const value = spec[field.id];
+      const value = valueOf(field, spec);
       if (value === undefined || value === null || value === '' || value === false) continue;
 
       if (typeof field.prompt === 'function') {
@@ -128,9 +128,14 @@ export function buildRenderPrompt({ spec = {}, client = {}, analysis = {}, view 
 
   parts.push(`Garment specification - every detail is mandatory and must be visible and correct:\n- ${clauses.join('\n- ')}`);
 
-  if (spec.liningMode === 'colour' && spec.liningColour) {
+  // Read through the catalogue rather than off the spec: a colour left at its
+  // default is still the colour on screen, and saying nothing about the lining
+  // was how a chosen lining never reached the render at all.
+  const liningField = steps.flatMap((s) => s.fields).find((f) => f.id === 'liningColour');
+  const lining = liningField ? valueOf(liningField, spec) : spec.liningColour;
+  if (spec.liningMode === 'colour' && lining) {
     parts.push(
-      `Lining colour is ${nameColour(spec.liningColour)} (${spec.liningColour}); show a glimpse of it only if the jacket naturally opens.`
+      `Lining colour is ${nameColour(lining)} (${lining}); show a glimpse of it only if the jacket naturally opens.`
     );
   }
 
@@ -170,7 +175,7 @@ export function buildSpecSheet(spec = {}, steps = STEPS) {
     const rows = [];
     for (const field of step.fields) {
       if (!isVisible(field, spec)) continue;
-      const value = spec[field.id];
+      const value = valueOf(field, spec);
       if (value === undefined || value === null || value === '' || value === false) continue;
       let display;
       if (field.type === 'choice') display = field.options?.find((o) => o.key === value)?.label ?? String(value);

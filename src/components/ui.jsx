@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 
 /* ---------------------------------------------------------------- toasts */
 
@@ -182,6 +182,17 @@ export function DebouncedInput({ value, onCommit, as = 'input', ...rest }) {
   const commit = () => {
     if ((local ?? '') !== (value ?? '')) onCommit(local);
   };
+
+  // Blur is the usual way out of a field, but not the only one: switching
+  // suits or steps can take the input off the page while it still holds
+  // something typed. Anything pending is written on the way out, through a
+  // ref so the cleanup sees the last keystroke rather than the first render.
+  const pending = useRef({ local, value, onCommit });
+  pending.current = { local, value, onCommit };
+  useEffect(() => () => {
+    const { local: l, value: v, onCommit: commitFn } = pending.current;
+    if ((l ?? '') !== (v ?? '')) commitFn(l);
+  }, []);
 
   const Tag = as;
   return (
