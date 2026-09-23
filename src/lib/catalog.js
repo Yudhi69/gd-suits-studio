@@ -89,7 +89,16 @@ export const STEPS = [
           { key: 'slim', label: 'Slim', desc: 'Close to the body', price: 0 },
           { key: 'medium', label: 'Standard', desc: 'In between', price: 0 },
           { key: 'loose', label: 'Loose', desc: 'Relaxed drape', price: 0 },
+          { key: 'oversized', label: 'Oversized', desc: 'Deliberately large', price: 0 },
+          { key: 'other', label: 'Other', desc: 'Describe below', price: 0 },
         ],
+      },
+      {
+        id: 'jacketFitOther',
+        label: 'Describe the fit',
+        type: 'text',
+        showIf: (s) => s.jacketFit === 'other',
+        prompt: (v) => `fit: ${v}`,
       },
       {
         id: 'lapel',
@@ -109,13 +118,14 @@ export const STEPS = [
         type: 'choice',
         required: true,
         prompt: (v, spec) => {
-          const inches = { standard: '2.5', wide: '3.5', slim: '2' }[v] ?? spec.lapelWidthCustom ?? '3';
+          const inches = { slim: '2', standard: '2.5', wide: '3.5', extra_wide: '4' }[v] ?? spec.lapelWidthCustom ?? '3';
           return `lapels ${inches} inches wide`;
         },
         options: [
+          { key: 'slim', label: 'Slim', desc: '2 inch', price: 0 },
           { key: 'standard', label: 'Standard', desc: '2.5 inch', price: 0 },
           { key: 'wide', label: 'Wide', desc: '3.5 inch', price: 0 },
-          { key: 'slim', label: 'Slim', desc: '2 inch', price: 0 },
+          { key: 'extra_wide', label: 'Extra Wide', desc: '4 inch', price: 0 },
           { key: 'custom', label: 'Custom', desc: 'Specify below', price: 200 },
         ],
       },
@@ -133,11 +143,22 @@ export const STEPS = [
         label: 'Tuxedo Finish',
         type: 'choice',
         required: true,
-        prompt: (v) => (v === 'satin' ? 'satin-faced tuxedo lapels and satin buttons' : 'a plain self-faced lapel, no satin'),
+        prompt: (v, spec) =>
+          v === 'satin'
+            ? `satin-faced tuxedo lapels and satin buttons${spec.tuxedoColour ? ` in ${spec.tuxedoColour}` : ''}`
+            : 'a plain self-faced lapel, no satin',
         options: [
-          { key: 'plain', label: 'No - Plain', desc: 'Self-faced lapel', price: 0 },
-          { key: 'satin', label: 'Yes - Satin', desc: 'Satin facings', price: 650 },
+          { key: 'plain', label: 'No', desc: 'Self-faced lapel', price: 0 },
+          { key: 'satin', label: 'Yes', desc: 'Satin facings', price: 650 },
         ],
+      },
+      {
+        id: 'tuxedoColour',
+        label: 'Tuxedo Finish Colour',
+        type: 'colour',
+        showIf: (s) => s.tuxedoFinish === 'satin',
+        default: '#111111',
+        prompt: () => null, // named in the tuxedo clause above
       },
       {
         id: 'breast',
@@ -178,30 +199,6 @@ export const STEPS = [
         ],
       },
       {
-        id: 'pockets',
-        label: 'Pockets',
-        type: 'choice',
-        required: true,
-        prompt: (v) => `${v} pockets`,
-        options: [
-          { key: 'flap', label: 'Flap', desc: 'Standard', price: 0 },
-          { key: 'patch', label: 'Patch', desc: 'Softer, casual', price: 150 },
-          { key: 'slanted', label: 'Slanted', desc: 'Hacking pockets', price: 200 },
-        ],
-      },
-      {
-        id: 'vents',
-        label: 'Vents (slits)',
-        type: 'choice',
-        required: true,
-        prompt: (v) => (v === 'none' ? 'no vents' : `${v} vent${v === 'double' ? 's' : ''}`),
-        options: [
-          { key: 'single', label: 'Single', price: 0 },
-          { key: 'double', label: 'Double', desc: 'Side vents', price: 120 },
-          { key: 'none', label: 'None', desc: 'Clean back', price: 0 },
-        ],
-      },
-      {
         id: 'buttonColour',
         label: 'Button Finish',
         type: 'choice',
@@ -214,7 +211,7 @@ export const STEPS = [
           { key: 'neutral', label: 'Neutral', desc: 'Matched to the cloth', price: 0 },
           { key: 'gold', label: 'Gold', price: 180 },
           { key: 'silver', label: 'Silver', price: 180 },
-          { key: 'custom', label: 'Custom Colour', desc: 'Pick below', price: 240 },
+          { key: 'custom', label: 'Other Colour', desc: 'Pick below', price: 240 },
         ],
       },
       {
@@ -224,6 +221,37 @@ export const STEPS = [
         showIf: (s) => s.buttonColour === 'custom',
         default: '#c9a227',
         prompt: () => null, // already named by the finish clause above
+      },
+      {
+        id: 'pockets',
+        label: 'Pockets',
+        type: 'choice',
+        required: true,
+        prompt: (v) => `${v} pockets`,
+        options: [
+          { key: 'flap', label: 'Flap', desc: 'Standard', price: 0 },
+          { key: 'patch', label: 'Patch', desc: 'Softer, casual', price: 150 },
+          { key: 'slanted', label: 'Slanted', desc: 'Hacking pockets', price: 200 },
+        ],
+      },
+      {
+        id: 'thirdPocket',
+        label: 'Third Pocket',
+        type: 'toggle',
+        price: 140,
+        prompt: () => 'a third ticket pocket above the right hip pocket',
+      },
+      {
+        id: 'vents',
+        label: 'Vents (slits)',
+        type: 'choice',
+        required: true,
+        prompt: (v) => (v === 'none' ? 'no vents' : `${v} vent${v === 'double' ? 's' : ''}`),
+        options: [
+          { key: 'none', label: 'None', desc: 'Clean back', price: 0 },
+          { key: 'single', label: 'Single', price: 0 },
+          { key: 'double', label: 'Double', desc: 'Side vents', price: 120 },
+        ],
       },
     ],
   },

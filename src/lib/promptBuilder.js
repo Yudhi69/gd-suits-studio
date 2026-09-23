@@ -58,6 +58,9 @@ export function describeGarment(spec = {}, steps = STEPS) {
       if (field.type === 'choice') {
         const opt = field.options?.find((o) => o.key === value);
         if (opt) clauses.push(`${field.label.toLowerCase()}: ${opt.label.toLowerCase()}`);
+      } else if (field.type === 'multi') {
+        const picked = (field.options ?? []).filter((o) => Array.isArray(value) && value.includes(o.key));
+        if (picked.length) clauses.push(`${field.label.toLowerCase()}: ${picked.map((o) => o.label.toLowerCase()).join(', ')}`);
       } else if (field.type === 'toggle') {
         clauses.push(field.label.toLowerCase());
       } else if (field.type === 'colour') {
@@ -171,7 +174,12 @@ export function buildSpecSheet(spec = {}, steps = STEPS) {
       if (value === undefined || value === null || value === '' || value === false) continue;
       let display;
       if (field.type === 'choice') display = field.options?.find((o) => o.key === value)?.label ?? String(value);
-      else if (field.type === 'toggle') display = 'Yes';
+      else if (field.type === 'multi') {
+        // An empty multi-select is nothing chosen, not a blank row on the sheet.
+        const picked = (field.options ?? []).filter((o) => Array.isArray(value) && value.includes(o.key));
+        if (!picked.length) continue;
+        display = picked.map((o) => o.label).join(', ');
+      } else if (field.type === 'toggle') display = 'Yes';
       else display = String(value);
       rows.push({ label: field.label, value: display });
     }

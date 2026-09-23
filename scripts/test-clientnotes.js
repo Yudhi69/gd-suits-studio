@@ -69,7 +69,8 @@ app.whenReady().then(async () => {
   })()`));
 
   check(ui.jacket.labels.includes('Button Finish'), 'the jacket has a button finish choice', ui.jacket.labels.join(' | '));
-  check(['Neutral','Gold','Silver','Custom Colour'].every(o => ui.jacket.options.some(t => t.includes(o))), 'with neutral, gold, silver and custom');
+  check(['Neutral','Gold','Silver','Other Colour'].every(o => ui.jacket.options.some(t => t.includes(o))),
+    'with neutral, gold, silver and other - GD calls the last one other, not custom');
   check(!ui.jacket.labels.includes('Sleeve Buttons'), 'sleeve buttons are gone');
   check(ui.pants.labels.includes('Bottom Finish'), 'pants have a bottom finish', ui.pants.labels.join(' | '));
   check(['Straight Cut','Tapered Finish','Slim Fit'].every(o => ui.pants.options.some(t => t.includes(o))), 'with straight, tapered and slim');
