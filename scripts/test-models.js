@@ -1,6 +1,5 @@
 const { app, BrowserWindow } = require('electron');
-const path = require('path');
-app.setPath('userData', path.resolve(process.env.DATA_DIR));
+require('./fresh.js').freshUserData(app);
 
 // Stub Google's model list so the picker can be exercised without a key.
 const realFetch = global.fetch;

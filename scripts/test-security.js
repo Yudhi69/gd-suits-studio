@@ -1,6 +1,5 @@
 const { app, BrowserWindow } = require('electron');
-const path = require('path');
-app.setPath('userData', require('path').resolve(process.env.DATA_DIR));
+require('./fresh.js').freshUserData(app);
 
 require('../electron/main.js');
 

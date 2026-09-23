@@ -6,8 +6,7 @@
  * figures are checked here too, not just the form.
  */
 const { app, BrowserWindow } = require('electron');
-const path = require('path');
-app.setPath('userData', path.resolve(process.env.DATA_DIR));
+require('./fresh.js').freshUserData(app);
 require('../electron/main.js');
 const db = require('../electron/db.js');
 

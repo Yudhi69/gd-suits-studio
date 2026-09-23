@@ -1,5 +1,8 @@
 'use strict';
 
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const { app } = require('electron');
 
 /**
@@ -12,6 +15,12 @@ const { app } = require('electron');
  * simply fail on macOS. Handing the download to the browser instead means the
  * tailor sees what they are installing, which is the right default for an app
  * that cannot yet prove its own provenance.
+ *
+ * The app will, on request, fetch the file - that is a download, not an
+ * install. It is written to disk with no executable bit and shown in the
+ * file manager; opening it is the tailor's decision, taken in the operating
+ * system's own dialogs, where an unsigned app is named as such. Nothing this
+ * app downloads is ever run by this app.
  *
  * Once a Developer ID exists, `electron-updater` can be dropped in behind the
  * same button; the feed shape below is already what it expects.
@@ -141,6 +150,8 @@ function normalise(feedUrl, payload) {
       pageUrl: release.html_url ?? '',
       downloadUrl: asset?.browser_download_url ?? release.html_url ?? '',
       downloadName: asset?.name ?? '',
+      downloadSize: Number(asset?.size) || 0,
+      downloadDigest: String(asset?.digest ?? ''),
       publishedAt: release.published_at ?? '',
       prerelease: !!release.prerelease,
     };
@@ -153,8 +164,145 @@ function normalise(feedUrl, payload) {
     pageUrl: payload.url ?? '',
     downloadUrl: asset?.url ?? payload.url ?? '',
     downloadName: asset?.name ?? '',
+    downloadSize: Number(asset?.size) || 0,
+    downloadDigest: String(asset?.digest ?? ''),
     publishedAt: payload.publishedAt ?? '',
     prerelease: false,
+  };
+}
+
+/**
+ * Whether a download address may be fetched, given the feed that named it.
+ *
+ * The feed is a setting, so a wrong or hostile one could name a file anywhere.
+ * The rule is that a download comes from where its feed comes from: the same
+ * host, or - because GitHub serves the JSON from one host and the file from
+ * another - GitHub's own release hosts when the feed is GitHub's API. Always
+ * https, so the file cannot be swapped in transit.
+ */
+function allowedDownload(feedUrl, downloadUrl) {
+  let feed, file;
+  try {
+    feed = new URL(feedUrl);
+    file = new URL(downloadUrl);
+  } catch {
+    return false;
+  }
+  if (file.protocol !== 'https:' || feed.protocol !== 'https:') return false;
+  if (file.host === feed.host) return true;
+  const github = feed.host === 'api.github.com' || feed.host === 'github.com';
+  return github && (file.host === 'github.com' || file.host.endsWith('.githubusercontent.com'));
+}
+
+/**
+ * The name the file may be saved under.
+ *
+ * Taken apart and rebuilt rather than trusted: only the last path segment,
+ * only characters that name a file, and only the handful of extensions an
+ * installer actually has. A feed cannot use this to write `.command` into
+ * anyone's Downloads folder, nor to write outside it at all.
+ */
+const INSTALLER_EXTENSIONS = ['.dmg', '.exe', '.zip', '.appimage', '.deb'];
+function safeAssetName(name, fallback = 'GD-Suits-Studio-update') {
+  const base = String(name ?? '').split(/[\\/]/).pop().trim();
+  const ext = INSTALLER_EXTENSIONS.find((e) => base.toLowerCase().endsWith(e));
+  if (!ext) return null;
+  const stem = base.slice(0, -ext.length).replace(/[^\w .()+-]/g, '-').replace(/^[-.\s]+/, '').slice(0, 100);
+  return `${stem || fallback}${ext}`;
+}
+
+/** Room for an installer, and no room for anything pretending to be one. */
+const MAX_DOWNLOAD_BYTES = 600 * 1024 * 1024;
+
+/**
+ * Fetches a release file to `dir` and returns where it landed.
+ *
+ * It is written to a `.part` file and only given its real name once it is
+ * whole, so a download cut halfway through cannot be mistaken for an
+ * installer. The bytes are hashed as they arrive: when the feed states a
+ * digest the file must match it, and when it states a size the file must be
+ * exactly that long. Mode 0o644 - readable, writable, and not executable.
+ */
+async function download({ feedUrl, url, name, size = 0, digest = '', token, dir, onProgress, signal }) {
+  if (!allowedDownload(feedUrl, url)) {
+    throw new UpdateError('That download does not come from the same place as the update feed.', 'bad_host');
+  }
+  const filename = safeAssetName(name || new URL(url).pathname);
+  if (!filename) throw new UpdateError('That release file is not an installer this app will save.', 'bad_asset');
+  if (size > MAX_DOWNLOAD_BYTES) throw new UpdateError('That download is too large to be an installer.', 'too_large');
+
+  const headers = { accept: 'application/octet-stream', 'user-agent': 'GD-Suits-Studio' };
+  if (token) headers.authorization = `Bearer ${token}`;
+
+  let res;
+  try {
+    res = await fetch(url, { headers, signal, redirect: 'follow' });
+  } catch (err) {
+    if (err?.name === 'AbortError') throw new UpdateError('The download was stopped.', 'cancelled');
+    throw new UpdateError('Could not reach the download. Check the internet connection.', 'offline');
+  }
+  // Redirects are followed, so where it ended up is checked as well as where
+  // it was asked to go.
+  if (!allowedDownload(feedUrl, res.url || url)) {
+    throw new UpdateError('That download was redirected somewhere it should not be.', 'bad_host');
+  }
+  if (res.status === 401 || res.status === 403) {
+    throw new UpdateError('The download was refused - the access token may be missing or expired.', 'forbidden');
+  }
+  if (!res.ok || !res.body) throw new UpdateError(`The download returned HTTP ${res.status}.`, 'http');
+
+  const stated = Number(res.headers.get('content-length')) || size;
+  if (stated > MAX_DOWNLOAD_BYTES) throw new UpdateError('That download is too large to be an installer.', 'too_large');
+
+  fs.mkdirSync(dir, { recursive: true });
+  const part = path.join(dir, `${filename}.part`);
+  const handle = fs.openSync(part, 'w', 0o644);
+  const hash = crypto.createHash('sha256');
+  let written = 0, lastReport = 0;
+  try {
+    for await (const chunk of res.body) {
+      written += chunk.length;
+      if (written > MAX_DOWNLOAD_BYTES) throw new UpdateError('That download is too large to be an installer.', 'too_large');
+      hash.update(chunk);
+      fs.writeSync(handle, chunk);
+      const now = Date.now();
+      if (onProgress && now - lastReport > 200) {
+        lastReport = now;
+        onProgress({ bytes: written, total: stated, name: filename });
+      }
+    }
+  } catch (err) {
+    fs.closeSync(handle);
+    fs.rmSync(part, { force: true });
+    if (err instanceof UpdateError) throw err;
+    if (err?.name === 'AbortError') throw new UpdateError('The download was stopped.', 'cancelled');
+    throw new UpdateError('The download did not finish.', 'incomplete');
+  }
+  fs.closeSync(handle);
+
+  const sha256 = hash.digest('hex');
+  const expected = /^sha256:([0-9a-f]{64})$/i.exec(digest)?.[1]?.toLowerCase();
+  const fail = (message, code) => { fs.rmSync(part, { force: true }); throw new UpdateError(message, code); };
+  if (size && written !== size) fail('The download did not arrive whole - it is not the size the release says it is.', 'size_mismatch');
+  if (!size && stated && written !== stated) fail('The download did not arrive whole.', 'incomplete');
+  if (expected && sha256 !== expected) fail('The download does not match the release - it has been altered.', 'digest_mismatch');
+
+  // A second copy is given a name of its own rather than overwriting the first.
+  let final = path.join(dir, filename);
+  for (let n = 2; fs.existsSync(final); n++) {
+    const ext = path.extname(filename);
+    final = path.join(dir, `${path.basename(filename, ext)} (${n})${ext}`);
+  }
+  fs.renameSync(part, final);
+  fs.chmodSync(final, 0o644);
+  if (onProgress) onProgress({ bytes: written, total: written, name: path.basename(final) });
+
+  return {
+    path: final,
+    name: path.basename(final),
+    bytes: written,
+    sha256,
+    verified: expected ? 'digest' : size ? 'size' : 'none',
   };
 }
 
@@ -169,11 +317,16 @@ async function check({ feedUrl, token }) {
     current,
     ...release,
     updateAvailable: compareVersions(release.version, current) > 0,
-    // macOS refuses to swap out a bundle that is not properly signed, so the
-    // download is handed to the browser rather than applied in place.
+    // The file can be fetched, but never applied: macOS refuses to swap out a
+    // bundle that is not properly signed, and this app does not run what it
+    // downloads. Installing stays a decision the tailor makes in Finder.
+    canDownload: !!release.downloadUrl && allowedDownload(feedUrl, release.downloadUrl),
     canSelfInstall: false,
     checkedAt: new Date().toISOString(),
   };
 }
 
-module.exports = { check, compareVersions, pickAsset, currentVersion, UpdateError };
+module.exports = {
+  check, download, compareVersions, pickAsset, currentVersion,
+  allowedDownload, safeAssetName, UpdateError,
+};

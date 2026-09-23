@@ -12,7 +12,7 @@ const { app, BrowserWindow, dialog, nativeImage } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-app.setPath('userData', path.resolve(process.env.DATA_DIR));
+require('./fresh.js').freshUserData(app);
 
 // The save dialog is the tailor's choice of destination. Here it is scripted,
 // and every call is recorded so a refused request can be shown never to reach it.
