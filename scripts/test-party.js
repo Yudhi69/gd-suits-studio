@@ -107,6 +107,55 @@ app.whenReady().then(async () => {
   const a = db.analytics();
   check(a.totals.orders >= 1 && Number.isFinite(a.totals.quoted), 'the dashboard still adds up', JSON.stringify(a.totals).slice(0, 60));
 
+  log('\n=== measurements belong to the man being measured ===');
+  // Before this they were keyed to the order, so the second man's chest
+  // overwrote the first's and two grooms ended up with identical shoulders.
+  const groomSuitNow = db.listSuits(projectId).find((x) => x.client_id === groomId);
+  const thaboSuitNow = db.listSuits(projectId).find((x) => x.client_id === added.data.clientId);
+  db.saveMeasurement({ projectId, suitId: groomSuitNow.id, garment: 'jacket', fieldId: 'chest', value: 104 });
+  db.saveMeasurement({ projectId, suitId: thaboSuitNow.id, garment: 'jacket', fieldId: 'chest', value: 92 });
+  const chests = db.getProject(projectId).measurements.filter((m) => m.field_id === 'chest');
+  check(chests.length === 2, 'two men, two chest measurements', `${chests.length} stored`);
+  check(chests.find((m) => m.suit_id === groomSuitNow.id)?.value === 104, "the groom keeps his 104");
+  check(chests.find((m) => m.suit_id === thaboSuitNow.id)?.value === 92, 'and the groomsman his 92');
+
+  log('\n=== the interface stays out of the way ===');
+  win.webContents.reload(); await wait(2200);
+  const ui = JSON.parse(await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    [...document.querySelectorAll('tbody tr')].find(r => r.textContent.includes('Sipho')).click(); await wait(1100);
+    const tab = (t) => [...document.querySelectorAll('.step-tab')].find(x => x.textContent.includes(t));
+    tab('Order').click(); await wait(800);
+    const onOrder = [...document.querySelectorAll('.card-head h3')].map(h => h.textContent.trim());
+    const people = [...document.querySelectorAll('.party-row')].length;
+    tab('Jacket').click(); await wait(800);
+    const stripTabs = [...document.querySelectorAll('.suit-tab')].map(t => t.textContent.trim());
+    const firstSelected = [...document.querySelectorAll('.option.selected')].map(o => o.textContent.trim());
+    // Switch to the other man's suit and read the jacket page again.
+    const second = document.querySelectorAll('.suit-tab')[1];
+    second?.click(); await wait(1100);
+    const secondSelected = [...document.querySelectorAll('.option.selected')].map(o => o.textContent.trim());
+    return JSON.stringify({ onOrder, people, stripTabs, firstSelected, secondSelected });
+  })()`));
+  check(ui.onOrder.includes('People & suits'), 'the order page lists the people', ui.onOrder.join(' | '));
+  check(ui.people === 2, 'one row each', String(ui.people));
+  check(ui.stripTabs.length >= 2, 'the garment page offers a suit to work on', ui.stripTabs.join(' | '));
+  check(ui.firstSelected.some((o) => /Peak/.test(o)), "it opens on the groom's peak lapel", ui.firstSelected.join(' | '));
+  check(ui.secondSelected.some((o) => /Shawl|Notch/.test(o)) && !ui.secondSelected.some((o) => /Peak/.test(o)),
+    'switching suits switches what the page is editing', ui.secondSelected.join(' | '));
+
+  log('\n=== and disappears for an order of one ===');
+  const soloClient = db.upsertClient({ name: 'Solo', surname: 'Client' });
+  const soloId = db.createProject({ clientId: soloClient, title: 'One suit' });
+  win.webContents.reload(); await wait(2200);
+  const solo = JSON.parse(await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    [...document.querySelectorAll('tbody tr')].find(r => r.textContent.includes('Solo')).click(); await wait(1100);
+    [...document.querySelectorAll('.step-tab')].find(x => x.textContent.includes('Jacket')).click(); await wait(800);
+    return JSON.stringify({ strips: document.querySelectorAll('.suit-strip').length });
+  })()`));
+  check(solo.strips === 0, 'a single client ordering one suit sees nothing new', JSON.stringify(solo));
+
   log(`\n${fail === 0 ? 'ALL PARTY CHECKS PASSED' : 'FAILED'} — ${pass} passed, ${fail} failed`);
   app.exit(fail === 0 ? 0 : 1);
 }).catch((e) => { log('HARNESS FAIL', e.stack); app.exit(1); });

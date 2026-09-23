@@ -32,7 +32,7 @@ export default function MeasureStep({ ctx, unit = 'cm', onUnitChange }) {
   const [advice, setAdvice] = useState(null);
   const toast = useToast();
 
-  const spec = project.spec ?? {};
+  const spec = ctx.spec ?? project.spec ?? {};
   const value = (garment, fieldId) =>
     project.measurements.find((m) => m.garment === garment && m.field_id === fieldId);
 

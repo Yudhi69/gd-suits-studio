@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { isVisible, statusLabel, statusPill } from '../lib/catalog.js';
 import { useProject } from '../lib/useProject.js';
+import SuitStrip from '../components/SuitStrip.jsx';
 import { quoteFromSpec, isDraft } from '../lib/quote.js';
 import { api } from '../lib/api.js';
 import PriceBar from '../components/PriceBar.jsx';
@@ -31,7 +32,7 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey, step
 
   const steps = useMemo(() => {
     if (!project) return [];
-    const spec = project.spec ?? {};
+    const spec = ctx.spec ?? project.spec ?? {};
     return [
       { key: 'client', title: 'Client', done: !!project.name },
       { key: 'order', title: 'Order', done: !!(project.fabric_name || project.payments?.length) },
@@ -51,7 +52,7 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey, step
       { key: 'fitting', title: 'Fitting', done: project.fittings.length > 0 },
       { key: 'summary', title: 'Summary', done: project.renders.some((r) => r.approved) },
     ];
-  }, [project, catalogSteps]);
+  }, [project, catalogSteps, ctx.spec]);
 
   // Any status past draft means a figure has been shown to a client, so the
   // quote is frozen at that point, whichever screen moved the status - the
@@ -62,7 +63,7 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey, step
     api.projects
       .setQuote({
         id: project.id,
-        quote: quoteFromSpec(project.spec, overrides, catalogSteps, project.status),
+        quote: quoteFromSpec(ctx.spec ?? project.spec, overrides, catalogSteps, project.status),
       })
       .then(() => ctx.reload())
       .catch(() => {});
@@ -126,11 +127,18 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey, step
           </Stepper>
         </div>
 
+        {/* The garment pages, the measurements and the preview are all about
+            one suit; the client, order, fitting and summary pages are about
+            the order as a whole, so the strip stays off them. */}
+        {!['client', 'order', 'fitting', 'summary'].includes(current.key) && (
+          <SuitStrip suits={ctx.suits} activeSuitId={ctx.activeSuitId} onSelect={ctx.setActiveSuitId} />
+        )}
+
         {body()}
 
         <div style={{ marginTop: 22 }}>
           <PriceBar
-            spec={project.spec}
+            spec={ctx.spec ?? project.spec}
             overrides={overrides}
             steps={catalogSteps}
             quote={project.quote}

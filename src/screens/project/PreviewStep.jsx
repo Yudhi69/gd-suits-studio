@@ -30,7 +30,7 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
   const [pickingRefs, setPickingRefs] = useState(false);
   const toast = useToast();
 
-  const spec = project.spec ?? {};
+  const spec = ctx.spec ?? project.spec ?? {};
   const analysis = project.analysis ?? {};
   const renders = project.renders ?? [];
   const active = renders.find((r) => r.id === activeId) ?? renders[0] ?? null;

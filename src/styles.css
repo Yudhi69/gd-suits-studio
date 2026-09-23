@@ -774,3 +774,40 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .dl-chip:hover { background: var(--gold); color: #241d05; }
 .dl-chip:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .dl-chip:disabled { opacity: .6; cursor: progress; }
+
+/* Which suit is being worked on. Only drawn when there is more than one. */
+.suit-strip {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; margin-bottom: 14px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+}
+.suit-strip-label {
+  font-size: 11px; font-weight: 700; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-faint); white-space: nowrap;
+}
+.suit-strip-tabs { display: flex; gap: 8px; overflow-x: auto; flex: 1; }
+.suit-tab {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  padding: 6px 12px; border-radius: 9px; cursor: pointer; white-space: nowrap;
+  background: transparent; border: 1px solid var(--line); color: var(--text-soft);
+}
+.suit-tab:hover { border-color: var(--gold); }
+.suit-tab.active { background: var(--gold-wash); border-color: var(--gold); color: var(--text); }
+.suit-tab-person { font-size: 12.5px; font-weight: 600; }
+.suit-tab-what { font-size: 10.5px; color: var(--text-faint); }
+.suit-tab.active .suit-tab-what { color: var(--gold-deep); }
+
+/* People on an order, and what each is having made. */
+.party-row {
+  display: flex; gap: 16px; align-items: flex-start;
+  padding: 10px 0; border-bottom: 1px solid var(--line);
+}
+.party-row:last-of-type { border-bottom: 0; }
+.party-person { min-width: 190px; }
+.party-suits { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.party-suit { display: flex; align-items: center; gap: 6px; }
+.party-suit .input-bare { max-width: 300px; }
+.input-bare {
+  background: transparent; border: 1px dashed var(--line); padding: 3px 7px;
+}
+.input-bare:focus { border-style: solid; border-color: var(--gold); }

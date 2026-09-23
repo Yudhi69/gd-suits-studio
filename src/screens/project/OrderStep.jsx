@@ -3,6 +3,7 @@ import { api, messageFor } from '../../lib/api.js';
 import { formatMoney } from '../../lib/pricing.js';
 import { PAYMENT_KINDS } from '../../lib/catalog.js';
 import { ConfirmButton, DebouncedInput, Empty, Switch, useToast } from '../../components/ui.jsx';
+import PartyPanel from '../../components/PartyPanel.jsx';
 
 /**
  * The order as a job rather than a design: the cloth it is cut from, how many,
@@ -32,6 +33,8 @@ export default function OrderStep({ ctx }) {
 
   return (
     <div className="stack">
+      <PartyPanel project={project} reload={reload} />
+
       <div className="row" style={{ alignItems: 'flex-start' }}>
         {/* ---------------------------------------------------- the job --- */}
         <div style={{ flex: 2, minWidth: 440 }}>

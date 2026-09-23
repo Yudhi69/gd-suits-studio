@@ -7,7 +7,7 @@ import NotesPanel from '../../components/NotesPanel.jsx';
 /** Renders any catalog step. All the builder screens are this one component. */
 export default function BuilderStep({ ctx, step, overrides, onCatalogChanged }) {
   const { project, updateSpec, addNote, deleteNote, savePhoto, deletePhoto } = ctx;
-  const spec = project.spec ?? {};
+  const spec = ctx.spec ?? project.spec ?? {};
 
   // Image fields attach files to the order rather than setting a spec value,
   // so they get the media handlers instead of onChange.

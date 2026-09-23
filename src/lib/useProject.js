@@ -9,6 +9,9 @@ import { api } from './api.js';
  */
 export function useProject(projectId) {
   const [project, setProject] = useState(null);
+  // Which suit the garment pages are editing. Null means the order's first,
+  // which is the only one on a single-person order.
+  const [activeSuitId, setActiveSuitId] = useState(null);
   const [references, setReferences] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -35,15 +38,21 @@ export function useProject(projectId) {
 
   const updateSpec = useCallback(
     async (fieldId, value) => {
-      // Written against the freshest copy so two quick clicks cannot race.
+      // Written against the freshest copy so two quick clicks cannot race,
+      // and against the suit being edited rather than the order - on a
+      // wedding party the groom's lapel is not the best man's.
       const current = await api.projects.get({ id: projectId });
-      const spec = { ...current.spec };
+      const suits = current.suits ?? [];
+      const target = suits.find((s) => s.id === activeSuitId) ?? suits[0] ?? null;
+      const spec = { ...(target ? target.spec : current.spec) };
       if (value === undefined) delete spec[fieldId];
       else spec[fieldId] = value;
-      await api.projects.update({ id: projectId, patch: { spec } });
+
+      if (target) await api.suits.update({ id: target.id, patch: { spec } });
+      else await api.projects.update({ id: projectId, patch: { spec } });
       await reload();
     },
-    [projectId, reload]
+    [projectId, reload, activeSuitId]
   );
 
   const updateAnalysis = useCallback(
@@ -96,15 +105,21 @@ export function useProject(projectId) {
   );
 
   /** Measurements are written to the order and to the client's running body record. */
+  const suits = project?.suits ?? [];
+  const activeSuit = suits.find((s) => s.id === activeSuitId) ?? suits[0] ?? null;
+
   const saveMeasurement = useCallback(
     async (garment, fieldId, value) => {
-      await api.measurements.save({ projectId, garment, fieldId, value });
-      if (project?.client_id) {
-        await api.clientMeasurements.save({ clientId: project.client_id, garment, fieldId, value });
+      await api.measurements.save({ projectId, suitId: activeSuit?.id, garment, fieldId, value });
+      // The body record follows the person the suit is for, not the person
+      // whose name is on the order - on a wedding party they differ.
+      const person = activeSuit?.client_id ?? project?.client_id;
+      if (person) {
+        await api.clientMeasurements.save({ clientId: person, garment, fieldId, value });
       }
       await reload();
     },
-    [projectId, project?.client_id, reload]
+    [projectId, activeSuit?.id, activeSuit?.client_id, project?.client_id, reload]
   );
 
   const reloadReferences = useCallback(async () => {
@@ -119,6 +134,13 @@ export function useProject(projectId) {
 
   return {
     project, references, loading, error, reload,
+    suits,
+    activeSuit,
+    activeSuitId: activeSuit?.id ?? null,
+    setActiveSuitId,
+    // The spec the garment pages edit: the active suit's, falling back to the
+    // order's for a database that predates suits entirely.
+    spec: activeSuit?.spec ?? project?.spec ?? {},
     updateSpec, updateAnalysis, updateProject,
     savePhoto, deletePhoto,
     addNote, deleteNote,
