@@ -151,6 +151,57 @@ app.whenReady().then(async () => {
   check(promptUi.buttons.some(b=>b.includes('Render with this')), 'it can be rendered directly from the editor', promptUi.buttons.join(' | '));
   check(promptUi.buttons.some(b=>b.includes('Reset to generated')), 'and reset back to the generated prompt');
 
+  log('\n=== each view asks for a different shot ===');
+  // Four renders that all come back front-on is money spent four times for one
+  // picture. The prompt has to ask for the angle unambiguously, and must not
+  // demand a face the angle cannot show.
+  // The line that caused this only exists when a client photo is attached, so
+  // the test has to attach one or it checks nothing.
+  await js(`(async () => {
+    const projects = (await window.gd.projects.list()).data;
+    await window.gd.photos.add({ projectId: projects[0].id, slot: 'front',
+      dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==' });
+  })()`);
+  win.webContents.reload(); await wait(2100);
+  await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    document.querySelector('tbody tr').click(); await wait(1000);
+    [...document.querySelectorAll('.step-tab')].find(t => t.textContent.includes('Preview')).click(); await wait(800);
+  })()`);
+
+  const views = JSON.parse(await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    const out = {};
+    for (const label of ['Front', 'Side', 'Back', '3/4']) {
+      const open = document.querySelector('.modal');
+      if (open) [...document.querySelectorAll('.modal button')].find(b => b.textContent.trim() === 'Close')?.click();
+      await wait(350);
+      [...document.querySelectorAll('.render-head .step-tab, .card-head .step-tab')]
+        .find(t => t.textContent.trim() === label)?.click();
+      await wait(450);
+      [...document.querySelectorAll('button')].find(b => b.textContent.includes('See the prompt')).click();
+      await wait(550);
+      out[label] = document.querySelector('.modal textarea').value;
+    }
+    [...document.querySelectorAll('.modal button')].find(b => b.textContent.trim() === 'Close')?.click();
+    return JSON.stringify(out);
+  })()`));
+
+  const distinct = new Set(Object.values(views)).size;
+  check(distinct === 4, 'the four views produce four different prompts', `${distinct} distinct`);
+  check(/THE SHOT - this is FRONT/.test(views.Front), 'the front prompt leads with the shot');
+  check(/THE SHOT - this is BACK/.test(views.Back), 'the back prompt leads with the shot');
+  check(/PROFILE/.test(views.Side), 'the side prompt asks for a profile');
+  check(/THREE-QUARTER/.test(views['3/4']), 'the 3/4 prompt asks for three-quarters');
+  // The contradiction that caused it: a back view cannot preserve a face.
+  check(!/Preserve this person's face/.test(views.Back),
+    'the back prompt does not also demand the face be preserved');
+  check(/face must NOT be visible/.test(views.Back), 'it says outright the face is not visible');
+  check(/face is not visible in this shot/.test(views.Back),
+    'and the client photo is described as build and colouring, not a face');
+  check(/Preserve their likeness exactly/.test(views.Front), 'while the front view still preserves the likeness');
+  check(/must be the BACK view/.test(views.Back), 'the angle is restated in the closing rules, where it is read last');
+
   log(`\n${fail === 0 ? 'ALL WORKFLOW CHECKS PASSED' : 'FAILED'} — ${pass} passed, ${fail} failed`);
   app.exit(fail === 0 ? 0 : 1);
 }).catch((e) => { log('HARNESS FAIL', e.stack); app.exit(1); });

@@ -2,10 +2,34 @@ import { STEPS, isVisible } from './catalog.js';
 import { nameColour } from './colour.js';
 
 export const VIEWS = [
-  { key: 'front', label: 'Front', camera: 'straight-on front view, subject facing the camera' },
-  { key: 'side', label: 'Side', camera: 'full profile side view, subject turned 90 degrees' },
-  { key: 'back', label: 'Back', camera: 'back view, showing the vents and shoulder line' },
-  { key: 'three_quarter', label: '3/4', camera: 'three-quarter view, subject turned about 30 degrees' },
+  // `camera` is the shot. `face` says what the camera can see of the client
+  // from there, because the instruction to preserve a likeness and the
+  // instruction to turn away from the lens will otherwise fight each other -
+  // and the likeness wins, which is why every view used to come back front-on.
+  {
+    key: 'front',
+    label: 'Front',
+    camera: 'a straight-on FRONT view: the client faces the camera squarely, shoulders parallel to the lens',
+    face: "The client's face is fully visible. Preserve their likeness exactly.",
+  },
+  {
+    key: 'side',
+    label: 'Side',
+    camera: 'a full PROFILE view: the client is turned 90 degrees to the camera, facing the left edge of the frame, one shoulder nearest the lens',
+    face: "Only the side of the client's head is visible, in profile. Do not turn the face toward the camera.",
+  },
+  {
+    key: 'back',
+    label: 'Back',
+    camera: 'a BACK view: the client has their back to the camera, facing directly away, showing the centre seam, vents and shoulder line',
+    face: 'The client faces AWAY from the camera. Their face must NOT be visible at all - the camera sees the back of their head and the back of the suit. Do not turn them around.',
+  },
+  {
+    key: 'three_quarter',
+    label: '3/4',
+    camera: 'a THREE-QUARTER view: the client is turned about 45 degrees away from the camera, so one shoulder is nearer the lens and the far side of the jacket recedes',
+    face: "The client's face is seen at three-quarters, turned partly away from the lens.",
+  },
 ];
 
 /**
@@ -69,7 +93,13 @@ export function buildRenderPrompt({ spec = {}, client = {}, analysis = {}, view 
 
   const refLines = refs.map((r, i) => {
     const n = i + 1;
-    if (r.role === 'subject') return `Image ${n} (${r.label}): the client. Preserve this person's face, skin tone, hair and body proportions exactly.`;
+    if (r.role === 'subject') {
+      // For a back view this reference is for build, hair and colouring -
+      // asking for the face as well is what produced four front-on renders.
+      return `Image ${n} (${r.label}): the client. Match this person's skin tone, hair and body proportions exactly${
+        view === 'back' ? ' - their face is not visible in this shot' : ", and their face where the shot shows it"
+      }.`;
+    }
     if (r.role === 'swatch' && r.slot === 'fabric') return `Image ${n} (fabric swatch): the exact cloth the suit is cut from. Reproduce this colour, weave and pattern faithfully across the garment, at realistic garment scale.`;
     if (r.role === 'swatch' && r.slot === 'lining') return `Image ${n} (lining swatch): the lining cloth. Show it only where lining is genuinely visible.`;
     return `Image ${n} (${r.label}): styling reference for mood only - do not copy its garment details over the specification.`;
@@ -80,6 +110,11 @@ export function buildRenderPrompt({ spec = {}, client = {}, analysis = {}, view 
   parts.push(
     'You are a master tailor\'s visualisation artist. Render a photorealistic, full-length studio photograph of the client wearing the bespoke suit specified below.'
   );
+
+  // First, and again last. The shot is the thing most often lost when a long
+  // specification follows it, so it is stated before the detail and restated
+  // after it.
+  parts.push(`THE SHOT - this is ${viewDef.label.toUpperCase()} and must not be any other angle: ${viewDef.camera}. ${viewDef.face}`);
 
   if (refLines.length) {
     parts.push(`Reference images, in order:\n${refLines.join('\n')}`);
@@ -103,7 +138,7 @@ export function buildRenderPrompt({ spec = {}, client = {}, analysis = {}, view 
   if (notes?.trim()) parts.push(`Additional direction from the tailor: ${notes.trim()}`);
 
   parts.push(
-    'Accuracy rules: the garment must match the specification exactly - button count, lapel style and width, pocket type, vents and hem are all checkable details, so get them right. Do not invent extra pockets, patterns, logos or accessories that were not specified. Do not restyle the client\'s face or body. Do not add text or watermarks to the image.'
+    `Accuracy rules: the garment must match the specification exactly - button count, lapel style and width, pocket type, vents and hem are all checkable details, so get them right. Do not invent extra pockets, patterns, logos or accessories that were not specified. Do not change the client's build or colouring. Do not add text or watermarks to the image. Finally, check the angle before you answer: this must be the ${viewDef.label.toUpperCase()} view - ${viewDef.camera}.`
   );
 
   return parts.join('\n\n');
@@ -119,7 +154,7 @@ export function buildTweakPrompt({ instruction, spec = {}, view = 'front' }) {
   return [
     'Edit the attached suit visualisation. Image 1 is the current render and is the base you are modifying.',
     `Make exactly this change: ${instruction.trim()}`,
-    `Keep everything else identical - the same person, face, skin tone, pose, lighting, background and ${viewDef.camera}. Keep every other garment detail exactly as it is.`,
+    `Keep everything else identical - the same person, skin tone, pose, lighting, background, and the same ${viewDef.label.toUpperCase()} angle (${viewDef.camera}). ${viewDef.face} Keep every other garment detail exactly as it is.`,
     'Return the edited photograph only, with no text or watermarks.',
   ].join('\n\n');
 }
