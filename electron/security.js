@@ -134,4 +134,32 @@ function openExternalSafely(url) {
   return true;
 }
 
-module.exports = { hardenSession, hardenWindow, openExternalSafely, ALLOWED_HOSTS };
+/**
+ * Opens a pre-filled message in whatever mail program the tailor already uses.
+ *
+ * Deliberately separate from openExternalSafely, which allows only http and
+ * https: widening that to cover mail would widen it for everything. Nothing is
+ * sent from here - the draft opens in GD's own mail app, addressed and written,
+ * and he reads it before it goes. No password is stored and no message leaves
+ * the machine without him pressing send.
+ */
+const MAILTO_LIMIT = 8000;   // long links are silently truncated by mail apps
+
+function openMailSafely({ to, subject = '', body = '' }) {
+  const address = String(to ?? '').trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {
+    console.warn('[security] refused to open mail without a usable address');
+    return false;
+  }
+  const url = `mailto:${encodeURIComponent(address)}`
+    + `?subject=${encodeURIComponent(subject)}`
+    + `&body=${encodeURIComponent(body)}`;
+  if (url.length > MAILTO_LIMIT) {
+    console.warn('[security] refused to open an over-long mail link');
+    return false;
+  }
+  shell.openExternal(url);
+  return true;
+}
+
+module.exports = { hardenSession, hardenWindow, openExternalSafely, openMailSafely, ALLOWED_HOSTS };
