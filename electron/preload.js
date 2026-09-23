@@ -19,6 +19,8 @@ const CHANNELS = [
   'extras:add', 'extras:update', 'extras:delete',
   'analytics:get',
   'media:download',
+  'members:list', 'members:add', 'members:update', 'members:remove',
+  'suits:list', 'suits:add', 'suits:update', 'suits:remove',
   'notes:add', 'notes:delete',
   'measurements:save',
   'fittings:add', 'fittings:update', 'fittings:delete',
