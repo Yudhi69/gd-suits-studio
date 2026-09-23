@@ -773,6 +773,19 @@ export const PROCESS_DATES = [
   { key: 'review_date', label: 'Review date' },
 ];
 
+/**
+  * What a field is actually set to.
+  *
+  * A field with a default shows that default the moment it appears, so as far
+  * as the tailor is concerned it is chosen. The lining colour was the case
+  * that gave this away: the swatch read navy, the spec held nothing, and the
+  * render prompt said nothing about lining at all.
+  */
+export const valueOf = (field, spec = {}) => {
+  const value = spec[field.id];
+  return value === undefined && field.default !== undefined ? field.default : value;
+};
+
 export const statusLabel = (key) =>
   PROJECT_STATUSES.find((s) => s.key === key)?.label ?? key;
 export const statusPill = (key) =>

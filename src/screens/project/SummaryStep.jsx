@@ -4,7 +4,7 @@ import { buildSpecSheet } from '../../lib/promptBuilder.js';
 import { buildBreakdown, formatMoney } from '../../lib/pricing.js';
 import { quoteFromSpec, quoteDrift, isDraft } from '../../lib/quote.js';
 import { ConfirmButton } from '../../components/ui.jsx';
-import { EVENT_TYPES, MEASUREMENTS, statusLabel } from '../../lib/catalog.js';
+import { EVENT_TYPES, MEASUREMENTS, statusLabel, PROCESS_DATES } from '../../lib/catalog.js';
 import { formatMeasure, unitLabel } from '../../lib/units.js';
 import { ORDER_TERMS, GD_CONTACT } from '../../lib/terms.js';
 import { useToast, Spinner, Banner } from '../../components/ui.jsx';
@@ -67,12 +67,9 @@ export default function SummaryStep({ ctx, overrides, steps, unit = 'cm' }) {
 
   /** Self-contained HTML the tailor can email or print for sign-off. */
   function specSheetHtml() {
-    const schedule = [
-      ['consultation_date', 'First consultation'],
-      ['measurement_date', 'Measurements'],
-      ['first_fitting_date', 'First fitting'],
-      ['final_fitting_date', 'Final fitting & delivery'],
-    ].filter(([key]) => project[key]);
+    // From the one list the schedule page uses, so a date added there cannot
+    // quietly go missing from the form the client signs.
+    const schedule = PROCESS_DATES.map(({ key, label }) => [key, label]).filter(([key]) => project[key]);
     const paid = (project.payments ?? []).reduce((t, p) => t + (p.kind === 'refund' ? -p.amount : p.amount), 0);
     const orderDetail = [
       ['Number of suits', project.quantity ?? 1],
@@ -241,6 +238,23 @@ ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c"
       </div>
 
       <div style={{ flex: 1, minWidth: 300 }}>
+        {/* The dates the order runs to, where the order is signed off - they
+            were only on the exported form before, which is no use to anyone
+            looking at the screen. */}
+        {PROCESS_DATES.some(({ key }) => project[key]) && (
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-head"><h3>Schedule</h3></div>
+            <div className="card-pad">
+              {PROCESS_DATES.filter(({ key }) => project[key]).map(({ key, label }) => (
+                <div className="price-line" key={key}>
+                  <span className="muted">{label}</span>
+                  <span className="mono small">{project[key]}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="card">
           <div className="card-head">
             <h3>Quote</h3>
