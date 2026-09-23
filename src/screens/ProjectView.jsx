@@ -35,14 +35,17 @@ export default function ProjectView({ projectId, onBack, overrides, hasKey, step
     return [
       { key: 'client', title: 'Client', done: !!project.name },
       { key: 'order', title: 'Order', done: !!(project.fabric_name || project.payments?.length) },
-      { key: 'capture', title: 'Capture', done: project.photos.some((p) => ['front', 'side', 'back', 'face'].includes(p.slot)) },
-      { key: 'fabric', title: 'Cloth', done: project.photos.some((p) => p.slot === 'fabric') || !!project.analysis?.fabricColour },
+      // The garment is specified straight after the order it belongs to, which
+      // is the order GD works in: agree the job, then build the suit. The
+      // photographs and the cloth follow, because they serve the render.
       ...catalogSteps.filter((s) => isVisible(s, spec)).map((s) => ({
         key: s.key,
         title: s.title,
         catalog: s,
         done: s.fields.filter((f) => f.required && isVisible(f, spec)).every((f) => spec[f.id] !== undefined),
       })),
+      { key: 'capture', title: 'Capture', done: project.photos.some((p) => ['front', 'side', 'back', 'face'].includes(p.slot)) },
+      { key: 'fabric', title: 'Cloth', done: project.photos.some((p) => p.slot === 'fabric') || !!project.analysis?.fabricColour },
       { key: 'measurements', title: 'Measurements', done: project.measurements.some((m) => m.value !== null) },
       { key: 'preview', title: 'Preview', done: project.renders.length > 0 },
       { key: 'fitting', title: 'Fitting', done: project.fittings.length > 0 },

@@ -25,7 +25,7 @@ app.whenReady().then(async () => {
     await un(window.gd.projects.update({ id: projectId, patch: {
       consultation_date: '2026-06-01', measurement_date: '2026-06-08',
       first_fitting_date: '2026-08-01', final_fitting_date: '2026-09-10',
-      status: 'first_fitting',
+      status: 'ready_first_fitting',
       spec: { suitType:'two_piece', buttonColour:'gold', bottomFinish:'tapered', monogramCollar:'T.M.', liningMode:'pattern' },
     } }));
     return JSON.stringify(await un(window.gd.projects.get({ id: projectId })));
@@ -77,7 +77,7 @@ app.whenReady().then(async () => {
   check(ui.details.labels.some(l => l.includes('jacket collar')), 'a collar monogram exists', ui.details.labels.join(' | '));
   check(ui.details.labels.some(l => l.includes('collage')), 'the lining collage upload appears for a custom pattern');
   check(ui.details.fileInputs > 0, 'and it offers a file picker');
-  check(ui.status === 'First fitting', 'the status reads First fitting', ui.status);
+  check(ui.status === 'Ready for first fitting', 'the status reads the stage GD named', ui.status);
 
   log(`\n${fail === 0 ? 'ALL CLIENT-NOTE CHECKS PASSED' : 'FAILED'} — ${pass} passed, ${fail} failed`);
   app.exit(fail === 0 ? 0 : 1);

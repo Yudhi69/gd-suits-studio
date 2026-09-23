@@ -4,6 +4,7 @@ import { FITTING_GARMENTS, FITTING_KINDS, fittingLabel } from '../../lib/catalog
 import { fileToDataUrl } from '../../lib/image.js';
 import { ConfirmButton, DebouncedInput, Empty, useToast } from '../../components/ui.jsx';
 import DownloadButton from '../../components/DownloadButton.jsx';
+import AlterationsPanel from '../../components/AlterationsPanel.jsx';
 
 const ANGLES = ['front', 'side', 'back'];
 
@@ -31,7 +32,10 @@ export default function FittingStep({ ctx }) {
     // dashboard reflects reality without anyone remembering to set it.
     await api.projects.update({
       id: project.id,
-      patch: { status: kind === 'final' ? 'final_fitting' : 'first_fitting' },
+      // The nearest stage in GD's list. Recording a fitting does not decide
+      // what happens next - whether it goes to alterations or straight to
+      // completed is his call, not an assumption made here.
+      patch: { status: kind === 'final' ? 'ready_final_fit' : 'ready_first_fitting' },
     });
     await reload();
     toast(`${fittingLabel(kind)} started`, 'ok');
@@ -76,6 +80,8 @@ export default function FittingStep({ ctx }) {
           />
         ))
       )}
+
+      <AlterationsPanel project={project} reload={reload} />
     </div>
   );
 }
@@ -214,6 +220,7 @@ function FittingCard({ fitting, project, garments, onReload, onSavePhoto, onDele
           the client's running body record.
         </p>
       </div>
+
     </div>
   );
 }

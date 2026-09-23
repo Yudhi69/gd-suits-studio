@@ -114,7 +114,8 @@ function modelName(value, field = 'model') {
 const PHOTO_SLOTS = ['front', 'side', 'back', 'face', 'fabric', 'lining', 'lining_collage', 'inspiration', 'fitting'];
 const GARMENTS = ['jacket', 'waistcoat', 'pants', 'shirt', ''];
 const REFERENCE_KINDS = ['style', 'fabric', 'lining', 'fit'];
-const PROJECT_STATUSES = ['enquiry', 'quoted', 'deposit_paid', 'in_production', 'first_fitting', 'alterations', 'final_fitting', 'delivered', 'draft', 'approved'];
+const PROJECT_STATUSES = [
+  'first_consultation', 'ready_first_fitting', 'ready_final_fit', 'completed_due', 'completed_paid','enquiry', 'quoted', 'deposit_paid', 'in_production', 'first_fitting', 'alterations', 'final_fitting', 'delivered', 'draft', 'approved'];
 const PAYMENT_KINDS = ['deposit', 'balance', 'part_payment', 'refund'];
 const ALTERATION_STATUSES = ['received', 'in_progress', 'ready', 'collected', 'cancelled'];
 const EXTRA_STATUSES = ['ordered', 'received', 'fitted', 'delivered', 'cancelled'];

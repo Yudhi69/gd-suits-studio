@@ -298,7 +298,7 @@ function statusFor(order, progress) {
   const ticked = progress.get(order.rawName.toUpperCase());
   if (ticked) return ticked;
   if (order.sheet === 'COMPLETED') {
-    return order.eventDate && order.eventDate < TODAY ? 'delivered' : 'in_production';
+    return order.eventDate && order.eventDate < TODAY ? 'completed_paid' : 'in_production';
   }
   return 'in_production';
 }
@@ -307,7 +307,7 @@ function statusFor(order, progress) {
 function readProgress(dir) {
   const map = new Map();
   const rows = readSheet(dir, 'SUIT PROGRESS').slice(1);
-  const stages = [null, null, 'in_production', 'first_fitting', 'alterations', 'final_fitting'];
+  const stages = [null, null, 'in_production', 'ready_first_fitting', 'alterations', 'ready_final_fit'];
   for (const r of rows) {
     const who = clean(r[0]).toUpperCase();
     if (!who) continue;

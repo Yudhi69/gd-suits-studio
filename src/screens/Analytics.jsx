@@ -53,7 +53,7 @@ export default function Analytics({ onOpenProject }) {
             sub={quotedCount ? `${plural(quotedCount, 'order')} quoted in the app` : 'no orders quoted yet'}
             tone={t.outstanding > 0 ? 'warn' : undefined}
           />
-          <Stat label="Delivered" value={t.delivered} sub={`${plural(t.clients, 'client')} on file`} />
+          <Stat label="Completed" value={t.delivered} sub={`${plural(t.clients, 'client')} on file`} />
         </div>
 
         {/* Things that need doing today, before anything decorative. */}
@@ -112,7 +112,7 @@ export default function Analytics({ onOpenProject }) {
               </div>
               <div className="price-line">
                 <span>
-                  {formatMoney(legacy.settledLikely.total)} on {plural(legacy.settledLikely.orders, 'delivered order')}
+                  {formatMoney(legacy.settledLikely.total)} on {plural(legacy.settledLikely.orders, 'completed order')}
                   <span className="tiny faint" style={{ display: 'block' }}>Almost certainly settled off-sheet; kept for the record</span>
                 </span>
                 <span className="pill pill-quiet">Historical</span>

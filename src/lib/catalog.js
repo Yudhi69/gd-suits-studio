@@ -17,7 +17,10 @@ export const EVENT_TYPES = [
   { key: 'matric', label: 'Matric Ball' },
   { key: 'graduation', label: 'Graduation' },
   { key: 'birthday', label: 'Birthday' },
-  { key: 'business', label: 'Business' },
+  { key: 'religious', label: 'Religious' },
+  // Kept as `business` so the orders already filed under it keep their type;
+  // GD calls it corporate.
+  { key: 'business', label: 'Corporate' },
   { key: 'other', label: 'Other' },
 ];
 
@@ -535,15 +538,38 @@ export const MEASUREMENTS = {
  * Orders, Completed were the same orders at different points, with the client
  * keyed by name in each. One field, one place to look.
  */
+/**
+ * The stages GD actually works in. "Ready for first fitting" is the suit
+ * waiting on the rail, which is not the same as the fitting itself, and a
+ * finished job is not finished as far as the books go until the balance is in
+ * - so completed splits in two.
+ */
 export const PROJECT_STATUSES = [
-  { key: 'enquiry', label: 'Enquiry', pill: 'pill-quiet', open: true },
+  { key: 'first_consultation', label: 'First consultation', pill: 'pill-quiet', open: true },
   { key: 'quoted', label: 'Quoted', pill: 'pill-quiet', open: true },
-  { key: 'deposit_paid', label: 'Deposit paid', pill: 'pill', open: true },
+  { key: 'deposit_paid', label: 'Deposit paid (production pending)', pill: 'pill', open: true },
   { key: 'in_production', label: 'In production', pill: 'pill', open: true },
-  { key: 'first_fitting', label: 'First fitting', pill: 'pill-warn', open: true },
+  { key: 'ready_first_fitting', label: 'Ready for first fitting', pill: 'pill-warn', open: true },
   { key: 'alterations', label: 'Alterations', pill: 'pill-warn', open: true },
-  { key: 'final_fitting', label: 'Final fitting', pill: 'pill-warn', open: true },
-  { key: 'delivered', label: 'Delivered', pill: 'pill-ok', open: false },
+  { key: 'ready_final_fit', label: 'Ready for final fit', pill: 'pill-warn', open: true },
+  { key: 'completed_due', label: 'Completed (final deposit due)', pill: 'pill-warn', open: false },
+  { key: 'completed_paid', label: 'Completed (paid)', pill: 'pill-ok', open: false },
+];
+
+/** The stages where the work is done, whatever the money is doing. */
+export const COMPLETED_STATUSES = ['completed_due', 'completed_paid'];
+export const isCompleted = (key) => COMPLETED_STATUSES.includes(key);
+
+/**
+ * The dates an order runs to, in the order they happen. One list, so the
+ * schedule, the warnings and the exported form cannot drift apart.
+ */
+export const PROCESS_DATES = [
+  { key: 'consultation_date', label: 'First consultation' },
+  { key: 'measurement_date', label: 'Measurement date' },
+  { key: 'first_fitting_date', label: 'First fitting' },
+  { key: 'final_fitting_date', label: 'Final fitting & delivery' },
+  { key: 'review_date', label: 'Review date' },
 ];
 
 export const statusLabel = (key) =>
