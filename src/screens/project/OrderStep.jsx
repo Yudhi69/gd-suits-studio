@@ -14,7 +14,7 @@ import PartyPanel from '../../components/PartyPanel.jsx';
  * them on the order means the money and the work can never drift apart from
  * the suit they belong to.
  */
-export default function OrderStep({ ctx }) {
+export default function OrderStep({ ctx, business }) {
   const { project, updateProject, reload } = ctx;
   const toast = useToast();
 
@@ -23,7 +23,8 @@ export default function OrderStep({ ctx }) {
     (t, p) => t + (p.kind === 'refund' ? -p.amount : p.amount), 0
   );
   const outstanding = Math.max(0, quoted - paid);
-  const depositTarget = quoted * 0.5;
+  const depositFraction = business?.depositFraction ?? 0.5;
+  const depositTarget = quoted * depositFraction;
   const depositMet = quoted > 0 && paid >= depositTarget;
 
   const run = async (fn, message) => {
@@ -111,7 +112,7 @@ export default function OrderStep({ ctx }) {
 
               {quoted > 0 && !depositMet && (
                 <div className="banner banner-warn" style={{ marginTop: 10 }}>
-                  The terms require 50% ({formatMoney(depositTarget)}) before cutting starts.
+                  The terms require {Math.round(depositFraction * 100)}% ({formatMoney(depositTarget)}) before cutting starts.
                   Short by {formatMoney(depositTarget - paid)}.
                 </div>
               )}

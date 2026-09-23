@@ -29,7 +29,7 @@ const esc = (value) =>
  * be able to send over for approval, plus the export that writes the whole
  * client file out to a folder.
  */
-export default function SummaryStep({ ctx, overrides, steps, unit = 'cm' }) {
+export default function SummaryStep({ ctx, overrides, steps, unit = 'cm', business }) {
   const { project } = ctx;
   const [exporting, setExporting] = useState(false);
   const toast = useToast();
@@ -154,12 +154,12 @@ ${orderRows}
 ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c">Quoted ${esc(String(project.quote.at ?? '').slice(0, 10))}. This price is held for this order.</p>` : ''}
 
 <h3>Terms and conditions</h3>
-<ol class="terms">${ORDER_TERMS.map((t) => `<li>${esc(t)}</li>`).join('')}</ol>
+<ol class="terms">${(business?.terms ?? ORDER_TERMS).map((t) => `<li>${esc(t)}</li>`).join('')}</ol>
 
 <h3>Contact us if you have any further queries</h3>
 <p class="meta">
-  ${esc(GD_CONTACT.name)}<br>${esc(GD_CONTACT.role)}<br>
-  ${esc(GD_CONTACT.phone)}<br>${esc(GD_CONTACT.email)}
+  ${esc(business?.name ?? GD_CONTACT.name)}<br>${esc(business?.role ?? GD_CONTACT.role)}<br>
+  ${esc(business?.phone ?? GD_CONTACT.phone)}<br>${esc(business?.email ?? GD_CONTACT.email)}
 </p>
 
 <p class="sign">Client signature: ______________________________&nbsp;&nbsp;&nbsp;Date: ______________</p>

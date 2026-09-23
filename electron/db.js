@@ -1593,12 +1593,22 @@ function analytics({ from = '0000-01-01', to = '9999-12-31' } = {}) {
     .slice(0, 8);
   const overdue = open.filter((o) => o.event_date && o.event_date < today);
 
-  // GD's terms require 50% up front before cutting. Anything already in
+  // The terms require a deposit up front before cutting - how much is the
+  // shop's own setting, not a number written into the app.
+  const depositFraction = (() => {
+    try {
+      const b = JSON.parse(d.prepare("SELECT value FROM settings WHERE key = 'business'").get()?.value ?? 'null');
+      const f = Number(b?.depositFraction);
+      return Number.isFinite(f) && f >= 0 && f <= 1 ? f : 0.5;
+    } catch { return 0.5; }
+  })();
+
+  // Anything already in
   // production without it is money at risk, which is worth surfacing.
   const depositShortfall = open
     .filter((o) => ['in_production', 'first_fitting', 'alterations', 'final_fitting'].includes(o.status))
-    .filter((o) => o.quoted > 0 && o.paid < o.quoted * 0.5)
-    .map((o) => ({ ...o, shortfall: o.quoted * 0.5 - o.paid }));
+    .filter((o) => o.quoted > 0 && o.paid < o.quoted * depositFraction)
+    .map((o) => ({ ...o, shortfall: o.quoted * depositFraction - o.paid }));
 
   // By the date the suit is needed, not the date the row was typed: imported
   // orders all carry the same import timestamp, which would stack two years of

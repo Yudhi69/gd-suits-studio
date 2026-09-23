@@ -30,7 +30,7 @@ const GROUPS = [
   'clients', 'projects', 'photos', 'references', 'clientMeasurements',
   'notes', 'measurements', 'fittings', 'settings', 'secrets',
   'ai', 'renders', 'project', 'app', 'updates', 'catalog',
-  'payments', 'alterations', 'extras', 'analytics', 'media', 'members', 'suits', 'quote', 'forms',
+  'payments', 'alterations', 'extras', 'analytics', 'media', 'members', 'suits', 'quote', 'forms', 'business',
 ];
 
 export const api = {};

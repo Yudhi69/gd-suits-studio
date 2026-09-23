@@ -15,6 +15,7 @@ export default function App() {
   const [overrides, setOverrides] = useState({});
   const [keyState, setKeyState] = useState(null);
   const [unit, setUnit] = useState('cm');
+  const [business, setBusiness] = useState(null);
   const theme = useTheme();
   const catalog = useCatalog();
   const [updateReady, setUpdateReady] = useState(null);
@@ -24,6 +25,7 @@ export default function App() {
       setOverrides((await api.settings.get({ key: 'priceOverrides', fallback: {} })) ?? {});
       // GD's order form asks clients for inches, so that is the default.
       setUnit((await api.settings.get({ key: 'measureUnit', fallback: 'in' })) ?? 'in');
+      setBusiness(await api.business.get());
       // Readiness follows whichever provider is configured for renders, not
       // whichever one happens to be first.
       try {
@@ -115,6 +117,7 @@ export default function App() {
               projectId={route.id}
               steps={catalog.steps}
               overrides={overrides}
+              business={business}
               unit={unit}
               onUnitChange={async (u) => { setUnit(u); await api.settings.set({ key: 'measureUnit', value: u }); }}
               customOptions={catalog.options}
