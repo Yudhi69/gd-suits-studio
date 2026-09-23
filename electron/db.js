@@ -555,6 +555,37 @@ const MIGRATIONS = [
       claim.photos.run(suitId, p.client_id, p.id);
     }
   },
+  // v14 - measurements belong to a suit, not to an order.
+  //
+  // They were keyed (project_id, garment, field_id), which was right while an
+  // order meant one person. With a wedding party on one order the second
+  // man's chest would overwrite the first's, silently, and the only sign
+  // would be two grooms with identical shoulders. A constraint cannot be
+  // altered in SQLite, so the table is rebuilt around the suit.
+  (d) => {
+    d.exec(`
+      CREATE TABLE measurements_by_suit (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        suit_id    INTEGER REFERENCES suits(id) ON DELETE CASCADE,
+        garment    TEXT NOT NULL,
+        field_id   TEXT NOT NULL,
+        value      REAL,
+        unit       TEXT NOT NULL DEFAULT 'cm',
+        source     TEXT NOT NULL DEFAULT 'measured',
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(suit_id, garment, field_id)
+      );
+
+      INSERT INTO measurements_by_suit (project_id, suit_id, garment, field_id, value, unit, source, updated_at)
+        SELECT project_id, suit_id, garment, field_id, value, unit, source, updated_at FROM measurements;
+
+      DROP TABLE measurements;
+      ALTER TABLE measurements_by_suit RENAME TO measurements;
+      CREATE INDEX IF NOT EXISTS idx_measurements_project ON measurements(project_id);
+      CREATE INDEX IF NOT EXISTS idx_measurements_suit ON measurements(suit_id);
+    `);
+  },
 ];
 
 function open(userDataPath) {
@@ -742,7 +773,12 @@ function updateSuit(id, patch) {
   }
   if (patch.spec !== undefined) { sets.push('spec_json = @spec_json'); params.spec_json = JSON.stringify(patch.spec); }
   if (!sets.length) return;
-  get().prepare(`UPDATE suits SET ${sets.join(', ')}, updated_at = @updated_at WHERE id = @id`).run(params);
+  const d = get();
+  d.prepare(`UPDATE suits SET ${sets.join(', ')}, updated_at = @updated_at WHERE id = @id`).run(params);
+  // The order is what the tailor sees in the list, and editing one of its
+  // suits is working on it.
+  d.prepare(`UPDATE projects SET updated_at = ?
+              WHERE id = (SELECT project_id FROM suits WHERE id = ?)`).run(nowStamp(), id);
 }
 
 function removeSuit(id) {
@@ -1009,16 +1045,20 @@ function deleteNote(id) {
 
 /* ----------------------------------------------------------- measurements */
 
-function saveMeasurement({ projectId, garment, fieldId, value, unit, source }) {
+function saveMeasurement({ projectId, suitId, garment, fieldId, value, unit, source }) {
+  // Without a suit named, the order's first one - which is the only one there
+  // is, on the single-person orders that are most of them.
+  const suit = suitId ?? primarySuitId(projectId);
   get()
     .prepare(
-      `INSERT INTO measurements (project_id, garment, field_id, value, unit, source, updated_at)
-       VALUES (@projectId, @garment, @fieldId, @value, @unit, @source, @updated_at)
-       ON CONFLICT(project_id, garment, field_id)
+      `INSERT INTO measurements (project_id, suit_id, garment, field_id, value, unit, source, updated_at)
+       VALUES (@projectId, @suitId, @garment, @fieldId, @value, @unit, @source, @updated_at)
+       ON CONFLICT(suit_id, garment, field_id)
        DO UPDATE SET value = @value, unit = @unit, source = @source, updated_at = @updated_at`
     )
     .run({
       projectId,
+      suitId: suit,
       garment,
       fieldId,
       value: value === '' || value === null || value === undefined ? null : Number(value),

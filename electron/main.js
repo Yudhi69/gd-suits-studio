@@ -534,6 +534,7 @@ handle('notes:add', (n) => db.addNote({
 handle('notes:delete', ({ id }) => db.deleteNote(v.id(id)));
 handle('measurements:save', (m) => db.saveMeasurement({
   projectId: v.id(m.projectId, 'projectId'),
+  suitId: v.optionalId(m.suitId, 'suitId'),
   garment: v.oneOf(m.garment, v.GARMENTS, 'garment'),
   fieldId: v.str(m.fieldId, 'fieldId', 60),
   value: v.num(m.value, 'measurement', { min: 0, max: 500 }),
