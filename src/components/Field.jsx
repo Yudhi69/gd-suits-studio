@@ -6,6 +6,7 @@ import { fileToDataUrl } from '../lib/image.js';
 import { useToast, ConfirmButton } from './ui.jsx';
 import DownloadButton from './DownloadButton.jsx';
 import { formatMoney } from '../lib/pricing.js';
+import { sketchFor } from './sketches.jsx';
 
 /**
  * Renders one catalog field. Every control in the builder comes through here,
@@ -29,6 +30,7 @@ export default function Field({ field, spec, overrides = {}, onChange, onCatalog
         <div className="options">
           {field.options.map((opt) => {
             const amount = priceFor(opt);
+            const Sketch = sketchFor(field.id, opt.key);
             return (
               <button
                 key={opt.key}
@@ -36,6 +38,7 @@ export default function Field({ field, spec, overrides = {}, onChange, onCatalog
                 className={`option ${value === opt.key ? 'selected' : ''}`}
                 onClick={() => onChange(field.id, value === opt.key && !field.required ? undefined : opt.key)}
               >
+                {Sketch && <Sketch />}
                 <div className="option-label">{opt.label}</div>
                 {opt.desc && <div className="option-desc">{opt.desc}</div>}
                 {amount > 0 && (
