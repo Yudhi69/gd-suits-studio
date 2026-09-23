@@ -13,6 +13,10 @@ const aiProviders = require('./ai/registry');
 const security = require('./security');
 const media = require('./mediaUrl');
 const brand = require('./brand');
+const mail = require('./mailTemplate');
+
+// GD's own details, as they appear on the order form he signs with clients.
+const GD = { name: 'Gareth Duncan', role: 'GD Suits Owner', phone: '0824856941', email: 'gareth@gdsuits.co.za' };
 const updater = require('./updater');
 const v = require('./validate');
 
@@ -658,7 +662,8 @@ handle('catalog:updateItem', ({ id, ...patch }) =>
 handle('catalog:deleteItem', ({ id }) => db.deleteCustomItem(v.id(id)));
 
 /* settings + secrets */
-const SETTING_KEYS = ['priceOverrides', 'imageModel', 'visionModel', 'theme', 'updateFeed', 'autoCheckUpdates', 'measureUnit', 'aiConfig'];
+const SETTING_KEYS = ['priceOverrides', 'imageModel', 'visionModel', 'theme', 'updateFeed', 'autoCheckUpdates', 'measureUnit', 'aiConfig',
+  'quoteEmailTemplate', 'quoteEmailSubject'];
 handle('settings:get', ({ key, fallback }) => db.getSetting(v.oneOf(key, SETTING_KEYS, 'setting'), fallback ?? null));
 handle('settings:set', ({ key, value }) => {
   const name = v.oneOf(key, SETTING_KEYS, 'setting');
@@ -668,6 +673,9 @@ handle('settings:set', ({ key, value }) => {
   if (name === 'autoCheckUpdates') return db.setSetting(name, !!value);
   if (name === 'measureUnit') return db.setSetting(name, v.oneOf(value, ['cm', 'in'], 'unit'));
   if (name === 'aiConfig') return db.setSetting(name, v.jsonBlob(value, 'ai config', 8 * 1024));
+  // The mail wording is text, not a structure - jsonBlob would refuse it.
+  if (name === 'quoteEmailTemplate') return db.setSetting(name, v.str(value, 'message', 8 * 1024));
+  if (name === 'quoteEmailSubject') return db.setSetting(name, v.str(value, 'subject', 300));
   return db.setSetting(name, v.jsonBlob(value, 'value', 128 * 1024));
 });
 const SECRET_NAMES = [...aiProviders.SECRET_NAMES, 'updateToken'];
@@ -858,6 +866,109 @@ handle('media:download', async ({ url, name } = {}) => {
 
   fs.writeFileSync(filePath, bytes);
   return { saved: true, name: path.basename(filePath), branded: render };
+});
+
+/**
+ * Opens a quote summary as a draft in GD's own mail program.
+ *
+ * The figures come from the order rather than from anything the interface
+ * sends, so what the client reads is what was agreed and frozen. The draft is
+ * a summary, not the order form: the form is the document that gets signed,
+ * and it is exported and attached deliberately.
+ */
+/**
+ * Saves a document the interface has composed as one self-contained file.
+ *
+ * Pictures are pulled in here rather than linked, so what lands on the desktop
+ * is a single file that survives being emailed. The interface names them by
+ * the gdmedia:// address it is already showing; the bytes are read from the
+ * media folder under the same confinement as everything else, and an address
+ * that resolves to nothing is dropped rather than left as a broken picture.
+ */
+handle('forms:save', async ({ projectId, html, name }) => {
+  projectId = v.id(projectId, 'projectId');
+  html = v.str(html, 'form', 8 * 1024 * 1024);
+  const project = db.getProject(projectId);
+  if (!project) throw new Error('Order not found');
+
+  const inlined = html.replace(/gdmedia:\/\/media\/([^\/"']+)\/([^"'?]+)/g, (whole, scope, file) => {
+    try {
+      const filename = decodeURIComponent(file);
+      return `data:${storage.mimeForFile(filename)};base64,${storage.readAsBase64(scope, filename)}`;
+    } catch {
+      return '';   // a picture that is no longer there leaves no broken frame
+    }
+  });
+
+  const safeName = cleanFileName(name) || 'measurement-form';
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save form',
+    defaultPath: path.join(app.getPath('documents'), `${safeName}.html`),
+    buttonLabel: 'Save',
+    filters: [{ name: 'Web page', extensions: ['html'] }],
+  });
+  if (canceled || !filePath) return { saved: false };
+  fs.writeFileSync(filePath, inlined, 'utf8');
+  return { saved: true, name: path.basename(filePath) };
+});
+
+handle('quote:template', () => ({
+  template: db.getSetting('quoteEmailTemplate', mail.DEFAULT_TEMPLATE),
+  subject: db.getSetting('quoteEmailSubject', mail.DEFAULT_SUBJECT),
+  variables: mail.VARIABLES,
+  defaults: { template: mail.DEFAULT_TEMPLATE, subject: mail.DEFAULT_SUBJECT },
+}));
+
+handle('quote:email', ({ projectId }) => {
+  const project = db.getProject(v.id(projectId, 'projectId'));
+  if (!project) throw new Error('Order not found');
+  if (!project.email) throw new Error('This client has no email address on their file yet.');
+
+  const money = (n) => `R${Math.round(Number(n) || 0).toLocaleString('en-ZA')}`;
+  const quote = project.quote;
+  const suits = project.suits ?? [];
+  const people = project.members ?? [];
+
+  // What is being made: one cloth, or a list when there is a party.
+  const what = suits.length > 1
+    ? [`${people.length} people, ${suits.length} suits:`,
+       ...suits.map((s) => `  - ${`${s.name} ${s.surname}`.trim()}: ${s.label || s.fabric_name || 'suit'}`)].join('\n')
+    : (suits[0]?.fabric_name
+        ? `Cloth: ${suits[0].fabric_name}${suits[0].fabric_code ? ` (${suits[0].fabric_code})` : ''}`
+        : '');
+
+  const quoteBlock = quote?.lines?.length
+    ? ['Quote:',
+       ...quote.lines.map((l) => `  ${l.label}  ${money(l.amount)}`),
+       '',
+       `Total: ${money(quote.total)}`,
+       `Deposit to start (50%): ${money((quote.total ?? 0) * 0.5)}`].join('\n')
+    : 'I will follow up with the figures shortly.';
+
+  const values = {
+    client_first: project.name ?? '',
+    client_name: `${project.name ?? ''} ${project.surname ?? ''}`.trim(),
+    order_ref: project.order_ref ?? '',
+    what,
+    cloth: suits[0]?.fabric_name
+      ? `${suits[0].fabric_name}${suits[0].fabric_code ? ` (${suits[0].fabric_code})` : ''}`
+      : '',
+    event_date: project.event_date ?? '',
+    event_line: project.event_date ? `Needed by: ${project.event_date}` : '',
+    quote_block: quoteBlock,
+    total: quote ? money(quote.total) : '',
+    deposit: quote ? money((quote.total ?? 0) * 0.5) : '',
+    gd_name: GD.name, gd_role: GD.role, gd_phone: GD.phone, gd_email: GD.email,
+  };
+
+  const template = db.getSetting('quoteEmailTemplate', mail.DEFAULT_TEMPLATE);
+  const subjectTemplate = db.getSetting('quoteEmailSubject', mail.DEFAULT_SUBJECT);
+  const body = mail.fill(template, values);
+  const subject = mail.fill(subjectTemplate, values);
+
+  const opened = security.openMailSafely({ to: project.email, subject, body });
+  if (!opened) throw new Error('Could not open a mail draft - check the client has a valid email address.');
+  return { opened: true, to: project.email };
 });
 
 /* export - the "client file" the brief asks the system to keep */

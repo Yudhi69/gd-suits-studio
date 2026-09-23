@@ -4,6 +4,74 @@ import { priceCatalogEntries, formatMoney } from '../lib/pricing.js';
 import { CURRENCY } from '../lib/catalog.js';
 import { Banner, Collapsible, ConfirmButton, DebouncedInput, Modal, SecretInput, Spinner, Switch, useToast } from '../components/ui.jsx';
 
+/**
+ * The wording of the quote email.
+ *
+ * It is GD's letter, not the app's, so he writes it once here and every quote
+ * goes out in his voice. The placeholders are filled from the order when the
+ * draft opens; one the app does not recognise is left exactly as typed, so a
+ * mis-spelling turns up in the draft instead of disappearing.
+ */
+function QuoteEmail() {
+  const [state, setState] = useState(null);
+  const toast = useToast();
+
+  useEffect(() => { api.quote.template().then(setState).catch(() => {}); }, []);
+  if (!state) return null;
+
+  const save = async (patch) => {
+    const next = { ...state, ...patch };
+    setState(next);
+    await api.settings.set({ key: 'quoteEmailTemplate', value: next.template });
+    await api.settings.set({ key: 'quoteEmailSubject', value: next.subject });
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div className="card-head">
+        <h3>Quote email</h3>
+        <div className="spacer" />
+        <button
+          className="btn btn-sm btn-ghost"
+          onClick={async () => { await save({ ...state.defaults }); toast('Wording put back to the original', 'ok'); }}
+        >
+          Reset wording
+        </button>
+      </div>
+      <div className="card-pad">
+        <div className="field">
+          <label>Subject</label>
+          <DebouncedInput className="input" value={state.subject} onCommit={(v) => save({ subject: v })} />
+        </div>
+        <div className="field">
+          <label>Message</label>
+          <DebouncedInput
+            as="textarea"
+            className="textarea"
+            style={{ minHeight: 230, fontFamily: 'var(--mono)', fontSize: 12.5 }}
+            value={state.template}
+            onCommit={(v) => save({ template: v })}
+          />
+        </div>
+        <div className="hint" style={{ marginBottom: 8 }}>
+          Anything in braces is filled in from the order when the draft opens.
+        </div>
+        <div className="grid grid-2">
+          {state.variables.map((v) => (
+            <div key={v.key} className="price-line" style={{ padding: '4px 0' }}>
+              <code className="mono tiny">{`{${v.key}}`}</code>
+              <span className="tiny faint">{v.describes}</span>
+            </div>
+          ))}
+        </div>
+        <p className="tiny faint" style={{ margin: '10px 0 0' }}>
+          Nothing is sent from here. The draft opens in your own mail program and you read it before it goes.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function Settings({ catalog, overrides, onOverridesChanged, keyState, onKeyChanged }) {
   const [providers, setProviders] = useState([]);
   const [config, setConfig] = useState({
@@ -233,6 +301,8 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
 
         {tab === 'prices' && (
           <div className="card">
+          <QuoteEmail />
+
             <div className="card-head">
               <h3>Price list</h3>
               <div className="spacer" />

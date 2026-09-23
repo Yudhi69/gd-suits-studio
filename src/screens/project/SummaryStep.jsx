@@ -173,6 +173,19 @@ ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c"
           <div className="card-head">
             <h3>Specification</h3>
             <div className="spacer" />
+            <button
+              className="btn btn-sm"
+              title={project.email ? `Draft an email to ${project.email}` : 'The client has no email address yet'}
+              disabled={!project.email}
+              onClick={async () => {
+                try {
+                  const r = await api.quote.email({ projectId: project.id });
+                  if (r?.opened) toast(`Draft opened for ${r.to}`, 'ok');
+                } catch (err) { toast(messageFor(err), 'err'); }
+              }}
+            >
+              Email the quote
+            </button>
             <button className="btn btn-sm btn-primary" onClick={exportFile} disabled={exporting}>
               {exporting ? <><Spinner /> Exporting...</> : 'Export client file'}
             </button>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { MEASUREMENTS } from '../../lib/catalog.js';
+import { MEASUREMENTS, includesPart } from '../../lib/catalog.js';
 import { UNITS, toDisplay, fromDisplay, unitShort, unitLabel, stepFor } from '../../lib/units.js';
-import { api, messageFor } from '../../lib/api.js';
+import { api, messageFor, projectMedia, clientMedia } from '../../lib/api.js';
 import { DebouncedInput, Spinner, useToast, Banner } from '../../components/ui.jsx';
 import NotesPanel from '../../components/NotesPanel.jsx';
 
@@ -26,6 +26,8 @@ const ADVICE_SCHEMA = {
   required: ['flags'],
 };
 
+const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
 export default function MeasureStep({ ctx, unit = 'cm', onUnitChange }) {
   const { project, saveMeasurement, addNote, deleteNote } = ctx;
   const [checking, setChecking] = useState(false);
@@ -33,13 +35,97 @@ export default function MeasureStep({ ctx, unit = 'cm', onUnitChange }) {
   const toast = useToast();
 
   const spec = ctx.spec ?? project.spec ?? {};
+  // The numbers belong to the suit being worked on. Without this the page
+  // showed whichever measurement came first, so on a wedding party the best
+  // man was measured against the groom's chest.
   const value = (garment, fieldId) =>
-    project.measurements.find((m) => m.garment === garment && m.field_id === fieldId);
+    project.measurements.find(
+      (m) => m.garment === garment && m.field_id === fieldId
+        && (ctx.activeSuitId ? m.suit_id === ctx.activeSuitId : true)
+    );
 
-  // A 2-piece has no waistcoat to measure.
+  // Nothing to measure for a garment this order does not include.
   const groups = Object.entries(MEASUREMENTS).filter(
-    ([key]) => key !== 'waistcoat' || spec.suitType === 'three_piece'
+    ([key]) => key !== 'waistcoat' || includesPart(spec.suitType ?? 'two_piece', 'waistcoat')
   );
+
+  const [exporting, setExporting] = useState(false);
+
+  /**
+   * The measurement form, as one file.
+   *
+   * It is the sheet GD sends a client who is measuring themselves at home and
+   * the sheet the cutter works from, so it carries the figures already taken,
+   * a blank beside each one that has not been, and the photographs and design
+   * references - a measurement without a picture of the man is half a form.
+   */
+  async function exportForm() {
+    setExporting(true);
+    try {
+      const person = ctx.activeSuit
+        ? `${ctx.activeSuit.name} ${ctx.activeSuit.surname}`.trim()
+        : `${project.name} ${project.surname}`.trim();
+
+      const table = groups.map(([key, group]) => {
+        const rows = group.fields.map((f) => {
+          const m = value(key, f.id);
+          const shown = m && m.value !== null ? toDisplay(m.value, unit) : '';
+          return `<tr><td>${esc(f.label)}</td><td class="num">${esc(shown)}</td><td class="u">${esc(unitShort(unit))}</td></tr>`;
+        }).join('');
+        return `<h3>${esc(group.label ?? key)}</h3><table>${rows}</table>`;
+      }).join('');
+
+      const pictures = (project.photos ?? [])
+        .filter((p) => !p.fitting_id && ['front', 'side', 'back', 'fabric', 'lining'].includes(p.slot))
+        .filter((p) => (ctx.activeSuit ? p.client_id === ctx.activeSuit.client_id || p.suit_id === ctx.activeSuit.id : true))
+        .map((p) => `<figure><img src="${projectMedia(project.id, p.filename)}"><figcaption>${esc(p.slot)}</figcaption></figure>`)
+        .join('');
+
+      const refs = (ctx.references ?? [])
+        .map((r) => `<figure><img src="${clientMedia(project.client_id, r.filename)}"><figcaption>${esc(r.title || 'Reference')}</figcaption></figure>`)
+        .join('');
+
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>Measurement form - ${esc(person)}</title>
+<style>
+ body{font-family:'Iowan Old Style',Palatino,Georgia,serif;color:#14120f;margin:38px;max-width:860px}
+ h1{font-size:26px;margin:0 0 2px} h2{font-size:15px;font-weight:400;color:#5d574c;margin:0 0 20px}
+ h3{font-size:13px;text-transform:uppercase;letter-spacing:.09em;margin:22px 0 6px;color:#8a6d14}
+ table{width:100%;border-collapse:collapse;font-family:system-ui;font-size:13px}
+ td{border-bottom:1px solid #e7e2d8;padding:7px 4px}
+ td.num{width:90px;text-align:right;border-bottom:1px solid #14120f}
+ td.u{width:34px;color:#8b8578;font-size:11px}
+ .meta{font-family:system-ui;font-size:13px;color:#5d574c;line-height:1.6}
+ .pics{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px}
+ figure{margin:0;width:150px} img{width:100%;border-radius:8px;border:1px solid #e7e2d8}
+ figcaption{font-family:system-ui;font-size:10.5px;color:#8b8578;text-transform:capitalize;margin-top:3px}
+ .sign{font-family:system-ui;font-size:12.5px;margin-top:34px;color:#5d574c}
+</style></head><body>
+<h1>Measurement form</h1>
+<h2>${esc(person)}${project.order_ref ? ` &middot; ${esc(project.order_ref)}` : ''}</h2>
+<p class="meta">
+  ${project.contact ? `${esc(project.contact)}<br>` : ''}${project.email ? `${esc(project.email)}<br>` : ''}
+  ${ctx.activeSuit?.fabric_name ? `Cloth: ${esc(ctx.activeSuit.fabric_name)}${ctx.activeSuit.fabric_code ? ` (${esc(ctx.activeSuit.fabric_code)})` : ''}<br>` : ''}
+  ${project.event_date ? `Needed by: ${esc(project.event_date)}` : ''}
+</p>
+${table}
+${pictures ? `<h3>Photographs</h3><div class="pics">${pictures}</div>` : ''}
+${refs ? `<h3>Design reference</h3><div class="pics">${refs}</div>` : ''}
+<p class="sign">Measured by: ______________________  Date: ____________</p>
+<p class="meta" style="margin-top:22px">Gareth Duncan &middot; GD Suits &middot; 0824856941 &middot; gareth@gdsuits.co.za</p>
+</body></html>`;
+
+      const res = await api.forms.save({
+        projectId: project.id,
+        html,
+        name: `${person} measurement form`,
+      });
+      if (res?.saved) toast(`Saved ${res.name}`, 'ok');
+    } catch (err) {
+      toast(messageFor(err), 'err');
+    } finally {
+      setExporting(false);
+    }
+  }
 
   const filled = project.measurements.filter((m) => m.value !== null).length;
   const totalFields = groups.reduce((sum, [, g]) => sum + g.fields.length, 0);
@@ -88,6 +174,9 @@ export default function MeasureStep({ ctx, unit = 'cm', onUnitChange }) {
               <div className="tiny faint">{filled} of {totalFields} taken - shown in {unitLabel(unit)}</div>
             </div>
             <div className="spacer" />
+            <button className="btn btn-sm" onClick={exportForm} disabled={exporting} style={{ marginRight: 8 }}>
+              {exporting ? 'Saving...' : 'Measurement form'}
+            </button>
             <div className="unit-switch" role="group" aria-label="Measurement units">
               {UNITS.map((u) => (
                 <button
