@@ -434,6 +434,36 @@ const MIGRATIONS = [
     d.exec(`UPDATE projects SET measurements_done = 1
              WHERE measurement_form_received = 1 OR measurement_date <> ''`);
   },
+  // v12 - the specs, after the garment pages were rebuilt to GD's lists.
+  //
+  // Two fields changed shape rather than name, so a straight rename would not
+  // do it. The waistband was one choice and is now a list of extras, and the
+  // waistcoat's button count split in two because a single-breasted waistcoat
+  // counts 4, 5 or 6 and a double-breasted one counts 6 or 8. Anything already
+  // filed is carried across; nothing is guessed where there was no answer.
+  (d) => {
+    const rows = d.prepare("SELECT id, spec_json FROM projects WHERE spec_json <> '' AND spec_json <> '{}'").all();
+    const save = d.prepare('UPDATE projects SET spec_json = ? WHERE id = ?');
+    for (const row of rows) {
+      let spec;
+      try { spec = JSON.parse(row.spec_json); } catch { continue; }
+      if (!spec || typeof spec !== 'object') continue;
+      let touched = false;
+
+      if (spec.waistband && !spec.waistbandExtras) {
+        spec.waistbandExtras = [spec.waistband];
+        touched = true;
+      }
+      if (spec.wcButtons && !spec.wcButtonsSingle && !spec.wcButtonsDouble) {
+        // A 3-button waistcoat has no place in the new list, so it lands on
+        // the lowest count that does rather than being dropped.
+        if (spec.wcBreast === 'double') spec.wcButtonsDouble = spec.wcButtons === '8' ? '8' : '6';
+        else spec.wcButtonsSingle = ['4', '5', '6'].includes(spec.wcButtons) ? spec.wcButtons : '4';
+        touched = true;
+      }
+      if (touched) save.run(JSON.stringify(spec), row.id);
+    }
+  },
 ];
 
 function open(userDataPath) {

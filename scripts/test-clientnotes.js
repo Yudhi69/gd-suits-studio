@@ -62,10 +62,13 @@ app.whenReady().then(async () => {
     const extras = { labels: labels() };
 
     tab('Detail').click(); await wait(700);
-    const details = { labels: labels(), fileInputs: document.querySelectorAll('input[type=file]').length };
+    const details = { labels: labels(), options: options(), fileInputs: document.querySelectorAll('input[type=file]').length };
+
+    tab('Lining').click(); await wait(700);
+    const lining = { labels: labels(), options: options(), fileInputs: document.querySelectorAll('input[type=file]').length };
 
     const status = document.querySelector('.topbar .pill')?.textContent;
-    return JSON.stringify({ jacket, pants, extras, details, status });
+    return JSON.stringify({ jacket, pants, extras, details, lining, status });
   })()`));
 
   check(ui.jacket.labels.includes('Button Finish'), 'the jacket has a button finish choice', ui.jacket.labels.join(' | '));
@@ -73,11 +76,15 @@ app.whenReady().then(async () => {
     'with neutral, gold, silver and other - GD calls the last one other, not custom');
   check(!ui.jacket.labels.includes('Sleeve Buttons'), 'sleeve buttons are gone');
   check(ui.pants.labels.includes('Bottom Finish'), 'pants have a bottom finish', ui.pants.labels.join(' | '));
-  check(['Straight Cut','Tapered Finish','Slim Fit'].every(o => ui.pants.options.some(t => t.includes(o))), 'with straight, tapered and slim');
+  check(['Slim Fit (Tapered)','Straight Cut','Boot Leg','Wide Leg'].every(o => ui.pants.options.some(t => t.includes(o))),
+    'with the bottom fits GD listed', ui.pants.options.join(' | '));
   check(!ui.extras.labels.some(l => l === 'Button Colour'), 'the shirt button colour is gone', ui.extras.labels.join(' | '));
-  check(ui.details.labels.some(l => l.includes('jacket collar')), 'a collar monogram exists', ui.details.labels.join(' | '));
-  check(ui.details.labels.some(l => l.includes('collage')), 'the lining collage upload appears for a custom pattern');
-  check(ui.details.fileInputs > 0, 'and it offers a file picker');
+  check(ui.details.labels.some(l => l.includes('Embroidery Monogram')), 'the monogram is one field with places to choose',
+    ui.details.labels.join(' | '));
+  check(ui.details.options.some(o => o.includes('Jacket collar')), 'and the jacket collar is one of them', ui.details.options.join(' | '));
+  check(ui.lining.labels.some(l => l.includes('collage')), 'the lining collage upload sits with the lining',
+    ui.lining.labels.join(' | '));
+  check(ui.lining.fileInputs > 0, 'and it offers a file picker');
   check(ui.status === 'Ready for first fitting', 'the status reads the stage GD named', ui.status);
 
   log(`\n${fail === 0 ? 'ALL CLIENT-NOTE CHECKS PASSED' : 'FAILED'} — ${pass} passed, ${fail} failed`);

@@ -28,7 +28,23 @@ export const EVENT_TYPES = [
 export const BASE_PRICES = {
   two_piece: 4500,
   three_piece: 5800,
+  // Sold on their own. Starting figures - every one of these is editable in
+  // Settings, where the shop's real prices live.
+  blazer_only: 3200,
+  waistcoat_only: 1500,
+  pants_only: 1700,
 };
+
+/** Which garments a base choice actually includes. */
+export const SUIT_PARTS = {
+  two_piece: ['jacket', 'pants'],
+  three_piece: ['jacket', 'waistcoat', 'pants'],
+  blazer_only: ['jacket'],
+  waistcoat_only: ['waistcoat'],
+  pants_only: ['pants'],
+};
+export const includesPart = (suitType, part) =>
+  (SUIT_PARTS[suitType] ?? SUIT_PARTS.two_piece).includes(part);
 
 /**
  * Photo slots captured in the Capture step. `role` feeds the AI prompt builder:
@@ -65,10 +81,55 @@ export const STEPS = [
         label: 'Suit Type',
         type: 'choice',
         required: true,
-        prompt: (v) => (v === 'three_piece' ? 'a three-piece suit (jacket, waistcoat and trousers)' : 'a two-piece suit (jacket and trousers)'),
+        prompt: (v) => ({
+          two_piece: 'a two-piece suit (jacket and trousers)',
+          three_piece: 'a three-piece suit (jacket, waistcoat and trousers)',
+          blazer_only: 'a single blazer, worn on its own',
+          waistcoat_only: 'a single waistcoat, worn on its own',
+          pants_only: 'a single pair of trousers, worn on their own',
+        })[v] ?? 'a two-piece suit (jacket and trousers)',
         options: [
           { key: 'two_piece', label: '2-Piece', desc: 'Jacket and pants', price: 0, basePrice: BASE_PRICES.two_piece },
           { key: 'three_piece', label: '3-Piece', desc: 'Adds a waistcoat', price: 0, basePrice: BASE_PRICES.three_piece },
+          { key: 'blazer_only', label: 'Single Blazer', desc: 'Jacket alone', price: 0, basePrice: BASE_PRICES.blazer_only },
+          { key: 'waistcoat_only', label: 'Single Waistcoat', desc: 'Waistcoat alone', price: 0, basePrice: BASE_PRICES.waistcoat_only },
+          { key: 'pants_only', label: 'Single Pants', desc: 'Trousers alone', price: 0, basePrice: BASE_PRICES.pants_only },
+        ],
+      },
+    ],
+  },
+
+  {
+    key: 'lining',
+    title: 'Lining & Stitching',
+    blurb: 'Chosen with the cloth, not buried in the detail page.',
+    fields: [
+      {
+        id: 'liningMode',
+        label: 'Lining',
+        type: 'choice',
+        prompt: () => null, // described in its own paragraph of the render prompt
+        options: [
+          { key: 'colour', label: 'Choose Colour', price: 0 },
+          { key: 'pattern', label: 'Upload Pattern', desc: 'Custom cloth', price: 450 },
+        ],
+      },
+      { id: 'liningColour', label: 'Lining Colour & Pattern', type: 'colour', showIf: (s) => s.liningMode === 'colour',
+        default: '#1b2a4a', prompt: () => null },
+      { id: 'liningCode', label: 'Lining Material Code', type: 'text', mono: true, placeholder: 'e.g. LN 1116', prompt: () => null },
+      { id: 'liningCollage', label: 'Custom lining - upload collage', type: 'images', slot: 'lining_collage',
+        showIf: (s) => s.liningMode === 'pattern',
+        hint: 'The artwork the lining is printed from. Several images can be added.',
+        prompt: () => null },
+      {
+        id: 'stitching',
+        label: 'Stitching & Piping',
+        type: 'choice',
+        // White and black only. GD was explicit: these are the only choices.
+        prompt: (v) => `${v} contrast stitching and piping`,
+        options: [
+          { key: 'white', label: 'White', price: 0 },
+          { key: 'black', label: 'Black', price: 0 },
         ],
       },
     ],
@@ -78,6 +139,7 @@ export const STEPS = [
     key: 'jacket',
     title: 'Jacket',
     blurb: 'The silhouette the client will be judged on from across the room.',
+    showIf: (s) => includesPart(s.suitType ?? 'two_piece', 'jacket'),
     fields: [
       {
         id: 'jacketFit',
@@ -257,9 +319,82 @@ export const STEPS = [
   },
 
   {
+    key: 'waistcoat',
+    title: 'Waistcoat',
+    blurb: 'Shown on a 3-piece, or when a waistcoat is ordered on its own.',
+    showIf: (s) => includesPart(s.suitType ?? 'two_piece', 'waistcoat'),
+    fields: [
+      {
+        id: 'wcShape',
+        label: 'Shape',
+        type: 'choice',
+        prompt: (v) => `a ${v.replace('_', '-')} waistcoat opening`,
+        options: [
+          { key: 'v_cut', label: 'V-Cut', price: 0 },
+          { key: 'u_shape', label: 'U-Shape (French Cut)', price: 0 },
+        ],
+      },
+      {
+        id: 'wcBreast',
+        label: 'Button Style',
+        type: 'choice',
+        prompt: (v) => `a ${v} breasted waistcoat`,
+        options: [
+          { key: 'single', label: 'Single Breasted', price: 0 },
+          { key: 'double', label: 'Double Breasted', price: 300 },
+        ],
+      },
+      {
+        id: 'wcButtonsSingle',
+        label: 'Number of Buttons',
+        type: 'choice',
+        showIf: (s) => (s.wcBreast ?? 'single') === 'single',
+        prompt: (v) => `${v} waistcoat buttons`,
+        options: [
+          { key: '4', label: '4 Buttons', desc: 'Standard', price: 0 },
+          { key: '5', label: '5 Buttons', desc: 'High cut', price: 0 },
+          { key: '6', label: '6 Buttons', desc: 'Very high cut', price: 0 },
+        ],
+      },
+      {
+        id: 'wcButtonsDouble',
+        label: 'Number of Buttons',
+        type: 'choice',
+        showIf: (s) => s.wcBreast === 'double',
+        prompt: (v) => `${v} waistcoat buttons`,
+        options: [
+          { key: '6', label: '6 Buttons', desc: 'Standard', price: 0 },
+          { key: '8', label: '8 Buttons', desc: 'High cut', price: 0 },
+        ],
+      },
+      {
+        id: 'wcLapel',
+        label: 'Lapel',
+        type: 'choice',
+        prompt: (v) => (v === 'lapel' ? 'with lapels on the waistcoat' : 'with a collarless waistcoat'),
+        options: [
+          { key: 'no_lapel', label: 'No', price: 0 },
+          { key: 'lapel', label: 'Yes', price: 250 },
+        ],
+      },
+      {
+        id: 'wcPockets',
+        label: 'Pocket Style',
+        type: 'choice',
+        prompt: (v) => (v === 'none' ? 'no waistcoat pockets' : 'standard waistcoat pockets'),
+        options: [
+          { key: 'none', label: 'No Pockets', price: 0 },
+          { key: 'standard', label: 'Standard Pockets', price: 120 },
+        ],
+      },
+    ],
+  },
+
+  {
     key: 'pants',
     title: 'Pants',
     blurb: 'Fit and hem decide whether the whole suit reads sharp or sloppy.',
+    showIf: (s) => includesPart(s.suitType ?? 'two_piece', 'pants'),
     fields: [
       {
         id: 'pantsFit',
@@ -273,7 +408,15 @@ export const STEPS = [
           { key: 'straight', label: 'Straight', price: 0 },
           { key: 'boot_leg', label: 'Boot Leg', price: 0 },
           { key: 'wide_leg', label: 'Wide Leg', price: 0 },
+          { key: 'custom', label: 'Custom', desc: 'Explain below', price: 0 },
         ],
+      },
+      {
+        id: 'pantsFitOther',
+        label: 'Describe the fit',
+        type: 'text',
+        showIf: (s) => s.pantsFit === 'custom',
+        prompt: (v) => `trouser fit: ${v}`,
       },
       {
         id: 'pleats',
@@ -288,17 +431,6 @@ export const STEPS = [
         ],
       },
       {
-        id: 'waistband',
-        label: 'Waistband',
-        type: 'choice',
-        required: true,
-        prompt: (v) => (v === 'side_adjusters' ? 'side adjusters instead of belt loops' : 'belt loops'),
-        options: [
-          { key: 'belt_loops', label: 'Belt Loops', price: 0 },
-          { key: 'side_adjusters', label: 'Side Adjusters', desc: 'No belt needed', price: 180 },
-        ],
-      },
-      {
         id: 'waistbandJoin',
         label: 'Waistband Join',
         type: 'choice',
@@ -308,23 +440,66 @@ export const STEPS = [
           { key: 'clips', label: 'Clips', price: 0 },
           { key: 'single_button', label: 'Single Button', price: 0 },
           { key: 'double_button', label: 'Double Button', price: 80 },
+          { key: 'other', label: 'Other', desc: 'Explain below', price: 0 },
         ],
+      },
+      {
+        id: 'waistbandJoinOther',
+        label: 'Describe the fastening',
+        type: 'text',
+        showIf: (s) => s.waistbandJoin === 'other',
+        prompt: (v) => `waistband fastening: ${v}`,
+      },
+      {
+        id: 'waistbandExtras',
+        label: 'Waistband Extras',
+        type: 'multi',
+        hint: 'Choose as many as the trousers carry.',
+        prompt: (v, spec) => {
+          const names = { belt_loops: 'belt loops', side_adjusters: 'side adjusters', elastic_band: 'an elastic waistband' };
+          const parts = (Array.isArray(v) ? v : []).map((k) => (k === 'other' ? spec.waistbandExtrasOther : names[k])).filter(Boolean);
+          return parts.length ? `a waistband with ${parts.join(', ')}` : null;
+        },
+        options: [
+          { key: 'belt_loops', label: 'Belt Loops', price: 0 },
+          { key: 'side_adjusters', label: 'Side Adjusters', desc: 'No belt needed', price: 180 },
+          { key: 'elastic_band', label: 'Elastic Band', price: 90 },
+          { key: 'other', label: 'Other', desc: 'Explain below', price: 0 },
+        ],
+      },
+      {
+        id: 'waistbandExtrasOther',
+        label: 'Describe the waistband extra',
+        type: 'text',
+        showIf: (s) => Array.isArray(s.waistbandExtras) && s.waistbandExtras.includes('other'),
+        prompt: () => null, // already carried by the extras clause
       },
       {
         id: 'bottomFinish',
         label: 'Bottom Finish',
         type: 'choice',
         required: true,
-        prompt: (v) => ({
+        prompt: (v, spec) => ({
+          slim: 'a slim, tapered finish through the bottom of the leg',
           straight: 'a straight cut through the bottom of the leg',
-          tapered: 'a tapered finish through the bottom of the leg',
-          slim: 'a slim fit through the bottom of the leg',
+          boot_leg: 'a boot-leg opening at the bottom of the leg',
+          wide_leg: 'a wide opening at the bottom of the leg',
+          other: spec.bottomFinishOther ? `a ${spec.bottomFinishOther} finish at the bottom of the leg` : null,
         })[v],
         options: [
+          { key: 'slim', label: 'Slim Fit (Tapered)', price: 0 },
           { key: 'straight', label: 'Straight Cut', price: 0 },
-          { key: 'tapered', label: 'Tapered Finish', price: 0 },
-          { key: 'slim', label: 'Slim Fit', price: 0 },
+          { key: 'boot_leg', label: 'Boot Leg', price: 0 },
+          { key: 'wide_leg', label: 'Wide Leg', price: 0 },
+          { key: 'other', label: 'Other', desc: 'Explain below', price: 0 },
         ],
+      },
+      {
+        id: 'bottomFinishOther',
+        label: 'Describe the bottom finish',
+        type: 'text',
+        showIf: (s) => s.bottomFinish === 'other',
+        prompt: () => null, // carried by the bottom-finish clause
       },
       {
         id: 'hem',
@@ -352,82 +527,25 @@ export const STEPS = [
   },
 
   {
-    key: 'waistcoat',
-    title: 'Waistcoat',
-    blurb: 'Only shown on a 3-piece.',
-    showIf: (s) => s.suitType === 'three_piece',
-    fields: [
-      {
-        id: 'wcShape',
-        label: 'Shape',
-        type: 'choice',
-        prompt: (v) => `a ${v.replace('_', '-')} waistcoat opening`,
-        options: [
-          { key: 'v_cut', label: 'V-Cut', price: 0 },
-          { key: 'u_shape', label: 'U-Shape', price: 0 },
-        ],
-      },
-      {
-        id: 'wcBreast',
-        label: 'Button Style',
-        type: 'choice',
-        prompt: (v) => `a ${v} breasted waistcoat`,
-        options: [
-          { key: 'single', label: 'Single Breasted', price: 0 },
-          { key: 'double', label: 'Double Breasted', price: 300 },
-        ],
-      },
-      {
-        id: 'wcButtons',
-        label: 'Number of Buttons',
-        type: 'choice',
-        prompt: (v) => `${v} waistcoat buttons`,
-        options: [
-          { key: '3', label: '3 Buttons', desc: 'Low cut', price: 0 },
-          { key: '4', label: '4 Buttons', desc: 'Standard', price: 0 },
-          { key: '5', label: '5 Buttons', desc: 'High cut', price: 0 },
-        ],
-      },
-      {
-        id: 'wcLapel',
-        label: 'Lapel',
-        type: 'choice',
-        prompt: (v) => (v === 'lapel' ? 'with lapels on the waistcoat' : 'with a collarless waistcoat'),
-        options: [
-          { key: 'no_lapel', label: 'No Lapel', price: 0 },
-          { key: 'lapel', label: 'Lapel', price: 250 },
-        ],
-      },
-      {
-        id: 'wcPockets',
-        label: 'Pocket Style',
-        type: 'choice',
-        prompt: (v) => (v === 'none' ? 'no waistcoat pockets' : 'standard waistcoat pockets'),
-        options: [
-          { key: 'none', label: 'No Pockets', price: 0 },
-          { key: 'standard', label: 'Standard Pockets', price: 120 },
-        ],
-      },
-    ],
-  },
-
-  {
     key: 'extras',
     title: 'Extras',
-    blurb: 'Shirt, neckwear and pins - each one adds to the total.',
+    blurb: 'Shirt, neckwear, pins, shoes - each one adds to the total.',
     fields: [
       { id: 'shirt', label: 'Shirt', type: 'toggle', price: 850, prompt: (v) => (v ? 'a matching dress shirt' : null) },
+      { id: 'shirtColour', label: 'Shirt Colour', type: 'colour', showIf: (s) => s.shirt, default: '#ffffff',
+        prompt: (v) => `the shirt in ${nameColour(v)} (${v})` },
+      { id: 'shirtCode', label: 'Shirt Material Code', type: 'text', mono: true, showIf: (s) => s.shirt,
+        placeholder: 'e.g. MPT 1747', prompt: () => null },
       {
         id: 'shirtCollar',
         label: 'Collar Type',
         type: 'choice',
         showIf: (s) => s.shirt,
-        prompt: (v) => `a ${v.replace('_', ' ')} shirt collar`,
+        prompt: (v) => `a ${({ standard: 'standard', cutaway: 'cutaway', wing: 'winged' })[v] ?? v} shirt collar`,
         options: [
-          { key: 'spread', label: 'Spread', price: 0 },
+          { key: 'standard', label: 'Standard', price: 0 },
           { key: 'cutaway', label: 'Cutaway', price: 60 },
-          { key: 'classic', label: 'Classic Point', price: 0 },
-          { key: 'wing', label: 'Wing', desc: 'Black tie', price: 90 },
+          { key: 'wing', label: 'Winged', desc: 'Black tie', price: 90 },
         ],
       },
       {
@@ -435,14 +553,39 @@ export const STEPS = [
         label: 'Cuff Style',
         type: 'choice',
         showIf: (s) => s.shirt,
-        prompt: (v) => (v === 'french' ? 'french cuffs with cufflinks' : 'barrel cuffs'),
+        prompt: (v) => (v === 'french' ? 'double (french) cuffs with cufflinks' : 'single cuffs'),
         options: [
-          { key: 'barrel', label: 'Barrel', price: 0 },
-          { key: 'french', label: 'French', desc: 'Cufflinks', price: 180 },
+          { key: 'barrel', label: 'Single Cuff', price: 0 },
+          { key: 'french', label: 'Double Cuff (French)', desc: 'Cufflinks', price: 180 },
         ],
       },
-      { id: 'shirtFinishes', label: 'Custom shirt finishes', type: 'longtext', showIf: (s) => s.shirt, placeholder: 'Contrast collar, placket detail, monogram on cuff...',
-        prompt: (v) => `shirt detail: ${v}` },
+      {
+        id: 'shirtButtonColour',
+        label: 'Shirt Button Colour',
+        type: 'choice',
+        showIf: (s) => s.shirt,
+        prompt: (v) => (v === 'neutral' ? null : `${v.replace('_', ' ')} shirt buttons`),
+        options: [
+          { key: 'neutral', label: 'Neutral', desc: 'Matching the shirt', price: 0 },
+          { key: 'white', label: 'White', price: 0 },
+          { key: 'black', label: 'Black', price: 0 },
+          { key: 'metallic_silver', label: 'Metallic Silver', price: 120 },
+          { key: 'metallic_gold', label: 'Metallic Gold', price: 120 },
+        ],
+      },
+      {
+        id: 'shirtChest',
+        label: 'Shirt Chest',
+        type: 'choice',
+        showIf: (s) => s.shirt,
+        prompt: (v) => (v === 'pleated' ? 'a pleated shirt front' : null),
+        options: [
+          { key: 'normal', label: 'Normal', price: 0 },
+          { key: 'pleated', label: 'Pleated', desc: 'Black tie', price: 220 },
+        ],
+      },
+      { id: 'shirtFinishes', label: 'Custom shirt finishes', type: 'longtext', showIf: (s) => s.shirt,
+        placeholder: 'Contrast collar, placket detail, hidden buttons...', prompt: (v) => `shirt detail: ${v}` },
 
       { id: 'neckwear', label: 'Tie / Bow Tie', type: 'toggle', prompt: (v, s) => (v ? `a ${s.neckwearType === 'bow' ? 'bow tie' : 'tie'}` : null) },
       {
@@ -456,59 +599,89 @@ export const STEPS = [
           { key: 'bow', label: 'Bow Tie', price: 300 },
         ],
       },
-      { id: 'neckwearColour', label: 'Neckwear Colour', type: 'colour', showIf: (s) => s.neckwear,
-        default: '#7b1113',
+      { id: 'neckwearColour', label: 'Tie Colour', type: 'colour', showIf: (s) => s.neckwear, default: '#7b1113',
         prompt: (v, s) => `the ${s.neckwearType === 'bow' ? 'bow tie' : 'tie'} in ${nameColour(v)} (${v})` },
+      {
+        id: 'pocketSquare',
+        label: 'Pocket Square',
+        type: 'choice',
+        showIf: (s) => s.neckwear,
+        prompt: (v, s) =>
+          v === 'same' ? 'a pocket square in the same cloth as the tie'
+            : v === 'different' ? `a pocket square in ${nameColour(s.pocketSquareColour ?? '#ffffff')}`
+            : null,
+        options: [
+          { key: 'none', label: 'None', price: 0 },
+          { key: 'same', label: 'Same as tie', price: 150 },
+          { key: 'different', label: 'Different colour', price: 150 },
+        ],
+      },
+      { id: 'pocketSquareColour', label: 'Pocket Square Colour', type: 'colour',
+        showIf: (s) => s.pocketSquare === 'different', default: '#ffffff', prompt: () => null },
+      { id: 'tieReference', label: 'Tie reference photo', type: 'images', slot: 'tie_reference',
+        showIf: (s) => s.neckwear,
+        hint: 'A picture of the tie or the cloth it is made from.',
+        prompt: () => null },
 
+      { id: 'lapelChain', label: 'Lapel Chain', type: 'toggle', price: 180, prompt: (v) => (v ? 'a lapel chain' : null) },
       { id: 'lapelPin', label: 'Lapel Pin', type: 'toggle', price: 250, prompt: (v) => (v ? 'a lapel pin' : null) },
       { id: 'lapelPinNote', label: 'Pin option', type: 'text', showIf: (s) => s.lapelPin, placeholder: 'Gold rose, feather, crest...',
         prompt: (v) => `the lapel pin is ${v}` },
+
+      { id: 'shoes', label: 'Shoes', type: 'toggle', prompt: (v, s) => (v ? `dress shoes${s.shoesNote ? ` - ${s.shoesNote}` : ''}` : null) },
+      { id: 'shoesNote', label: 'Shoe detail', type: 'text', showIf: (s) => s.shoes, placeholder: 'Black oxford, size 9...', prompt: () => null },
+      { id: 'socks', label: 'Socks', type: 'toggle', prompt: (v, s) => (v ? `socks${s.socksNote ? ` - ${s.socksNote}` : ''}` : null) },
+      { id: 'socksNote', label: 'Sock detail', type: 'text', showIf: (s) => s.socks, placeholder: 'Burgundy, mid-calf...', prompt: () => null },
     ],
   },
 
   {
     key: 'details',
     title: 'Detail Customisation',
-    blurb: 'The premium touches - lining, monogram, stitching.',
+    blurb: 'Custom lining, monogram and anything else the client asked for.',
     fields: [
+      { id: 'customLining', label: 'Custom Lining', type: 'toggle', price: 450,
+        prompt: (v) => (v ? null : null) },
       {
-        id: 'liningMode',
-        label: 'Lining',
+        id: 'customLiningScope',
+        label: 'Custom lining goes in',
         type: 'choice',
-        prompt: () => null, // the lining is described in its own prompt paragraph
+        showIf: (s) => s.customLining,
+        prompt: (v) => (v === 'jacket_waistcoat' ? 'custom lining in the jacket and the waistcoat' : 'custom lining in the jacket only'),
         options: [
-          { key: 'colour', label: 'Choose Colour', price: 0 },
-          { key: 'pattern', label: 'Upload Pattern', desc: 'Custom cloth', price: 450 },
+          { key: 'jacket', label: 'Jacket only', price: 0 },
+          { key: 'jacket_waistcoat', label: 'Jacket and waistcoat', price: 250 },
         ],
       },
-      { id: 'liningColour', label: 'Lining Colour', type: 'colour', showIf: (s) => s.liningMode === 'colour', default: '#1b2a4a', prompt: () => null },
-      { id: 'liningCollage', label: 'Custom lining - upload collage', type: 'images', slot: 'lining_collage',
-        showIf: (s) => s.liningMode === 'pattern',
-        hint: 'The artwork the lining is printed from. Several images can be added.',
-        prompt: () => null },
-      { id: 'monogramCollar', label: 'Monogram - jacket collar', type: 'text', price: 200, maxLength: 24,
-        placeholder: 'e.g. G.D.', prompt: (v) => `a monogram reading "${v}" under the jacket collar` },
-      { id: 'monogramPocket', label: 'Monogram - pocket', type: 'text', price: 200, maxLength: 24, placeholder: 'e.g. G.D.',
-        prompt: (v) => `a monogram reading "${v}" on the pocket` },
-      { id: 'monogramLining', label: 'Monogram - lining', type: 'text', price: 200, maxLength: 40, placeholder: 'e.g. Tailored for Sipho, 2026',
-        // Lining text is almost never visible on a worn suit - noted for the
-        // spec sheet, kept out of the render so the model does not paint it on.
-        prompt: () => null },
-      { id: 'monogramOther', label: 'Monogram - other (sleeve, etc.)', type: 'text', price: 200, maxLength: 40, prompt: () => null },
       {
-        id: 'stitching',
-        label: 'Stitching & Piping',
-        type: 'choice',
-        prompt: (v) => `${v} contrast stitching and piping`,
+        id: 'monogramLocations',
+        label: 'Embroidery Monogram',
+        type: 'multi',
+        hint: 'Where the monogram is embroidered. Choose as many as apply.',
+        prompt: (v, spec) => {
+          if (!Array.isArray(v) || !v.length || !spec.monogramText) return null;
+          // Only the places actually visible on a worn suit reach the render;
+          // the rest are for the spec sheet and the bench.
+          const visible = { jacket_collar: 'under the jacket collar', shirt_cuff: 'on the shirt cuff', shirt_collar: 'on the shirt collar' };
+          const shown = v.map((k) => visible[k]).filter(Boolean);
+          return shown.length ? `a monogram reading "${spec.monogramText}" ${shown.join(' and ')}` : null;
+        },
         options: [
-          { key: 'black', label: 'Black', price: 0 },
-          { key: 'white', label: 'White', price: 0 },
-          { key: 'custom', label: 'Custom Colour', desc: 'Pick below', price: 0 },
+          { key: 'jacket_collar', label: 'Jacket collar', price: 200 },
+          { key: 'jacket_pocket', label: 'Inside jacket pocket', price: 200 },
+          { key: 'jacket_lining', label: 'Inside jacket lining', price: 200 },
+          { key: 'shirt_cuff', label: 'Shirt cuff', price: 200 },
+          { key: 'shirt_collar', label: 'Shirt collar', price: 200 },
+          { key: 'other', label: 'Other', desc: 'Specify below', price: 200 },
         ],
       },
-      { id: 'pipingColour', label: 'Piping colour', type: 'colour', showIf: (s) => s.stitching === 'custom',
-        default: '#c9a227', prompt: (v) => `piping in ${nameColour(v)}` },
-      { id: 'designRequests', label: 'Any other design requests', type: 'longtext',
+      { id: 'monogramText', label: 'Monogram text', type: 'text', maxLength: 40, placeholder: 'e.g. G.D.',
+        showIf: (s) => Array.isArray(s.monogramLocations) && s.monogramLocations.length > 0,
+        prompt: () => null },
+      { id: 'monogramOtherPlace', label: 'Where else', type: 'text', maxLength: 60,
+        showIf: (s) => Array.isArray(s.monogramLocations) && s.monogramLocations.includes('other'),
+        prompt: () => null },
+      { id: 'designRequests', label: 'Any other customisation', type: 'longtext',
         placeholder: 'Anything the client asked for that is not covered above...',
         prompt: (v) => v },
     ],
@@ -541,6 +714,7 @@ export const MEASUREMENTS = {
       { id: 'wcChest', label: 'Chest', hint: 'Same level as the jacket chest.' },
       { id: 'wcWaist', label: 'Waist', hint: 'Natural waist, snug.' },
       { id: 'wcFrontLength', label: 'Front length', hint: 'Shoulder seam to the point of the hem.' },
+      { id: 'wcLength', label: 'Waistcoat length' },
       { id: 'wcBackLength', label: 'Back length', hint: 'Base of collar to the back hem.' },
     ],
   },
@@ -551,10 +725,9 @@ export const MEASUREMENTS = {
       { id: 'pantWaist', label: 'Waist', hint: 'Where the trouser is intended to sit.' },
       { id: 'pantSeat', label: 'Hip loop (over groin area)', hint: 'Fullest part, feet together.' },
       { id: 'thigh', label: 'Thigh loop', hint: 'Around the fullest part, 2cm below the crotch.' },
-      { id: 'ankleLoop', label: 'Ankle loop', hint: 'Around the ankle opening.' },
+      { id: 'ankleLoop', label: 'Bottom', hint: 'Around the ankle opening.' },
       { id: 'rise', label: 'Crotch', hint: 'Crotch seam up to the top of the waistband.' },
       { id: 'knee', label: 'Knee', hint: 'Around the knee cap. Not on the order form - useful for a close cut.' },
-      { id: 'inseam', label: 'Inseam', hint: 'Crotch to the hem. Not on the order form.' },
     ],
   },
 };

@@ -21,7 +21,7 @@
     "test:render": "cross-env DATA_DIR=.testdata/render electron scripts/test-render-pipeline.js",
     "test:tour": "cross-env DATA_DIR=.testdata/tour SHOT_DIR=.testdata/shots electron scripts/screenshot-tour.js",
     "test:security": "cross-env DATA_DIR=.testdata/security electron scripts/test-security.js",
-    "test": "npm run test:migrations && npm run test:secrets && npm run test:security && npm run test:branding && npm run test:models && npm run test:updates && npm run test:catalog && npm run test:clientorder && npm run test:workflow && npm run test:client && npm run test:quote && npm run test:operations && npm run test:import && npm run test:render",
+    "test": "npm run test:migrations && npm run test:secrets && npm run test:security && npm run test:branding && npm run test:models && npm run test:updates && npm run test:catalog && npm run test:clientorder && npm run test:garment && npm run test:workflow && npm run test:client && npm run test:quote && npm run test:operations && npm run test:import && npm run test:render",
     "test:updates": "cross-env DATA_DIR=.testdata/updates electron scripts/test-updates.js",
     "test:catalog": "cross-env DATA_DIR=.testdata/catalog electron scripts/test-catalog.js",
     "test:workflow": "cross-env DATA_DIR=.testdata/workflow electron scripts/test-workflow.js",
@@ -36,7 +36,8 @@
     "test:secrets": "electron scripts/test-secrets.js",
     "test:branding": "cross-env DATA_DIR=.testdata/branding electron scripts/test-branding.js",
     "make:badge": "electron scripts/make-badge.js",
-    "test:clientorder": "cross-env DATA_DIR=.testdata/clientorder electron scripts/test-client-order.js"
+    "test:clientorder": "cross-env DATA_DIR=.testdata/clientorder electron scripts/test-client-order.js",
+    "test:garment": "cross-env DATA_DIR=.testdata/garment electron scripts/test-garment.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",
