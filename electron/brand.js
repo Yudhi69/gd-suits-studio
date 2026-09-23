@@ -20,6 +20,7 @@ const { nativeImage } = require('electron');
  */
 
 const BADGE_PATH = path.join(__dirname, 'assets', 'render-badge.png');
+const WATERMARK_PATH = path.join(__dirname, 'assets', 'render-watermark.png');
 
 // Share of the image width the badge takes, and its distance from the edge.
 const WIDTH_SHARE = 0.34;
@@ -27,13 +28,29 @@ const MARGIN_SHARE = 0.025;
 // Below this the words stop being readable, so the badge grows instead.
 const MIN_BADGE_WIDTH = 140;
 
+// The watermark across the middle. The corner badge says who made the picture;
+// this says it again where a crop cannot take it off, which is the whole point
+// of a proof mark. Faint enough that the cloth is still the thing being judged
+// - at a tenth it reads at arm's length and disappears when you look at a lapel.
+const WATERMARK_WIDTH_SHARE = 0.62;
+const WATERMARK_ALPHA = 0.1;
+// Mean brightness above which the mark is painted dark instead of light.
+const LIGHT_BACKGROUND = 140;
+
+function load(file, what) {
+  const image = nativeImage.createFromPath(file);
+  if (image.isEmpty()) throw new Error(`The render ${what} is missing from the app.`);
+  return image;
+}
 let badgeImage = null;
 function badge() {
-  if (!badgeImage) {
-    badgeImage = nativeImage.createFromPath(BADGE_PATH);
-    if (badgeImage.isEmpty()) throw new Error('The render badge is missing from the app.');
-  }
+  if (!badgeImage) badgeImage = load(BADGE_PATH, 'badge');
   return badgeImage;
+}
+let watermarkImage = null;
+function watermark() {
+  if (!watermarkImage) watermarkImage = load(WATERMARK_PATH, 'watermark');
+  return watermarkImage;
 }
 
 /**
@@ -72,6 +89,114 @@ function blendInto(dst, width, height, src, bw, bh, x0, y0) {
   return dst;
 }
 
+/**
+ * The mean brightness of the part of the image a mark is about to cover,
+ * every `step`th pixel. Only that part: a render is a man against a backdrop,
+ * and averaging the whole picture would let a dark suit decide the tone of a
+ * mark lying on a pale wall.
+ */
+function meanBrightness(dst, width, height, x0, y0, w, h, step = 4) {
+  let total = 0, count = 0;
+  for (let y = Math.max(0, y0); y < Math.min(height, y0 + h); y += step) {
+    for (let x = Math.max(0, x0); x < Math.min(width, x0 + w); x += step) {
+      const i = (y * width + x) * 4;
+      total += 0.0722 * dst[i] + 0.7152 * dst[i + 1] + 0.2126 * dst[i + 2];
+      count++;
+    }
+  }
+  return count === 0 ? 255 : total / count;
+}
+
+/**
+ * Which tiles of the region a mark is about to cover are light.
+ *
+ * The mark is toned per tile rather than per image, because a render is a man
+ * against a backdrop and one wordmark crosses both: a single tone would put
+ * half of it where it cannot be seen. Per pixel would be finer still and
+ * wrong - a letter crossing a lapel would flicker tone along the weave. A tile
+ * is about the width of a stroke, so a letter changes tone once, at the edge.
+ */
+const TILE = 24;
+function lightTiles(dst, width, height, x0, y0, bw, bh, tile = TILE) {
+  const cols = Math.ceil(bw / tile), rows = Math.ceil(bh / tile);
+  const light = new Uint8Array(cols * rows);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const mean = meanBrightness(dst, width, height, x0 + c * tile, y0 + r * tile, tile, tile, 3);
+      light[r * cols + c] = mean > LIGHT_BACKGROUND ? 1 : 0;
+    }
+  }
+  return { light, cols, tile };
+}
+
+/**
+ * Blends the watermark in, faded to `alpha` and dark or light per tile.
+ *
+ * Both are one multiplication because the bitmap is premultiplied and the file
+ * is pure white - b, g and r all equal the alpha, which make-marks.js checks
+ * every time it draws it. Fading is scaling all four channels; going dark is
+ * keeping the alpha and setting the colour to nothing. Neither needs to know
+ * anything about the shape of the letters.
+ */
+function blendWatermark(dst, width, height, src, bw, bh, x0, y0, alpha, tiles) {
+  for (let y = 0; y < bh; y++) {
+    const dy = y0 + y;
+    if (dy < 0 || dy >= height) continue;
+    const row = Math.floor(y / tiles.tile) * tiles.cols;
+    for (let x = 0; x < bw; x++) {
+      const dx = x0 + x;
+      if (dx < 0 || dx >= width) continue;
+      const s = (y * bw + x) * 4;
+      if (src[s + 3] === 0) continue;
+      const a = Math.round(src[s + 3] * alpha);
+      if (a === 0) continue;
+      const colour = tiles.light[row + Math.floor(x / tiles.tile)] ? 0 : a;
+      const d = (dy * width + dx) * 4;
+      const keep = 255 - a;
+      for (let c = 0; c < 4; c++) {
+        const top = c === 3 ? a : colour;
+        dst[d + c] = Math.min(255, top + Math.round((dst[d + c] * keep) / 255));
+      }
+    }
+  }
+  return dst;
+}
+
+/** Resized marks, so a page of renders at one size resizes each mark once. */
+const RESIZED_LIMIT = 6;
+const resized = new Map();
+function resizedMark(image, key, options) {
+  if (resized.has(key)) return resized.get(key);
+  const mark = image.resize({ ...options, quality: 'best' });
+  const entry = { bitmap: mark.toBitmap(), ...mark.getSize() };
+  resized.set(key, entry);
+  if (resized.size > RESIZED_LIMIT) resized.delete(resized.keys().next().value);
+  return entry;
+}
+
+/**
+ * Lays the watermark across the middle of `dst`, in place, light or dark
+ * according to what it finds there. Returns which it chose, for the tests.
+ */
+function stampWatermark(dst, width, height) {
+  const source = watermark();
+  const ratio = source.getSize().height / source.getSize().width;
+  let w = Math.max(1, Math.round(width * WATERMARK_WIDTH_SHARE));
+  let h = Math.max(1, Math.round(w * ratio));
+  // A wide, short image - a swatch photographed on its side - would otherwise
+  // get a mark taller than the picture.
+  if (h > height * 0.6) {
+    h = Math.max(1, Math.round(height * 0.6));
+    w = Math.max(1, Math.round(h / ratio));
+  }
+  const { bitmap, width: bw, height: bh } = resizedMark(source, `wm:${w}`, { width: w });
+  const x0 = Math.round((width - bw) / 2);
+  const y0 = Math.round((height - bh) / 2);
+  const tiles = lightTiles(dst, width, height, x0, y0, bw, bh);
+  blendWatermark(dst, width, height, bitmap, bw, bh, x0, y0, WATERMARK_ALPHA, tiles);
+  return { x0, y0, width: bw, height: bh, tiles };
+}
+
 function stamp(buffer, format = 'png') {
   const base = nativeImage.createFromBuffer(Buffer.from(buffer));
   if (base.isEmpty()) throw new Error('That file is not an image that can be stamped.');
@@ -90,6 +215,7 @@ function stamp(buffer, format = 'png') {
   const y0 = Math.max(0, height - bh - margin);
 
   const dst = base.toBitmap();
+  stampWatermark(dst, width, height);
   blendInto(dst, width, height, mark.toBitmap(), bw, bh, x0, y0);
   const out = nativeImage.createFromBitmap(dst, { width, height });
   return format === 'jpeg' ? out.toJPEG(92) : out.toPNG();
@@ -123,4 +249,7 @@ function stampCached(key, buffer, format = 'png') {
   return out;
 }
 
-module.exports = { stamp, stampCached, blendInto, formatFor, mimeFor, BADGE_PATH };
+module.exports = {
+  stamp, stampCached, blendInto, blendWatermark, stampWatermark, lightTiles, meanBrightness,
+  formatFor, mimeFor, BADGE_PATH, WATERMARK_PATH,
+};

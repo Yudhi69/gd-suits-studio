@@ -35,7 +35,7 @@
     "import:workbook": "electron scripts/import-workbook.js",
     "test:secrets": "electron scripts/test-secrets.js",
     "test:branding": "cross-env DATA_DIR=.testdata/branding electron scripts/test-branding.js",
-    "make:badge": "electron scripts/make-badge.js",
+    "make:marks": "electron scripts/make-marks.js",
     "test:clientorder": "cross-env DATA_DIR=.testdata/clientorder electron scripts/test-client-order.js",
     "test:garment": "cross-env DATA_DIR=.testdata/garment electron scripts/test-garment.js",
     "test:party": "cross-env DATA_DIR=.testdata/party electron scripts/test-party.js",
