@@ -16,6 +16,16 @@ shell.showItemInFolder = (target) => { revealed.push(target); };
 const DOWNLOADS = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-updates-'));
 app.setPath('downloads', DOWNLOADS);
 
+// The version the app actually reports. Pinned as a literal until releases
+// started being cut automatically, at which point every release broke the
+// suite - the test's idea of "newer" has to be newer than whatever is built.
+const INSTALLED = require('../package.json').version;
+const NEWER = (() => {
+  const parts = INSTALLED.split('.').map((n) => parseInt(n, 10) || 0);
+  parts[parts.length - 1] += 1;
+  return parts.join('.');
+})();
+
 // A file that stands in for an installer, and what it really hashes to.
 const INSTALLER = Buffer.alloc(64 * 1024, 7);
 const INSTALLER_SHA = crypto.createHash('sha256').update(INSTALLER).digest('hex');
@@ -40,7 +50,7 @@ global.fetch = async (url, opts) => {
   }
   if (!u.includes('api.github.com')) return realFetch(url, opts);
   if (mode === 'passthrough') return realFetch(url, opts);
-  const version = mode === 'newer' ? '0.9.0' : '0.1.0';
+  const version = mode === 'newer' ? NEWER : INSTALLED;
   return new Response(JSON.stringify({
     tag_name: `v${version}`,
     name: `GD Suits Studio ${version}`,
@@ -77,8 +87,8 @@ app.whenReady().then(async () => {
   let r = JSON.parse(await run(`gd.updates.check().then(JSON.stringify)`));
   check(r.ok, 'check succeeds', JSON.stringify(r.error));
   check(r.data?.updateAvailable === true, 'update reported as available');
-  check(r.data?.version === '0.9.0', 'version parsed from the tag', r.data?.version);
-  check(r.data?.current === '0.1.0', 'current version read from the bundle', r.data?.current);
+  check(r.data?.version === NEWER, 'version parsed from the tag', r.data?.version);
+  check(r.data?.current === INSTALLED, 'current version read from the bundle', r.data?.current);
   check(/arm64\.dmg$/.test(r.data?.downloadName ?? ''), 'the arm64 build is chosen for this machine', r.data?.downloadName);
   check((r.data?.notes ?? '').includes('3D preview'), 'release notes carried through');
 
@@ -182,7 +192,7 @@ app.whenReady().then(async () => {
   const beforeHostile = fs.readdirSync(DOWNLOADS);
   r = JSON.parse(await run(`gd.updates.fetch({ url: 'https://elsewhere.example/x.dmg', name: 'x.dmg' }).then(JSON.stringify)`));
   const added = fs.readdirSync(DOWNLOADS).filter((f) => !beforeHostile.includes(f));
-  check(r.ok && added.length === 1 && added[0].startsWith('GD Suits Studio-0.9.0'),
+  check(r.ok && added.length === 1 && added[0].startsWith(`GD Suits Studio-${NEWER}`),
     'an address and a name passed anyway are both ignored - what arrives is the release',
     JSON.stringify({ added, error: r.error }));
 
@@ -194,14 +204,14 @@ app.whenReady().then(async () => {
     [...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('Settings')).click(); await wait(700);
     [...document.querySelectorAll('.step-tab')].find(b => b.textContent.includes('Updates')).click(); await wait(400);
     find('Check for updates').click(); await wait(1200);
-    const offered = !!find('Download 0.9.0');
-    find('Download 0.9.0').click(); await wait(1800);
+    const offered = !!find(${JSON.stringify('Download ' + NEWER)});
+    find(${JSON.stringify('Download ' + NEWER)}).click(); await wait(1800);
     const show = find('Show in Finder') ?? find('Show in folder');
     show?.click(); await wait(500);
     return JSON.stringify({
       offered,
       reveal: !!show,
-      stillOffering: !!find('Download 0.9.0'),
+      stillOffering: !!find(${JSON.stringify('Download ' + NEWER)}),
       says: document.querySelector('.banner-ok, .banner.ok')?.textContent ?? document.body.textContent.includes('Downloads folder'),
     });
   })()`).then(JSON.parse);

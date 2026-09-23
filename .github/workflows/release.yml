@@ -1,0 +1,121 @@
+# Builds and publishes a release every time something lands on main.
+#
+# The app checks this repository's releases for updates, so a merge that never
+# becomes a release is a change GD cannot get. Cutting one by hand meant there
+# were none at all for the first eighteen pull requests.
+#
+# Each release is <major>.<minor>.<run number> taken from package.json, which
+# gives a number that always goes up without anything committing back to main
+# and triggering itself. The version is written into package.json inside the
+# job, before building, so the app reports the same version the release is
+# tagged with - the updater compares those two and would offer an endless
+# update if they disagreed.
+#
+# Put [skip release] in a merge commit message for a change that does not
+# deserve 290MB of installers.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: pick
+        run: |
+          base=$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')")
+          echo "version=$base.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macOS
+            # Each architecture is built in its own pass on purpose: in one
+            # pass electron-builder runs them in parallel and they collide in
+            # a shared temp directory, and you silently get only one DMG.
+            build: npm run build && npx electron-builder --mac --arm64 && npx electron-builder --mac --x64
+            artifacts: release/*.dmg
+          - os: windows-latest
+            name: Windows
+            build: npm run build && npx electron-builder --win --x64
+            artifacts: release/*Setup*.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Stamp the version being released
+        run: npm version ${{ needs.version.outputs.version }} --no-git-tag-version --allow-same-version
+      - run: ${{ matrix.build }}
+        env:
+          # Ad-hoc signing only. There is no Developer ID yet, and without
+          # this electron-builder looks for one and fails the build rather
+          # than falling back.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.name }}
+          path: ${{ matrix.artifacts }}
+          retention-days: 3
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      - name: Build the page that ships beside the installers
+        run: node scripts/make-install-note.js "installers/Read me first.html"
+      - name: Notes, from the commit that caused this
+        run: |
+          {
+            echo "What landed:"
+            echo
+            git log -1 --pretty=%B
+            echo
+            echo "---"
+            echo
+            echo "**Intel MacBook** - the .dmg without \`arm64\` in its name."
+            echo "**Apple-chip MacBook** - the \`-arm64.dmg\`."
+            echo "**Windows** - the \`.exe\`."
+            echo
+            echo "Both systems warn on first launch because the app is not signed with a paid"
+            echo "certificate. On a Mac, hold Control and click the icon, then choose Open."
+            echo "On Windows, click More info then Run anyway. See \`Read me first.html\`."
+            echo
+            echo "Your orders, clients, photographs and measurements are never touched by an update."
+          } > notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.version.outputs.version }}
+          name: GD Suits Studio ${{ needs.version.outputs.version }}
+          body_path: notes.md
+          files: installers/*
+          fail_on_unmatched_files: true
