@@ -66,7 +66,10 @@ app.whenReady().then(async () => {
 
   log('\n=== the headings GD asked for ===');
   check(form.headings.includes('Parent or provider'), '"Parent or provider", not guardian', form.headings.join(' | '));
-  check(form.headings.includes('Order code'), '"Order code"', form.headings.join(' | '));
+  // GD meant the field, not the section: the occasion keeps its heading and
+  // the order's own code is the line inside it.
+  check(form.headings.includes('The occasion'), 'the occasion keeps its heading', form.headings.join(' | '));
+  check(form.labels.includes('Order code'), 'and "Order code" is the field', form.labels.slice(0, 12).join(' | '));
   check(form.headings.includes('Schedule'), 'and the schedule');
 
   log('\n=== the five dates, and the two ticks moved off the order ===');

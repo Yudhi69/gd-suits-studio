@@ -64,6 +64,15 @@ export function buildBreakdown(spec = {}, overrides = {}, steps = STEPS) {
             key,
           });
         }
+      } else if (field.type === 'multi') {
+        // Every chosen extra is charged on its own, under its own override key,
+        // so the tailor can reprice "side adjusters" without touching the rest.
+        for (const opt of field.options ?? []) {
+          if (!Array.isArray(value) || !value.includes(opt.key)) continue;
+          const key = priceKeyForOption(field.id, opt.key);
+          const delta = resolve(overrides, key, opt.price ?? 0);
+          if (delta) lines.push({ group: step.title, label: `${field.label}: ${opt.label}`, amount: delta, key });
+        }
       } else if (field.price) {
         // Toggles and text fields charge a flat fee once they carry a value.
         const filled = field.type === 'toggle' ? value === true : !!String(value ?? '').trim();
@@ -91,7 +100,7 @@ export function formatMoney(amount) {
 export function priceCatalogEntries(steps = STEPS) {
   const entries = [];
   for (const field of allFieldsOf(steps)) {
-    if (field.type === 'choice') {
+    if (field.type === 'choice' || field.type === 'multi') {
       for (const opt of field.options ?? []) {
         const base = typeof opt.basePrice === 'number' ? opt.basePrice : opt.price ?? 0;
         entries.push({

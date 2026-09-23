@@ -172,10 +172,10 @@ export default function ClientStep({ ctx, customOptions = [], onCatalogChanged }
         </div>
 
         <div className="card" style={{ marginTop: 16 }}>
-          <div className="card-head"><h3>Order code</h3></div>
+          <div className="card-head"><h3>The occasion</h3></div>
           <div className="card-pad">
             <div className="field">
-              <label>Order name</label>
+              <label>Order code</label>
               <DebouncedInput className="input" value={project.title} onCommit={(v) => updateProject({ title: v })} />
             </div>
 

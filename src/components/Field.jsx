@@ -96,6 +96,53 @@ export default function Field({ field, spec, overrides = {}, onChange, onCatalog
     );
   }
 
+  // Several answers at once - waistband extras, the places a monogram goes.
+  // Stored as an array of option keys, in the order the catalogue lists them
+  // so the spec sheet and the prompt read the same way every time.
+  if (field.type === 'multi') {
+    const chosen = Array.isArray(value) ? value : [];
+    const toggle = (key) =>
+      onChange(field.id, field.options.filter((o) => (o.key === key ? !chosen.includes(key) : chosen.includes(o.key))).map((o) => o.key));
+    return (
+      <div className="field">
+        <label>{field.label}</label>
+        {field.hint && <div className="hint" style={{ marginTop: -2 }}>{field.hint}</div>}
+        <div className="option-grid" style={{ marginTop: 8 }}>
+          {field.options.map((opt) => (
+            <button
+              type="button"
+              key={opt.key}
+              className={`option ${chosen.includes(opt.key) ? 'selected' : ''}`}
+              onClick={() => toggle(opt.key)}
+              aria-pressed={chosen.includes(opt.key)}
+            >
+              <div className="option-label">{opt.label}</div>
+              {opt.desc && <div className="option-desc">{opt.desc}</div>}
+              {opt.price > 0 && <div className="option-price">+{formatMoney(overrides[`${field.id}:${opt.key}`] ?? opt.price)}</div>}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // A short answer - a material code, a size. Distinct from longtext, which is
+  // a paragraph and gets a textarea.
+  if (field.type === 'text') {
+    return (
+      <div className="field">
+        <label>{field.label}</label>
+        {field.hint && <div className="hint" style={{ marginTop: -2 }}>{field.hint}</div>}
+        <DebouncedInput
+          className={`input ${field.mono ? 'mono' : ''}`}
+          placeholder={field.placeholder ?? ''}
+          value={value ?? ''}
+          onCommit={(v) => onChange(field.id, v)}
+        />
+      </div>
+    );
+  }
+
   if (field.type === 'images') {
     return <ImageField field={field} media={media} />;
   }
