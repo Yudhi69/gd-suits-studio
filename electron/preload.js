@@ -36,6 +36,7 @@ const CHANNELS = [
   'project:export',
   'app:info', 'app:openDataFolder', 'app:security',
   'updates:check', 'updates:download', 'updates:defaultFeed',
+  'updates:fetch', 'updates:cancel', 'updates:reveal',
 ];
 
 /**
@@ -55,6 +56,19 @@ for (const channel of CHANNELS) {
   api[group] ??= {};
   api[group][action] = (payload) => invoke(channel, payload);
 }
+
+/**
+ * Download progress, the one thing that travels the other way.
+ *
+ * It only listens; there is no channel here for the renderer to send on. What
+ * arrives was composed by the main process, so this is the app telling its own
+ * window how far a download has got, not a way into it.
+ */
+api.updates.onProgress = (fn) => {
+  const listener = (_event, data) => fn(data);
+  ipcRenderer.on('updates:progress', listener);
+  return () => ipcRenderer.removeListener('updates:progress', listener);
+};
 
 /** Media URL helpers, so the UI never hand-builds a gdmedia:// string. */
 api.mediaUrl = media.mediaUrl;

@@ -4,6 +4,9 @@ import { priceCatalogEntries, formatMoney } from '../lib/pricing.js';
 import { CURRENCY } from '../lib/catalog.js';
 import { Banner, Collapsible, ConfirmButton, DebouncedInput, Modal, SecretInput, Spinner, Switch, useToast } from '../components/ui.jsx';
 
+/** Bytes as megabytes, which is the only unit an installer is ever read in. */
+const megabytes = (bytes) => (Number(bytes || 0) / (1024 * 1024)).toFixed(1);
+
 /**
  * The wording of the quote email.
  *
@@ -85,6 +88,9 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
   const [update, setUpdate] = useState(null);
   const [updateError, setUpdateError] = useState(null);
   const [checking, setChecking] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [progress, setProgress] = useState(null);
+  const [downloaded, setDownloaded] = useState(null);
   const [feed, setFeed] = useState('');
   const [defaultFeed, setDefaultFeed] = useState('');
   const [autoCheck, setAutoCheck] = useState(false);
@@ -96,6 +102,10 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
   const toast = useToast();
 
   const modelsFor = (id) => modelsByProvider[id] ?? null;
+
+  // The main process reports how far the update download has got. It is the
+  // only thing that travels that way, and it is only ever listened to.
+  useEffect(() => api.updates.onProgress(setProgress), []);
 
   useEffect(() => {
     (async () => {
@@ -182,6 +192,9 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
   async function checkForUpdates() {
     setChecking(true);
     setUpdateError(null);
+    // A new check is a new release; whatever was downloaded before is not it.
+    setDownloaded(null);
+    setProgress(null);
     try {
       const result = await api.updates.check();
       setUpdate(result);
@@ -452,19 +465,52 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
                       </>
                     )}
 
+                    {progress && !downloaded && (
+                      <div style={{ marginTop: 14 }}>
+                        <div className="progress-track">
+                          <div
+                            className="progress-fill"
+                            style={{ width: `${progress.total ? Math.min(100, (progress.bytes / progress.total) * 100) : 0}%` }}
+                          />
+                        </div>
+                        <div className="small muted" style={{ marginTop: 6 }}>
+                          {megabytes(progress.bytes)} of {progress.total ? megabytes(progress.total) : '?'} MB
+                        </div>
+                      </div>
+                    )}
+
                     <div className="inline" style={{ marginTop: 14 }}>
-                      <button
-                        className="btn btn-gold"
-                        onClick={async () => {
-                          try {
-                            await api.updates.download({ url: update.downloadUrl });
-                          } catch (err) {
-                            toast(messageFor(err), 'err');
-                          }
-                        }}
-                      >
-                        Download {update.version}
-                      </button>
+                      {!downloaded && (
+                        <button
+                          className="btn btn-gold"
+                          disabled={downloading || !update.canDownload}
+                          onClick={async () => {
+                            setDownloading(true);
+                            setProgress(null);
+                            try {
+                              setDownloaded(await api.updates.fetch());
+                              toast('Update downloaded', 'ok');
+                            } catch (err) {
+                              setProgress(null);
+                              toast(messageFor(err), 'err');
+                            } finally {
+                              setDownloading(false);
+                            }
+                          }}
+                        >
+                          {downloading ? <><Spinner /> Downloading...</> : `Download ${update.version}`}
+                        </button>
+                      )}
+                      {downloading && (
+                        <button className="btn" onClick={() => api.updates.cancel()}>Stop</button>
+                      )}
+                      {downloaded && (
+                        <button className="btn btn-gold" onClick={async () => {
+                          try { await api.updates.reveal(); } catch (err) { toast(messageFor(err), 'err'); }
+                        }}>
+                          {info?.platform === 'darwin' ? 'Show in Finder' : 'Show in folder'}
+                        </button>
+                      )}
                       {update.pageUrl && update.pageUrl !== update.downloadUrl && (
                         <button className="btn" onClick={() => api.updates.download({ url: update.pageUrl })}>
                           Open the release page
@@ -472,17 +518,34 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
                       )}
                     </div>
 
-                    <Banner kind="info">
-                      <div>
-                        The download opens in your browser. Quit GD Suits Studio, install it the same way you
-                        installed this copy, and reopen - your client files are untouched by an update.
-                        <div className="small" style={{ marginTop: 6, opacity: .85 }}>
-                          It does not update itself in place because these builds are ad-hoc signed. macOS refuses
-                          to swap out a bundle it cannot verify, so a silent update would fail. Once the app is
-                          signed with an Apple Developer ID, one-click updates can be switched on.
+                    {downloaded && (
+                      <Banner kind="ok">
+                        <div>
+                          Saved to your Downloads folder as <span className="mono">{downloaded.name}</span>
+                          {downloaded.verified === 'digest' && ' - checked against the release fingerprint.'}
+                          {downloaded.verified === 'size' && ' - the whole file arrived.'}
+                          <div className="small" style={{ marginTop: 6, opacity: .85 }}>
+                            Quit GD Suits Studio, open that file and install it the same way you installed this
+                            copy, then reopen. Your client files are untouched by an update.
+                          </div>
                         </div>
-                      </div>
-                    </Banner>
+                      </Banner>
+                    )}
+
+                    {!downloaded && (
+                      <Banner kind="info">
+                        <div>
+                          The file is saved to your Downloads folder. GD Suits Studio never opens or runs it -
+                          quit the app, install it yourself the same way you installed this copy, and reopen.
+                          Your client files are untouched by an update.
+                          <div className="small" style={{ marginTop: 6, opacity: .85 }}>
+                            It does not update itself in place because these builds are ad-hoc signed. macOS refuses
+                            to swap out a bundle it cannot verify, so a silent update would fail. Once the app is
+                            signed with an Apple Developer ID, one-click updates can be switched on.
+                          </div>
+                        </div>
+                      </Banner>
+                    )}
                   </div>
                 )}
               </div>

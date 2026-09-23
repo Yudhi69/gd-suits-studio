@@ -561,6 +561,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* The update download. A determinate bar, because the release states its size. */
+.progress-track { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.progress-fill { height: 100%; border-radius: 999px; background: var(--gold); transition: width .2s ease; }
+
 .progress-note { color: var(--sidebar-soft); font-size: 13px; margin-top: 12px; text-align: center; }
 
 /* ---------------------------------------------------------------- notes */

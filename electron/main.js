@@ -1055,16 +1055,78 @@ handle('app:openDataFolder', () => shell.openPath(app.getPath('userData')));
 /* updates - checked on demand, never applied silently */
 const DEFAULT_FEED = 'https://api.github.com/repos/Yudhi69/gd-suits-studio/releases/latest';
 
-handle('updates:check', () =>
-  updater.check({
-    feedUrl: db.getSetting('updateFeed', DEFAULT_FEED) || DEFAULT_FEED,
-    token: secrets.get('updateToken'),
-  })
-);
+/**
+ * What the last check found, and what the last download left on disk.
+ *
+ * The renderer never says what to download. It asks for "the update", and the
+ * address comes from the release this process fetched and checked itself, so
+ * a hostile page - the one that got in through a client's name, or through
+ * something the model said - has nothing to point the downloader at. Same for
+ * revealing the file: the path is the one we wrote, not one that was asked
+ * for.
+ */
+let lastRelease = null;
+let downloading = null;
+let lastDownload = null;
+
+handle('updates:check', async () => {
+  const feedUrl = db.getSetting('updateFeed', DEFAULT_FEED) || DEFAULT_FEED;
+  const result = await updater.check({ feedUrl, token: secrets.get('updateToken') });
+  lastRelease = { ...result, feedUrl };
+  return result;
+});
 
 /**
- * Hands the download to the browser rather than fetching and running it.
- * Nothing this app downloads is ever executed by this app.
+ * Fetches the release file into the Downloads folder.
+ *
+ * A download, not an install: it is saved without an executable bit and shown
+ * in the file manager. Nothing this app downloads is ever executed by this
+ * app - opening it is the tailor's decision, made in the operating system's
+ * own dialogs, where an unsigned app is named as one.
+ */
+handle('updates:fetch', async () => {
+  if (!lastRelease) throw new Error('Check for updates first.');
+  if (!lastRelease.updateAvailable) throw new Error('There is no newer version to download.');
+  if (!lastRelease.canDownload) throw new Error('This release has no file this app will download. Open the release page instead.');
+  if (downloading) throw new Error('That download is already running.');
+
+  downloading = new AbortController();
+  try {
+    const saved = await updater.download({
+      feedUrl: lastRelease.feedUrl,
+      url: lastRelease.downloadUrl,
+      name: lastRelease.downloadName,
+      size: lastRelease.downloadSize,
+      digest: lastRelease.downloadDigest,
+      token: secrets.get('updateToken'),
+      dir: app.getPath('downloads'),
+      signal: downloading.signal,
+      onProgress: (p) => {
+        if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('updates:progress', p);
+      },
+    });
+    lastDownload = saved.path;
+    return { ...saved, version: lastRelease.version };
+  } finally {
+    downloading = null;
+  }
+});
+
+handle('updates:cancel', () => {
+  downloading?.abort();
+  return { stopped: !!downloading };
+});
+
+handle('updates:reveal', () => {
+  if (!lastDownload || !fs.existsSync(lastDownload)) throw new Error('That download is no longer on this machine.');
+  shell.showItemInFolder(lastDownload);
+  return { shown: true };
+});
+
+/**
+ * Hands a release page to the browser. Still here beside the download: a
+ * release with no file for this machine, or a tailor who would rather see the
+ * page, both need it.
  */
 handle('updates:download', ({ url }) => {
   const opened = security.openExternalSafely(v.str(url, 'download address', 800));
