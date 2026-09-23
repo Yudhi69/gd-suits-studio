@@ -8,11 +8,18 @@
  * - a client's own photograph must come back byte for byte as it went in.
  * And every image can be saved, and saved again.
  */
-const { app, BrowserWindow, dialog, nativeImage } = require('electron');
+const { app, BrowserWindow, dialog, nativeImage, shell } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 require('./fresh.js').freshUserData(app);
+
+// Exporting a client file ends by showing it in Finder, which is right for
+// the tailor and wrong for a test: a suite run six times left six windows
+// open on someone's desktop. It is recorded here instead, which also lets the
+// test say *what* was revealed rather than only that a button existed.
+const revealed = [];
+shell.showItemInFolder = (target) => { revealed.push(target); };
 
 // The save dialog is the tailor's choice of destination. Here it is scripted,
 // and every call is recorded so a refused request can be shown never to reach it.
@@ -236,6 +243,8 @@ app.whenReady().then(async () => {
   nextAnswer = exportDir;
   await js(`window.gd.project.export({ projectId: ${projectId}, html: '<html></html>' })`);
   nextAnswer = null;
+  check(revealed.includes(exportDir), 'the export shows the tailor the folder it wrote',
+    JSON.stringify(revealed));
   const exRender = fs.readFileSync(path.join(exportDir, 'images', renderFile));
   check(!exRender.equals(renderBytes) && isPng(exRender), 'the render leaves badged, under the name the order form links to');
   check(fs.readFileSync(path.join(exportDir, 'images', photoFile)).equals(photoOnDisk), 'the photo leaves untouched');

@@ -1,9 +1,15 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, shell } = require('electron');
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 require('./fresh.js').freshUserData(app);
+
+// Showing the download in Finder is right for the tailor and wrong for a
+// test - every run left another window open on the desktop. Recorded instead,
+// so the button can be pressed and the path it reveals checked.
+const revealed = [];
+shell.showItemInFolder = (target) => { revealed.push(target); };
 
 // Downloads land in the Downloads folder. Here that is a folder of our own,
 // so a test run cannot put anything in the real one.
@@ -190,9 +196,11 @@ app.whenReady().then(async () => {
     find('Check for updates').click(); await wait(1200);
     const offered = !!find('Download 0.9.0');
     find('Download 0.9.0').click(); await wait(1800);
+    const show = find('Show in Finder') ?? find('Show in folder');
+    show?.click(); await wait(500);
     return JSON.stringify({
       offered,
-      reveal: !!find('Show in Finder') || !!find('Show in folder'),
+      reveal: !!show,
       stillOffering: !!find('Download 0.9.0'),
       says: document.querySelector('.banner-ok, .banner.ok')?.textContent ?? document.body.textContent.includes('Downloads folder'),
     });
@@ -201,6 +209,8 @@ app.whenReady().then(async () => {
   check(ui.reveal && !ui.stillOffering, 'pressing it downloads, and then offers to show the file', JSON.stringify(ui));
   check(String(ui.says).includes('Downloads') || ui.says === true,
     'and says where it went', String(ui.says).slice(0, 120));
+  check(revealed.length > 0 && revealed[revealed.length - 1].startsWith(DOWNLOADS),
+    'and pressing that button shows the file it just saved', JSON.stringify(revealed.slice(-1)));
 
   log('\n=== the download is never executed by the app ===');
   r = JSON.parse(await run(`gd.updates.download({ url: 'file:///etc/passwd' }).then(JSON.stringify)`));
