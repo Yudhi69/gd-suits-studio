@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
-import { eventTypesWith, statusLabel, statusPill, PROJECT_STATUSES } from '../lib/catalog.js';
+import { eventTypesWith, statusLabel, statusPill, PROJECT_STATUSES, isCompleted } from '../lib/catalog.js';
 import { formatMoney } from '../lib/pricing.js';
 import { quotedTotal } from '../lib/quote.js';
 import { ConfirmButton, Empty, Modal, useToast } from '../components/ui.jsx';
@@ -82,7 +82,7 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
       <div className="content">
         <div className="grid grid-3" style={{ marginBottom: 22 }}>
           <StatCard label="Clients" value={clients.length} />
-          <StatCard label="Orders in progress" value={projects.filter((p) => p.status !== 'delivered').length} />
+          <StatCard label="Orders in progress" value={projects.filter((p) => !isCompleted(p.status)).length} />
           <StatCard
             label="Quoted value"
             value={formatMoney(projects.reduce((sum, p) => sum + quotedTotal(p, JSON.parse(p.spec_json || '{}'), overrides, steps), 0))}

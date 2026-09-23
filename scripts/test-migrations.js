@@ -87,7 +87,8 @@ db.open(dir);
 const project = db.getProject(1);
 const client = db.getClient(1);
 
-check(project.status === 'first_fitting', "v4 mapped status 'fitting' to 'first_fitting'", project.status);
+check(project.status === 'ready_first_fitting',
+  "v4's 'fitting' survives every rename since, arriving as 'ready_first_fitting'", project.status);
 check(project.fittings[0].kind === 'first', 'v4 gave the earliest session kind "first"', project.fittings[0].kind);
 check(project.fittings[1].kind === 'final', 'and the later one "final"', project.fittings[1].kind);
 check(client.profile && typeof client.profile === 'object', 'v2 added the client profile blob');

@@ -400,6 +400,40 @@ const MIGRATIONS = [
     // Number what is already here. New orders get theirs on creation.
     assignOrderRefs();
   },
+  // v11 - the order as GD describes it, after seeing the first build.
+  //
+  // Three things. A client's date of birth and postal address, because a
+  // matric client's age decides whether a parent signs and the postal address
+  // is where the suit goes. A review date, which is the visit after delivery.
+  // And the stages renamed to the words GD actually uses on the phone -
+  // "ready for first fitting" is a different thing from "at the first
+  // fitting", and "completed" splits on whether the money is in.
+  (d) => {
+    d.exec(`
+      ALTER TABLE clients  ADD COLUMN dob TEXT NOT NULL DEFAULT '';
+      ALTER TABLE clients  ADD COLUMN postal_address TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN review_date TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN measurements_done INTEGER NOT NULL DEFAULT 0;
+    `);
+
+    // Old stage -> new stage. "delivered" becomes "completed (paid)": the
+    // workbook's COMPLETED sheet meant the job was finished and settled, and
+    // marking 570 finished orders as still owing money would be worse than
+    // marking the handful that do owe as paid. GD can move those back.
+    const moves = {
+      draft: 'first_consultation',        // the default nothing ever set
+      enquiry: 'first_consultation',
+      first_fitting: 'ready_first_fitting',
+      final_fitting: 'ready_final_fit',
+      delivered: 'completed_paid',
+    };
+    const move = d.prepare('UPDATE projects SET status = ? WHERE status = ?');
+    for (const [from, to] of Object.entries(moves)) move.run(to, from);
+
+    // An order whose measurement form came in has had its measurements taken.
+    d.exec(`UPDATE projects SET measurements_done = 1
+             WHERE measurement_form_received = 1 OR measurement_date <> ''`);
+  },
 ];
 
 function open(userDataPath) {
@@ -449,6 +483,7 @@ function upsertClient(client) {
   if (client.id) {
     const sets = [
       'name=@name', 'surname=@surname', 'contact=@contact', 'email=@email',
+      'dob=@dob', 'postal_address=@postal_address',
       'is_minor=@is_minor', 'secondary_name=@secondary_name',
       'secondary_relationship=@secondary_relationship',
       'secondary_contact=@secondary_contact', 'secondary_email=@secondary_email',
@@ -459,6 +494,8 @@ function upsertClient(client) {
       surname: client.surname ?? '',
       contact: client.contact ?? '',
       email: client.email ?? '',
+      dob: client.dob ?? '',
+      postal_address: client.postalAddress ?? '',
       is_minor: client.isMinor ? 1 : 0,
       secondary_name: client.secondaryName ?? '',
       secondary_relationship: client.secondaryRelationship ?? '',
@@ -476,10 +513,10 @@ function upsertClient(client) {
   const info = d
     .prepare(
       `INSERT INTO clients
-         (name, surname, contact, email, is_minor,
+         (name, surname, contact, email, dob, postal_address, is_minor,
           secondary_name, secondary_relationship, secondary_contact, secondary_email)
        VALUES
-         (@name, @surname, @contact, @email, @is_minor,
+         (@name, @surname, @contact, @email, @dob, @postal_address, @is_minor,
           @secondary_name, @secondary_relationship, @secondary_contact, @secondary_email)`
     )
     .run({
@@ -487,6 +524,8 @@ function upsertClient(client) {
       surname: client.surname ?? '',
       contact: client.contact ?? '',
       email: client.email ?? '',
+      dob: client.dob ?? '',
+      postal_address: client.postalAddress ?? '',
       is_minor: client.isMinor ? 1 : 0,
       secondary_name: client.secondaryName ?? '',
       secondary_relationship: client.secondaryRelationship ?? '',
@@ -515,6 +554,7 @@ function getProject(id) {
   const d = get();
   const project = d
     .prepare(`SELECT p.*, c.name, c.surname, c.contact, c.email, c.is_minor,
+                     c.dob, c.postal_address,
                      c.secondary_name, c.secondary_relationship,
                      c.secondary_contact, c.secondary_email
                 FROM projects p JOIN clients c ON c.id = p.client_id
@@ -610,8 +650,8 @@ function stampImport(id, { createdAt, updatedAt }) {
 function createProject({ clientId, title, eventType, eventOther, eventDate, deliveryDate }) {
   const info = get()
     .prepare(
-      `INSERT INTO projects (client_id, title, event_type, event_other, event_date, delivery_date, order_ref)
-       VALUES (@clientId, @title, @eventType, @eventOther, @eventDate, @deliveryDate, @orderRef)`
+      `INSERT INTO projects (client_id, title, event_type, event_other, event_date, delivery_date, order_ref, status)
+       VALUES (@clientId, @title, @eventType, @eventOther, @eventDate, @deliveryDate, @orderRef, 'first_consultation')`
     )
     .run({
       clientId,
@@ -628,6 +668,7 @@ function createProject({ clientId, title, eventType, eventOther, eventDate, deli
 function updateProject(id, patch) {
   const allowed = [
     'title', 'event_type', 'event_other', 'event_date', 'delivery_date', 'status',
+    'review_date', 'measurements_done',
     'consultation_date', 'measurement_date', 'first_fitting_date', 'final_fitting_date',
     'quantity', 'fabric_name', 'fabric_code', 'supplier',
     'first_appointment', 'appointment_notes',
@@ -1174,6 +1215,12 @@ function tx(fn) {
   return get().transaction(fn)();
 }
 
+// Work finished, whatever the money is doing. Named once so a stage rename
+// cannot leave half the dashboard counting the old word.
+const DONE = ['completed_paid', 'completed_due'];
+const DONE_SQL = `('${DONE.join("','")}')`;
+const isDone = (status) => DONE.includes(status);
+
 function analytics({ from = '0000-01-01', to = '9999-12-31' } = {}) {
   const d = get();
 
@@ -1197,7 +1244,7 @@ function analytics({ from = '0000-01-01', to = '9999-12-31' } = {}) {
       return { ...row, quoted, outstanding: Math.max(0, quoted - row.paid) };
     });
 
-  const open = orders.filter((o) => o.status !== 'delivered');
+  const open = orders.filter((o) => !isDone(o.status));
   const sum = (rows, key) => rows.reduce((t, r) => t + (Number(r[key]) || 0), 0);
 
   const byStage = {};
@@ -1261,13 +1308,13 @@ function analytics({ from = '0000-01-01', to = '9999-12-31' } = {}) {
     .prepare(
       `SELECT julianday(final_fitting_date) - julianday(consultation_date) AS days
          FROM projects
-        WHERE status = 'delivered' AND consultation_date <> '' AND final_fitting_date <> ''`
+        WHERE status IN ${DONE_SQL} AND consultation_date <> '' AND final_fitting_date <> ''`
     )
     .all()
     .map((r) => r.days)
     .filter((n) => Number.isFinite(n) && n >= 0);
 
-  const delivered = orders.filter((o) => o.status === 'delivered');
+  const delivered = orders.filter((o) => isDone(o.status));
 
   // Balances carried over from the spreadsheet. The sheet recorded either what
   // was owed or what had been paid, never both, so these cannot be folded into
@@ -1276,7 +1323,7 @@ function analytics({ from = '0000-01-01', to = '9999-12-31' } = {}) {
   // was almost certainly settled off-sheet - only the open ones are a question.
   const legacy = d
     .prepare(
-      `SELECT CASE WHEN status = 'delivered' THEN 'settledLikely' ELSE 'open' END AS bucket,
+      `SELECT CASE WHEN status IN ${DONE_SQL} THEN 'settledLikely' ELSE 'open' END AS bucket,
               COUNT(*) AS orders, COALESCE(SUM(imported_balance), 0) AS total
          FROM projects WHERE imported_balance > 0 GROUP BY bucket`
     )

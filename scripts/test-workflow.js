@@ -126,9 +126,9 @@ app.whenReady().then(async () => {
     return JSON.stringify({ firstHeading, statusPill, headings, statusAfter });
   })()`));
   check(fit.firstHeading === 'First fitting', 'the first session is labelled First fitting', fit.firstHeading);
-  check(fit.statusPill === 'First fitting', 'the order status follows to First fitting', fit.statusPill);
+  check(fit.statusPill === 'Ready for first fitting', 'the order status follows the fitting', fit.statusPill);
   check(fit.headings.includes('Final fitting'), 'a second session is labelled Final fitting', fit.headings.join(','));
-  check(fit.statusAfter === 'Final fitting', 'the order status follows to Final fitting', fit.statusAfter);
+  check(fit.statusAfter === 'Ready for final fit', 'and follows the final one', fit.statusAfter);
 
   /* ------------------------------------------------ prompt editing ---- */
   log('\n=== the render prompt is editable ===');

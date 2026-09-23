@@ -1,9 +1,23 @@
 import React from 'react';
 import { api } from '../../lib/api.js';
-import { eventTypesWith, PROJECT_STATUSES } from '../../lib/catalog.js';
+import { eventTypesWith, PROJECT_STATUSES, PROCESS_DATES } from '../../lib/catalog.js';
 import { AddOptionTile } from '../../components/AddOption.jsx';
 import { DebouncedInput, Switch, useToast } from '../../components/ui.jsx';
 import NotesPanel from '../../components/NotesPanel.jsx';
+
+/** Age today from a date of birth, or "-" when there is not one yet. */
+function ageFrom(dob) {
+  if (!dob) return '-';
+  const born = new Date(dob);
+  if (Number.isNaN(born.getTime())) return '-';
+  const now = new Date();
+  let age = now.getFullYear() - born.getFullYear();
+  const beforeBirthday =
+    now.getMonth() < born.getMonth() ||
+    (now.getMonth() === born.getMonth() && now.getDate() < born.getDate());
+  if (beforeBirthday) age -= 1;
+  return age >= 0 && age < 130 ? String(age) : '-';
+}
 
 export default function ClientStep({ ctx, customOptions = [], onCatalogChanged }) {
   const { project, updateProject, reload, addNote, deleteNote } = ctx;
@@ -17,6 +31,8 @@ export default function ClientStep({ ctx, customOptions = [], onCatalogChanged }
         surname: project.surname,
         contact: project.contact,
         email: project.email,
+        dob: project.dob,
+        postalAddress: project.postal_address,
         isMinor: !!project.is_minor,
         secondaryName: project.secondary_name,
         secondaryRelationship: project.secondary_relationship,
@@ -48,6 +64,25 @@ export default function ClientStep({ ctx, customOptions = [], onCatalogChanged }
             </div>
             <div className="row">
               <div className="field">
+                <label>Date of birth</label>
+                <DebouncedInput className="input" type="date" value={project.dob} onCommit={(v) => saveClient({ dob: v })} />
+              </div>
+              <div className="field">
+                <label>Age</label>
+                {/* Worked out, never typed: an age keyed in today is wrong by
+                    next birthday, and it decides whether a parent signs. */}
+                <input className="input" value={ageFrom(project.dob)} readOnly tabIndex={-1} />
+                <div className="hint">
+                  {ageFrom(project.dob) === '-'
+                    ? 'From the date of birth.'
+                    : Number(ageFrom(project.dob)) < 18
+                      ? 'Under 18 - a parent or provider signs and pays.'
+                      : 'From the date of birth.'}
+                </div>
+              </div>
+            </div>
+            <div className="row">
+              <div className="field">
                 <label>Contact number</label>
                 <DebouncedInput className="input" value={project.contact} onCommit={(v) => saveClient({ contact: v })} />
               </div>
@@ -56,12 +91,22 @@ export default function ClientStep({ ctx, customOptions = [], onCatalogChanged }
                 <DebouncedInput className="input" type="email" value={project.email} onCommit={(v) => saveClient({ email: v })} />
               </div>
             </div>
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>Postal address</label>
+              <DebouncedInput
+                as="textarea"
+                className="textarea"
+                value={project.postal_address}
+                placeholder="Where the finished suit is sent, if it is not collected"
+                onCommit={(v) => saveClient({ postalAddress: v })}
+              />
+            </div>
           </div>
         </div>
 
         <div className="card" style={{ marginTop: 16 }}>
           <div className="card-head">
-            <h3>Parent or guardian</h3>
+            <h3>Parent or provider</h3>
             <div className="spacer" />
             <div className="inline">
               <span className="tiny faint">Client is under 18</span>
@@ -127,7 +172,7 @@ export default function ClientStep({ ctx, customOptions = [], onCatalogChanged }
         </div>
 
         <div className="card" style={{ marginTop: 16 }}>
-          <div className="card-head"><h3>The occasion</h3></div>
+          <div className="card-head"><h3>Order code</h3></div>
           <div className="card-pad">
             <div className="field">
               <label>Order name</label>
@@ -181,12 +226,7 @@ export default function ClientStep({ ctx, customOptions = [], onCatalogChanged }
           </div>
           <div className="card-pad">
             <div className="grid grid-2">
-              {[
-                ['consultation_date', 'First consultation'],
-                ['measurement_date', 'Measurements'],
-                ['first_fitting_date', 'First fitting'],
-                ['final_fitting_date', 'Final fitting & delivery'],
-              ].map(([key, label]) => (
+              {PROCESS_DATES.map(({ key, label }) => (
                 <div className="field" key={key} style={{ marginBottom: 0 }}>
                   <label>{label}</label>
                   <DebouncedInput
@@ -200,14 +240,32 @@ export default function ClientStep({ ctx, customOptions = [], onCatalogChanged }
             </div>
             <div className="hint" style={{ marginTop: 12 }}>{scheduleWarning(project)}</div>
 
+            {/* These sit with the dates because that is when they are ticked. */}
+            <div className="row" style={{ marginTop: 14 }}>
+              <div className="toggle-row">
+                <span className="small">Measurements taken</span>
+                <Switch
+                  checked={!!project.measurements_done}
+                  onChange={(val) => updateProject({ measurements_done: val })}
+                />
+              </div>
+              <div className="toggle-row">
+                <span className="small">Measurement form completed</span>
+                <Switch
+                  checked={!!project.measurement_form_received}
+                  onChange={(val) => updateProject({ measurement_form_received: val })}
+                />
+              </div>
+            </div>
+
             <div className="field">
               <label>Status</label>
               <select className="select" value={project.status} onChange={(e) => updateProject({ status: e.target.value })}>
                 {PROJECT_STATUSES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
               </select>
               <div className="hint">
-                A suit in fitting is either at its first fitting or its final one - the first is where the
-                corrections are marked up, the final is a sign-off.
+                "Ready for first fitting" is the suit waiting on the rail; the fitting itself is where the
+                corrections get marked up. A completed order stays on the books until the balance is in.
               </div>
             </div>
           </div>

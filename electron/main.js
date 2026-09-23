@@ -245,6 +245,8 @@ handle('clients:save', (c) => db.upsertClient({
   surname: v.str(c.surname, 'surname', 120),
   contact: v.str(c.contact, 'contact number', 60),
   email: v.str(c.email, 'email', 200),
+  dob: v.str(c.dob, 'date of birth', 40),
+  postalAddress: v.str(c.postalAddress, 'postal address', 500),
   isMinor: !!c.isMinor,
   secondaryName: v.str(c.secondaryName, 'name', 200),
   secondaryRelationship: v.str(c.secondaryRelationship, 'relationship', 60),

@@ -18,13 +18,17 @@ app.whenReady().then(async () => {
   await js(`(async () => {
     const un = async p => { const r = await p; if(!r.ok) throw new Error(r.error.message); return r.data; };
     const gd = window.gd;
+    // Dates are relative to the day the suite runs. Fixed dates made this
+    // pass in September and fail in October: an order seeded as "coming up"
+    // quietly became overdue, and the failure said nothing about why.
+    const day = (n) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
     const shop = [
-      ['Sipho','Ndlovu','wedding','2026-11-14','delivered',   2, 'Midnight birdseye','B-2241', 11600, 11600],
-      ['Thabo','Mokoena','matric', '2026-09-19','in_production',1,'Charcoal twill',   'C-1180',  5800,  1000],
-      ['Lerato','Dlamini','business','2026-10-02','first_fitting',1,'Navy hopsack',   'N-0455',  6900,  3450],
-      ['Kagiso','Sithole','wedding','2026-08-01','alterations', 3, 'Ivory linen',     'I-7782', 17400, 17400],
-      ['Naledi','Khumalo','graduation','2026-12-05','quoted',   1, 'Slate flannel',   'S-3390',  6200,     0],
-      ['Bongani','Zulu',  'wedding','2026-09-30','final_fitting',1,'Midnight birdseye','B-2241', 5800,  2900],
+      ['Sipho','Ndlovu','wedding',day(80),'completed_paid',   2, 'Midnight birdseye','B-2241', 11600, 11600],
+      ['Thabo','Mokoena','matric', day(20),'in_production',1,'Charcoal twill',   'C-1180',  5800,  1000],
+      ['Lerato','Dlamini','business',day(40),'ready_first_fitting',1,'Navy hopsack',   'N-0455',  6900,  3450],
+      ['Kagiso','Sithole','wedding',day(-50),'alterations', 3, 'Ivory linen',     'I-7782', 17400, 17400],
+      ['Naledi','Khumalo','graduation',day(120),'quoted',   1, 'Slate flannel',   'S-3390',  6200,     0],
+      ['Bongani','Zulu',  'wedding',day(60),'ready_final_fit',1,'Midnight birdseye','B-2241', 5800,  2900],
     ];
     for (const [name, surname, ev, date, status, qty, fabric, code, quoted, paid] of shop) {
       const clientId = await un(gd.clients.save({ name, surname, contact: '082', email: '' }));
@@ -32,16 +36,16 @@ app.whenReady().then(async () => {
       await un(gd.projects.update({ id: projectId, patch: {
         status, quantity: qty, fabric_name: fabric, fabric_code: code,
         spec: { suitType: 'two_piece' },
-        consultation_date: '2026-06-01', final_fitting_date: '2026-08-20',
+        consultation_date: day(-100), final_fitting_date: day(-60),
       } }));
       await un(gd.projects.setQuote({ id: projectId, quote: {
         lines: [{ group:'Base', label:'Suit', amount: quoted, key:'k' }], total: quoted, currency:'R', status,
       } }));
-      if (paid) await un(gd.payments.add({ projectId, kind: paid >= quoted ? 'balance' : 'deposit', amount: paid, paidOn: '2026-07-01', method: 'EFT' }));
+      if (paid) await un(gd.payments.add({ projectId, kind: paid >= quoted ? 'balance' : 'deposit', amount: paid, paidOn: day(-40), method: 'EFT' }));
     }
     // Work outstanding
-    await un(gd.alterations.add({ projectId: 4, garment:'jacket', description:'Take in the waist 2cm', kind:'Waist', dueOn:'2026-08-10', cost: 350 }));
-    await un(gd.alterations.add({ projectId: 4, garment:'pants', description:'Shorten 1.5cm', kind:'Hem', dueOn:'2099-01-01', cost: 200, status:'in_progress' }));
+    await un(gd.alterations.add({ projectId: 4, garment:'jacket', description:'Take in the waist 2cm', kind:'Waist', dueOn: day(-10), cost: 350 }));
+    await un(gd.alterations.add({ projectId: 4, garment:'pants', description:'Shorten 1.5cm', kind:'Hem', dueOn: day(30), cost: 200, status:'in_progress' }));
     await un(gd.extras.add({ projectId: 2, extraType:'Shirt', colour:'White', quantity: 1, unitPrice: 850 }));
     await un(gd.extras.add({ projectId: 3, extraType:'Bow tie', colour:'Burgundy', quantity: 1, unitPrice: 300, status:'delivered' }));
   })()`);
@@ -50,12 +54,12 @@ app.whenReady().then(async () => {
 
   log('=== the five sheets, unified ===');
   check(a.totals.orders === 6, 'every order counted', String(a.totals.orders));
-  check(a.totals.openOrders === 5, 'open orders separated from delivered', String(a.totals.openOrders));
+  check(a.totals.openOrders === 5, 'open orders separated from completed', String(a.totals.openOrders));
   check(a.totals.suitsInProgress === 7, 'suits in progress counts quantity, not orders', String(a.totals.suitsInProgress));
   check(a.totals.quoted === 53700, 'quoted value totals the frozen quotes', String(a.totals.quoted));
   check(a.totals.paid === 36350, 'payments total', String(a.totals.paid));
   check(a.totals.outstanding === 17350, 'balance due is quoted minus paid', String(a.totals.outstanding));
-  check(a.totals.deliveredValue === 11600, 'delivered value counts only delivered', String(a.totals.deliveredValue));
+  check(a.totals.deliveredValue === 11600, 'completed value counts only completed orders', String(a.totals.deliveredValue));
 
   log('\n=== the things that need doing ===');
   const shortfall = a.depositShortfall;
@@ -67,9 +71,9 @@ app.whenReady().then(async () => {
   check(a.alterations.revenue === 550, 'alteration income totalled', String(a.alterations.revenue));
 
   log('\n=== shape worth seeing ===');
-  check(a.byStage.in_production?.orders === 1 && a.byStage.delivered?.orders === 1, 'pipeline split by stage');
+  check(a.byStage.in_production?.orders === 1 && a.byStage.completed_paid?.orders === 1, 'pipeline split by stage');
   check(a.topFabrics[0].value === 'Midnight birdseye' && a.topFabrics[0].orders === 2, 'most-used cloth', JSON.stringify(a.topFabrics[0]));
-  check(a.leadTime.samples > 0, 'lead time measured from delivered orders', String(a.leadTime.averageDays));
+  check(a.leadTime.samples > 0, 'lead time measured from completed orders', String(a.leadTime.averageDays));
   check(a.extras.length === 2, 'extras tracked with their own status');
 
   // and it renders

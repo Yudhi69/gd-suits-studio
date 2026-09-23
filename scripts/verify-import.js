@@ -31,8 +31,8 @@ all(`SELECT substr(event_date,1,4) y, COUNT(*) n FROM projects WHERE event_date 
 const bal = (w) => one(`SELECT COALESCE(SUM(imported_balance),0) t FROM projects ${w}`).t;
 console.log('\nmoney:');
 console.log('   legacy balance, all rows   ', R(bal('')));
-console.log('     on delivered orders      ', R(bal("WHERE status = 'delivered'")), ' (historical - recorded at order time)');
-console.log('     on open orders           ', R(bal("WHERE status <> 'delivered'")), ' (may still be owed)');
+console.log('     on completed orders      ', R(bal("WHERE status IN ('completed_paid','completed_due')")), ' (historical - recorded at order time)');
+console.log('     on open orders           ', R(bal("WHERE status NOT IN ('completed_paid','completed_due')")), ' (may still be owed)');
 console.log('   payments recorded          ', R(one('SELECT COALESCE(SUM(amount),0) t FROM payments').t));
 
 console.log('\nwhat came across per order:');
