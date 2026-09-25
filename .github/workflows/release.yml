@@ -19,6 +19,15 @@ name: Release
 on:
   push:
     branches: [main]
+  # So the build can be proved on a branch before it is merged. A workflow
+  # cannot be tested any other way, and the first run of this one failed on
+  # both platforms - which is a poor thing to discover on main.
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a release (off by default - a dry run just builds)
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -46,14 +55,35 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          # The runner images are pinned, not "-latest".
+          #
+          # The first run failed on both platforms for the same reason: npm
+          # ships node-gyp 9.4.1 with Node 20, and both images had moved past
+          # what it understands. Windows had Visual Studio 18, which it cannot
+          # recognise ("could not find a version of Visual Studio 2017 or
+          # newer"); macOS had Python 3.14, which its bundled gyp cannot run.
+          # Neither has anything to do with this code, and both would come
+          # back on a random morning when GitHub rolls the images forward.
+          #
+          # windows-2022 carries Visual Studio 2022, which node-gyp 9 knows.
+          #
+          # Pinning does not settle macOS on its own - macos-14 ships the same
+          # Python 3.14 as the latest image - so the Python is chosen below as
+          # well. Checked rather than assumed: I pinned the image first,
+          # thinking that was the fix, and reading what the image actually
+          # contains is what stopped a second broken merge.
+          #
+          # These will be retired eventually and the sign will be exactly this
+          # failure again; the fix then is a newer Node here, which brings a
+          # newer node-gyp with it.
+          - os: macos-14
             name: macOS
             # Each architecture is built in its own pass on purpose: in one
             # pass electron-builder runs them in parallel and they collide in
             # a shared temp directory, and you silently get only one DMG.
             build: npm run build && npx electron-builder --mac --arm64 && npx electron-builder --mac --x64
             artifacts: release/*.dmg
-          - os: windows-latest
+          - os: windows-2022
             name: Windows
             build: npm run build && npx electron-builder --win --x64
             artifacts: release/*Setup*.exe
@@ -64,6 +94,16 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      # node-gyp 9.4.1, which npm ships with Node 20, cannot run Python 3.14 -
+      # and 3.14 is what both runners now offer by default. better-sqlite3 has
+      # no prebuilt binary for this target, so it is compiled here, and this
+      # is the interpreter that compiles it.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile native modules with that Python
+        shell: bash
+        run: echo "npm_config_python=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
       - run: npm ci
       - name: Stamp the version being released
         run: npm version ${{ needs.version.outputs.version }} --no-git-tag-version --allow-same-version
@@ -81,6 +121,9 @@ jobs:
 
   publish:
     needs: [version, build]
+    # A dry run builds both platforms and stops, leaving the installers as
+    # artifacts to download and check without cutting a release.
+    if: ${{ github.event_name == 'push' || inputs.publish }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
