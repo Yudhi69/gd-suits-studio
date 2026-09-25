@@ -13,6 +13,11 @@ import { ConfirmButton, DebouncedInput, useToast } from './ui.jsx';
  * button, so nothing is in the way of the ordinary job.
  */
 export default function PartyPanel({ project, reload }) {
+  // Who is opened up. A wedding party of six filled the screen with inputs
+  // nobody was looking at; folded, the order reads as a list of people and
+  // only the one being worked on is open. An order of one - which is most
+  // orders - opens straight away, because there is nothing to fold away.
+  const [opened, setOpened] = useState({});
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ name: '', surname: '', role: '' });
   const [busy, setBusy] = useState(false);
@@ -68,69 +73,91 @@ export default function PartyPanel({ project, reload }) {
         </span>
       </div>
       <div className="card-pad">
-        {members.map((m) => (
-          <div key={m.id} className="party-row">
-            <div className="party-person">
-              <div style={{ fontWeight: 600 }}>{m.name} {m.surname}</div>
-              <DebouncedInput
-                className="input input-bare tiny"
-                placeholder="Role - groom, best man, father..."
-                value={m.role}
-                onCommit={(v) => run(() => api.members.update({ id: m.id, role: v }))}
-              />
-            </div>
+        {members.map((m) => {
+          const theirs = suitsFor(m.client_id);
+          const open = opened[m.id] ?? members.length === 1;
+          return (
+          <div key={m.id} className={`party-person-block ${open ? 'open' : ''}`}>
+            <button
+              type="button"
+              className="party-head"
+              aria-expanded={open}
+              onClick={() => setOpened((o) => ({ ...o, [m.id]: !open }))}
+            >
+              <span className="party-caret" aria-hidden="true">{open ? '\u25be' : '\u25b8'}</span>
+              <span className="party-name">{m.name} {m.surname}</span>
+              {m.role && <span className="party-role">{m.role}</span>}
+              <span className="spacer" />
+              <span className="tiny faint">
+                {theirs.length === 1 ? '1 suit' : `${theirs.length} suits`}
+              </span>
+            </button>
 
-            <div className="party-suits">
-              {suitsFor(m.client_id).map((s) => (
-                <div key={s.id} className="party-suit">
+            {open && (
+              <div className="party-body">
+                <div className="party-field">
+                  <span className="party-label">Role</span>
                   <DebouncedInput
-                    className="input input-bare small"
-                    placeholder={s.fabric_name || 'Suit'}
-                    value={s.label}
-                    onCommit={(v) => run(() => api.suits.update({ id: s.id, patch: { label: v } }))}
+                    className="input input-bare"
+                    placeholder="Groom, best man, father..."
+                    value={m.role}
+                    onCommit={(v) => run(() => api.members.update({ id: m.id, role: v }))}
                   />
-                  {suits.length > 1 && (
+                </div>
+
+                {theirs.map((s) => (
+                  <div key={s.id} className="party-field">
+                    <span className="party-label">Suit</span>
+                    <DebouncedInput
+                      className="input input-bare"
+                      placeholder={s.fabric_name || 'Navy three-piece...'}
+                      value={s.label}
+                      onCommit={(v) => run(() => api.suits.update({ id: s.id, patch: { label: v } }))}
+                    />
+                    {suits.length > 1 && (
+                      <ConfirmButton
+                        className="btn btn-icon btn-ghost btn-danger"
+                        confirmLabel="Remove?"
+                        title="Remove this suit"
+                        onConfirm={() => run(() => api.suits.remove({ id: s.id }), 'Suit removed')}
+                      >
+                        &times;
+                      </ConfirmButton>
+                    )}
+                  </div>
+                ))}
+
+                <div className="party-actions">
+                  <select
+                    className="select btn-sm"
+                    value=""
+                    disabled={busy}
+                    onChange={(e) => addSuit(m.client_id, e.target.value === 'blank' ? null : e.target.value)}
+                  >
+                    <option value="" disabled>Add a suit...</option>
+                    <option value="blank">New, empty</option>
+                    {suits.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        Copy of {s.name}&apos;s {s.label || s.fabric_name || 'suit'}
+                      </option>
+                    ))}
+                  </select>
+
+                  {members.length > 1 && (
                     <ConfirmButton
                       className="btn btn-sm btn-ghost btn-danger"
-                      confirmLabel="Remove?"
-                      onConfirm={() => run(() => api.suits.remove({ id: s.id }), 'Suit removed')}
+                      confirmLabel="Take off the order?"
+                      onConfirm={() => run(() => api.members.remove({ id: m.id }), `${m.name} taken off the order`)}
                     >
-                      ×
+                      Take off the order
                     </ConfirmButton>
                   )}
                 </div>
-              ))}
-
-              <div className="inline">
-                <select
-                  className="select btn-sm"
-                  style={{ maxWidth: 190 }}
-                  value=""
-                  disabled={busy}
-                  onChange={(e) => addSuit(m.client_id, e.target.value === 'blank' ? null : e.target.value)}
-                >
-                  <option value="" disabled>Add a suit...</option>
-                  <option value="blank">New, empty</option>
-                  {suits.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      Copy of {s.name}&apos;s {s.label || s.fabric_name || 'suit'}
-                    </option>
-                  ))}
-                </select>
-
-                {members.length > 1 && (
-                  <ConfirmButton
-                    className="btn btn-sm btn-ghost btn-danger"
-                    confirmLabel="Take off the order?"
-                    onConfirm={() => run(() => api.members.remove({ id: m.id }), `${m.name} taken off the order`)}
-                  >
-                    Remove
-                  </ConfirmButton>
-                )}
               </div>
-            </div>
+            )}
           </div>
-        ))}
+          );
+        })}
 
         {adding ? (
           <div className="inline" style={{ marginTop: 12, alignItems: 'flex-end' }}>

@@ -814,16 +814,54 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .suit-tab-what { font-size: 10.5px; color: var(--text-faint); }
 .suit-tab.active .suit-tab-what { color: var(--gold-deep); }
 
-/* People on an order, and what each is having made. */
-.party-row {
-  display: flex; gap: 16px; align-items: flex-start;
-  padding: 10px 0; border-bottom: 1px solid var(--line);
+/* People on an order, and what each is having made.
+   One block per person, folded shut until opened. The fields inside sit on a
+   two-column grid so every label and every input line up down the panel,
+   rather than each row finding its own width. */
+.party-person-block { border-bottom: 1px solid var(--line); }
+.party-person-block:last-of-type { border-bottom: 0; }
+
+.party-head {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 11px 4px; background: none; border: 0; cursor: pointer;
+  text-align: left; color: inherit; font: inherit; border-radius: var(--radius);
 }
-.party-row:last-of-type { border-bottom: 0; }
-.party-person { min-width: 190px; }
-.party-suits { flex: 1; display: flex; flex-direction: column; gap: 6px; }
-.party-suit { display: flex; align-items: center; gap: 6px; }
-.party-suit .input-bare { max-width: 300px; }
+.party-head:hover { background: var(--surface-2); }
+.party-caret { width: 12px; color: var(--text-faint); font-size: 11px; }
+.party-name { font-weight: 600; }
+.party-role { color: var(--text-faint); font-size: 12.5px; }
+.party-head .spacer { flex: 1; }
+
+.party-body {
+  display: grid; grid-template-columns: 68px minmax(0, 320px) auto;
+  gap: 8px 10px; align-items: center;
+  padding: 2px 4px 14px 26px;
+}
+.party-field { display: contents; }
+.party-label { font-size: 12px; color: var(--text-faint); }
+/* The third column is the remove button; a row without one leaves it empty
+   rather than letting the input stretch across it. */
+.party-field > .input { grid-column: 2; }
+.party-actions { grid-column: 2 / -1; display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.party-actions .select { max-width: 230px; }
+
+/* The row under a render. One height for every button in it: it carried
+   three, and wrapped the approve/delete pair onto a line of their own behind
+   a flex spacer - which put them at the *left* of that line, not the right.
+   They sit together in their own group now, pushed right only while the row
+   fits on one line. */
+.render-actions {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px;
+}
+.render-actions-end {
+  display: inline-flex; align-items: center; gap: 8px; margin-left: auto;
+}
+
+/* A square button for a single glyph, so a column of them lines up. */
+.btn-icon {
+  width: 28px; height: 28px; padding: 0; display: inline-flex;
+  align-items: center; justify-content: center; font-size: 16px; line-height: 1;
+}
 .input-bare {
   background: transparent; border: 1px dashed var(--line); padding: 3px 7px;
 }

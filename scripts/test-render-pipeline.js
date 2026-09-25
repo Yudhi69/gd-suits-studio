@@ -189,6 +189,22 @@ app.whenReady().then(async () => {
   check(shown.length === 4 && shown.every(Boolean), 'every tab shows a picture', JSON.stringify(seen));
   check(new Set(shown).size === 4, 'and a different one on each - not the newest render four times', JSON.stringify(seen));
 
+  log('\n=== the row of buttons under a render ===');
+  // Measured, not eyeballed: the row carried three different button heights.
+  const row = JSON.parse(await js(`(() => {
+    const bar = document.querySelector('.render-actions');
+    if (!bar) return JSON.stringify({ found: false });
+    const buttons = [...bar.querySelectorAll('button')].map(b => ({
+      label: b.textContent.trim().slice(0, 22),
+      h: Math.round(b.getBoundingClientRect().height),
+      top: Math.round(b.getBoundingClientRect().top),
+    }));
+    return JSON.stringify({ found: true, buttons, rows: new Set(buttons.map(b => b.top)).size });
+  })()`));
+  check(row.found && row.buttons.length >= 4, 'the buttons are all in one row', JSON.stringify(row.buttons?.length));
+  const heights = new Set((row.buttons ?? []).map((b) => b.h));
+  check(heights.size === 1, 'and every one of them is the same height', JSON.stringify([...heights]));
+
   log('\n=== a second press is a second render ===');
   resetCalls();
   await js(`(async () => {

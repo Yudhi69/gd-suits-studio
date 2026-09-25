@@ -312,7 +312,7 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
                 </div>
               )}
 
-              <div className="inline" style={{ marginTop: 12 }}>
+              <div className="render-actions">
                 <button className="btn btn-gold" onClick={renderEverything} disabled={busy || !hasKey || missingBase}>
                   {rendered.size ? 'Render all four again' : 'Render all four views'}
                 </button>
@@ -332,17 +332,16 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
                   />
                 )}
                 <button
-                  className="btn btn-ghost btn-sm"
+                  className="btn btn-ghost"
                   onClick={() => { setPromptDraft(effectivePrompt); setShowPrompt(true); }}
                 >
                   {promptEdited ? 'Edit the prompt ·' : 'See the prompt'}
                 </button>
                 {promptEdited && <span className="pill" title="This render uses your edited prompt">edited</span>}
-                <div style={{ flex: 1 }} />
                 {active && (
-                  <>
+                  <span className="render-actions-end">
                     <button
-                      className={`btn btn-sm ${active.approved ? 'btn-gold' : ''}`}
+                      className={`btn ${active.approved ? 'btn-gold' : ''}`}
                       onClick={async () => {
                         await api.renders.approve({ id: active.id, approved: !active.approved });
                         await reload();
@@ -351,7 +350,7 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
                       {active.approved ? 'Approved' : 'Mark approved'}
                     </button>
                     <ConfirmButton
-                      className="btn btn-sm btn-ghost btn-danger"
+                      className="btn btn-ghost btn-danger"
                       confirmLabel="Delete render?"
                       onConfirm={async () => {
                         await api.renders.delete({ id: active.id });
@@ -360,7 +359,7 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
                     >
                       Delete
                     </ConfirmButton>
-                  </>
+                  </span>
                 )}
               </div>
             </div>
