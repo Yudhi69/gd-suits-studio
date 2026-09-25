@@ -36,11 +36,27 @@ let mode = 'newer';
 let assetHost = 'github.com';
 let served = null;      // what the download host actually hands back
 let redirectTo = null;  // where the download is sent instead
+let slowly = false;     // deliver it in chunks, the way a real one arrives
 global.fetch = async (url, opts) => {
   const u = String(url);
   if (/^https:\/\/(github\.com|objects\.githubusercontent\.com|elsewhere\.example)\//.test(u)) {
     const body = served ?? INSTALLER;
-    const res = new Response(body, {
+    // Delivered in chunks over time when asked, because an instant download
+    // reports progress once and the bar's whole life collapses into a single
+    // render - which is not how a hundred megabytes arrives.
+    const payload = slowly
+      ? new ReadableStream({
+          async start(controller) {
+            const size = Math.ceil(body.length / 4);
+            for (let i = 0; i < body.length; i += size) {
+              controller.enqueue(new Uint8Array(body.subarray(i, i + size)));
+              await new Promise((r) => setTimeout(r, 220));
+            }
+            controller.close();
+          },
+        })
+      : body;
+    const res = new Response(payload, {
       status: 200,
       headers: { 'content-type': 'application/octet-stream', 'content-length': String(body.length) },
     });
@@ -197,7 +213,8 @@ app.whenReady().then(async () => {
     JSON.stringify({ added, error: r.error }));
 
   log('\n=== the buttons a tailor actually presses ===');
-  mode = 'newer'; assetHost = 'github.com'; served = null; redirectTo = null;
+  mode = 'newer'; assetHost = 'github.com'; served = null; redirectTo = null; slowly = true;
+  await run(`window.__errors = []; window.addEventListener('unhandledrejection', e => window.__errors.push(String(e.reason && e.reason.message || e.reason))); true;`);
   const ui = await run(`(async () => {
     const wait = ms => new Promise(r => setTimeout(r, ms));
     const find = (t) => [...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith(t));
@@ -205,17 +222,34 @@ app.whenReady().then(async () => {
     [...document.querySelectorAll('.step-tab')].find(b => b.textContent.includes('Updates')).click(); await wait(400);
     find('Check for updates').click(); await wait(1200);
     const offered = !!find(${JSON.stringify('Download ' + NEWER)});
-    find(${JSON.stringify('Download ' + NEWER)}).click(); await wait(1800);
+    // Watched from before the click: the bar can come and go inside the
+    // download, and looking afterwards would miss it either way.
+    let sawBar = false;
+    const watcher = new MutationObserver(() => {
+      if (document.querySelector('.progress-track')) sawBar = true;
+    });
+    watcher.observe(document.body, { childList: true, subtree: true });
+    find(${JSON.stringify('Download ' + NEWER)}).click(); await wait(2600);
+    watcher.disconnect();
+    // Any error thrown by the page, including one thrown on mount.
+    const pageErrors = window.__errors ?? [];
     const show = find('Show in Finder') ?? find('Show in folder');
     show?.click(); await wait(500);
     return JSON.stringify({
       offered,
       reveal: !!show,
       stillOffering: !!find(${JSON.stringify('Download ' + NEWER)}),
+      sawBar, pageErrors,
       says: document.querySelector('.banner-ok, .banner.ok')?.textContent ?? document.body.textContent.includes('Downloads folder'),
     });
   })()`).then(JSON.parse);
   check(ui.offered, 'after checking, the Updates page offers the new version');
+  // Driven through the page's own wrapper, not the bridge underneath it: the
+  // subscription was broken for weeks because the test reached past the layer
+  // that was broken.
+  check(ui.sawBar, 'the progress bar appears while the download runs', JSON.stringify(ui.sawBar));
+  check((ui.pageErrors ?? []).length === 0,
+    'and the page throws nothing while doing it', JSON.stringify(ui.pageErrors));
   check(ui.reveal && !ui.stillOffering, 'pressing it downloads, and then offers to show the file', JSON.stringify(ui));
   check(String(ui.says).includes('Downloads') || ui.says === true,
     'and says where it went', String(ui.says).slice(0, 120));

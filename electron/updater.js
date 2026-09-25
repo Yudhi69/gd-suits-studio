@@ -266,7 +266,11 @@ async function download({ feedUrl, url, name, size = 0, digest = '', token, dir,
       hash.update(chunk);
       fs.writeSync(handle, chunk);
       const now = Date.now();
-      if (onProgress && now - lastReport > 200) {
+      // The first chunk reports at once and the rest five times a second.
+      // Throttling the first one too meant a download that finished inside
+      // 200ms never reported at all, and the bar never appeared - which is
+      // exactly what the test file does.
+      if (onProgress && (lastReport === 0 || now - lastReport > 200)) {
         lastReport = now;
         onProgress({ bytes: written, total: stated, name: filename });
       }
