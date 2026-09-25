@@ -86,7 +86,64 @@ closing the app.
 
 ---
 
-## 4. Getting updates
+## 4. Using it
+
+The whole job is one page per step, along the top, and you can jump between
+them in any order. A step with a tick has something in it. Nothing has to be
+filled in before you move on - an order half-taken is saved exactly as it is.
+
+**Making an order.** Orders, then **New order**. Put in the client's name and
+you have an order; everything else can follow while he is standing there.
+
+The steps, in the order they usually happen:
+
+| Step | What it is for |
+| --- | --- |
+| **Client** | Name, telephone, email, date of birth, address |
+| **Order** | The people on the order and their suits, the event, the dates, money in and out |
+| **Base Garment** | Two-piece, three-piece, jacket only, trousers only |
+| **Lining & Stitching** | Lining cloth and colour, thread |
+| **Jacket**, **Waistcoat**, **Pants** | Lapels, buttons, pockets, vents, cuffs - each with its own page |
+| **Extras** | Shirt, tie, shoes, pocket square, anything else |
+| **Detail Customisation** | Monograms, lapel pins, the small things |
+| **Capture** | Photographs of the client: front, side, back, face |
+| **Cloth** | A photograph of the fabric and the lining |
+| **Measurements** | Every measurement, in inches or centimetres |
+| **Preview** | The AI render of the finished suit on him |
+| **Fitting** | What happened at each fitting, and any alterations |
+| **Summary** | The quote, the order form, the client file |
+
+**The price moves as you build.** Every choice that costs something adds to
+the running total on screen, so the figure you quote is the figure the
+choices add up to.
+
+**Several people on one order.** A wedding is one order. On the **Order**
+page, add each person - the groom, the best man, his father - and each gets
+their own suit, their own measurements and their own client file, waiting the
+next time they come in. Each person folds away so the page does not fill up.
+
+**The render.** On **Preview**, one press of *Render all four views* draws the
+suit on the client from the front, the side, the back and at an angle. Click
+between the four tabs to turn him round. If one view comes out wrong, *Just
+the front* redoes that one without paying for the other three. **Refine this
+render** changes the picture you are looking at while keeping his face and
+pose - "wider lapels", "a shade darker".
+
+This is the one part that needs the internet and an AI key. Everything else
+works with no signal at all.
+
+**Sending things out.** On **Summary**: the quote email opens in your own mail
+program, already written, for you to read and send. The order form and the
+measurement form print or save as a PDF. **Client file** saves the whole
+order - photographs, renders, specification - into a folder.
+
+**Standing emails.** Settings, then **Emails**, writes a message once and
+offers it when it falls due - a week before the event, say. It never sends
+anything by itself: it tells you it is due and opens the draft for you.
+
+---
+
+## 5. Getting updates
 
 **Settings → Updates → Check for updates.**
 
@@ -103,7 +160,7 @@ downloads. That is deliberate.
 
 ---
 
-## If something goes wrong
+## 6. If something goes wrong
 
 **It will not open on a Mac, and Control-click did not help.** System Settings
 → Privacy & Security → **Open Anyway**.
