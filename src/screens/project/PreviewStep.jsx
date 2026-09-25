@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { api, projectMedia, clientMedia, brandedRender, messageFor } from '../../lib/api.js';
 import DownloadButton from '../../components/DownloadButton.jsx';
 import { buildRenderPrompt, buildTweakPrompt, VIEWS, describeGarment } from '../../lib/promptBuilder.js';
@@ -20,6 +20,7 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
   const [direction, setDirection] = useState('');
   const [tweak, setTweak] = useState('');
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState(null);
   const [activeId, setActiveId] = useState(null);
   const [showPrompt, setShowPrompt] = useState(false);
   // A hand-edited prompt replaces the generated one until it is reset. Kept
@@ -32,11 +33,34 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
 
   const spec = ctx.spec ?? project.spec ?? {};
   const analysis = project.analysis ?? {};
-  const renders = project.renders ?? [];
-  const active = renders.find((r) => r.id === activeId) ?? renders[0] ?? null;
+  // Scoped to the man on screen: on a wedding party the groom's preview must
+  // not be showing the best man's jacket.
+  const renders = ctx.renders ?? project.renders ?? [];
 
-  /** Reference images sent with the render, in the order the prompt describes them. */
-  const renderRefs = useMemo(() => {
+  /**
+   * What the stage shows: the newest render *of the selected view*.
+   *
+   * It used to be the newest render of any view, so the four tabs changed
+   * only what would be rendered next - render the back and all four tabs
+   * showed the back. The tabs are a way of looking at the suit, so each one
+   * shows its own picture, and a tweak applies to the one being looked at.
+   */
+  const thisView = useMemo(() => renders.filter((r) => r.view === view), [renders, view]);
+  const active = thisView.find((r) => r.id === activeId) ?? thisView[0] ?? null;
+  const rendered = useMemo(
+    () => new Set(renders.map((r) => r.view)),
+    [renders]
+  );
+
+  /**
+   * Reference images for one view, in the order the prompt describes them.
+   *
+   * Takes the view rather than reading the selected one, because rendering
+   * the whole set needs each view's own photographs: the back view leads with
+   * the photograph of the client's back, and sending the front one instead is
+   * how every view used to come back front-on.
+   */
+  const refsForView = useCallback((which) => {
     const out = [];
     const face = photoBySlot('face');
     const front = photoBySlot('front');
@@ -44,7 +68,7 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
     const back = photoBySlot('back');
 
     // Whichever subject photo matches the requested camera angle leads.
-    const subject = view === 'side' ? side ?? front : view === 'back' ? back ?? front : front ?? face;
+    const subject = which === 'side' ? side ?? front : which === 'back' ? back ?? front : front ?? face;
     if (subject) out.push({ ...subject, role: 'subject', label: 'client', slot: subject.slot });
     if (face && face !== subject) out.push({ ...face, role: 'subject', label: 'client face', slot: 'face' });
 
@@ -67,10 +91,10 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
       }
     }
     return out;
-  }, [view, selectedRefs, references, photoBySlot, project.client_id]);
+  }, [selectedRefs, references, photoBySlot, project.client_id]);
 
-  const prompt = useMemo(
-    () =>
+  const promptForView = useCallback(
+    (which) =>
       buildRenderPrompt({
         spec,
         client: { name: project.name, surname: project.surname },
@@ -81,42 +105,89 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
           build: analysis.body?.build,
           posture: analysis.body?.posture,
         },
-        view,
-        refs: renderRefs,
+        view: which,
+        refs: refsForView(which),
         notes: direction,
         steps,
       }),
-    [spec, analysis, view, renderRefs, direction, project.name, project.surname, steps]
+    [spec, analysis, refsForView, direction, project.name, project.surname, steps]
   );
+
+  const renderRefs = useMemo(() => refsForView(view), [refsForView, view]);
+  const prompt = useMemo(() => promptForView(view), [promptForView, view]);
 
   const clauses = describeGarment(spec, steps);
   const missingBase = !spec.suitType;
   const effectivePrompt = promptOverride ?? prompt;
   const promptEdited = promptOverride !== null && promptOverride !== prompt;
 
-  async function render(overridePrompt) {
+  /**
+   * Renders the views given, one after another.
+   *
+   * One press produces the whole set, because a suit is shown to a client
+   * from four sides and making the tailor ask for each one separately - then
+   * wait, then remember which he had done - is four chances to send a client
+   * three views and a gap. They go one at a time rather than at once: the
+   * provider rate-limits, and a queue of four gives an honest "3 of 4" to
+   * look at instead of a spinner that might mean anything.
+   *
+   * If a view fails before any has succeeded, the rest are abandoned. That is
+   * a missing key, an exhausted quota or no signal - conditions the next
+   * three calls would meet too, and there is no sense spending them to be
+   * told the same thing four times. A failure *after* something worked is
+   * treated as that one view's bad luck, and the others still go.
+   */
+  async function renderViews(views, overridePrompt) {
     setBusy(true);
+    const failed = [];
+    let succeeded = 0;
+    let last = null;
     try {
-      const result = await api.ai.render({
-        projectId: project.id,
-        prompt: overridePrompt ?? effectivePrompt,
-        view,
-        refs: renderRefs.map((r) => ({
-          filename: r.filename,
-          mime: r.mime,
-          scope: r.scope ?? `project-${project.id}`,
-        })),
-        referenceIds: selectedRefs,
-      });
-      await reload();
-      setActiveId(result.id);
-      toast('Render ready', 'ok');
-    } catch (err) {
-      toast(messageFor(err), 'err');
+      for (let i = 0; i < views.length; i++) {
+        const which = views[i];
+        setProgress({ view: which, done: i, total: views.length });
+        try {
+          // A hand-edited prompt belongs to the view it was written for. The
+          // others are still described by the spec.
+          const usePrompt =
+            overridePrompt ?? (promptOverride !== null && which === view ? promptOverride : promptForView(which));
+          const result = await api.ai.render({
+            projectId: project.id,
+            suitId: ctx.activeSuitId ?? undefined,
+            prompt: usePrompt,
+            view: which,
+            refs: refsForView(which).map((r) => ({
+              filename: r.filename,
+              mime: r.mime,
+              scope: r.scope ?? `project-${project.id}`,
+            })),
+            referenceIds: selectedRefs,
+          });
+          succeeded++;
+          last = { id: result.id, view: which };
+        } catch (err) {
+          failed.push({ view: which, message: messageFor(err) });
+          if (succeeded === 0) break;
+        }
+      }
     } finally {
+      setProgress(null);
       setBusy(false);
     }
+
+    await reload();
+    // After a set, each view falls back to its own newest. After a single
+    // view, that one render is what the tailor asked to see.
+    setActiveId(views.length === 1 && last ? last.id : null);
+
+    const name = (key) => VIEWS.find((v) => v.key === key)?.label.toLowerCase() ?? key;
+    if (failed.length && succeeded === 0) toast(failed[0].message, 'err');
+    else if (failed.length) toast(`Rendered ${succeeded}, but the ${failed.map((f) => name(f.view)).join(' and ')} failed`, 'warn');
+    else toast(views.length === 1 ? 'Render ready' : `All ${views.length} views rendered`, 'ok');
   }
+
+  const renderEverything = () => renderViews(VIEWS.map((v) => v.key));
+  const renderThisView = (overridePrompt) => renderViews([view], overridePrompt);
 
   async function applyTweak() {
     if (!active || !tweak.trim()) return;
@@ -124,6 +195,7 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
     try {
       const result = await api.ai.render({
         projectId: project.id,
+        suitId: ctx.activeSuitId ?? undefined,
         prompt: buildTweakPrompt({ instruction: tweak, spec, view: active.view }),
         view: active.view,
         parentId: active.id,
@@ -163,8 +235,9 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
                     key={v.key}
                     className={`step-tab ${view === v.key ? 'active' : ''}`}
                     onClick={() => setView(v.key)}
+                    title={rendered.has(v.key) ? `${v.label} view rendered` : `${v.label} view not rendered yet`}
                   >
-                    {v.label}
+                    {v.label}{rendered.has(v.key) ? ' ·' : ''}
                   </button>
                 ))}
               </div>
@@ -176,9 +249,14 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
                   <div className="center">
                     <Spinner />
                     <div className="progress-note">
-                      Rendering the {VIEWS.find((v) => v.key === view)?.label.toLowerCase()} view...
+                      Rendering the {VIEWS.find((v) => v.key === (progress?.view ?? view))?.label.toLowerCase()} view
+                      {progress && progress.total > 1 ? ` - ${progress.done + 1} of ${progress.total}` : ''}...
                       <br />
-                      <span className="tiny">This usually takes 10-30 seconds.</span>
+                      <span className="tiny">
+                        {progress && progress.total > 1
+                          ? 'Each one takes 10-30 seconds. They are done one at a time.'
+                          : 'This usually takes 10-30 seconds.'}
+                      </span>
                     </div>
                   </div>
                 ) : active ? (
@@ -194,9 +272,9 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
                 )}
               </div>
 
-              {renders.length > 0 && (
+              {thisView.length > 1 && (
                 <div className="render-strip" style={{ marginTop: 12 }}>
-                  {renders.map((r) => (
+                  {thisView.map((r) => (
                     <button
                       key={r.id}
                       className={`render-thumb ${active?.id === r.id ? 'active' : ''}`}
@@ -210,8 +288,13 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
               )}
 
               <div className="inline" style={{ marginTop: 12 }}>
-                <button className="btn btn-gold" onClick={() => render()} disabled={busy || !hasKey || missingBase}>
-                  {active ? `Render again${renders.length ? ` (${renders.length + 1})` : ''}` : 'Render preview'}
+                <button className="btn btn-gold" onClick={renderEverything} disabled={busy || !hasKey || missingBase}>
+                  {rendered.size ? 'Render all four again' : 'Render all four views'}
+                </button>
+                {/* One view at a time, for when three are right and the
+                    fourth is not - four renders is four times the cost. */}
+                <button className="btn" onClick={() => renderThisView()} disabled={busy || !hasKey || missingBase}>
+                  Just the {VIEWS.find((v) => v.key === view)?.label.toLowerCase()}
                 </button>
                 <button className="btn" onClick={() => setPickingRefs(true)}>
                   Reference images{selectedRefs.length ? ` (${selectedRefs.length})` : ''}
@@ -382,7 +465,7 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
               <button
                 className="btn btn-gold"
                 disabled={busy || !hasKey || missingBase}
-                onClick={() => { setPromptOverride(promptDraft); setShowPrompt(false); render(promptDraft); }}
+                onClick={() => { setPromptOverride(promptDraft); setShowPrompt(false); renderThisView(promptDraft); }}
               >
                 Render with this
               </button>
