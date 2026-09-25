@@ -151,7 +151,7 @@ app.whenReady().then(async () => {
     const tab = (t) => [...document.querySelectorAll('.step-tab')].find(x => x.textContent.includes(t));
     tab('Order').click(); await wait(800);
     const onOrder = [...document.querySelectorAll('.card-head h3')].map(h => h.textContent.trim());
-    const people = [...document.querySelectorAll('.party-row')].length;
+    const people = [...document.querySelectorAll('.party-person-block')].length;
     tab('Jacket').click(); await wait(800);
     const stripTabs = [...document.querySelectorAll('.suit-tab')].map(t => t.textContent.trim());
     const firstSelected = [...document.querySelectorAll('.option.selected')].map(o => o.textContent.trim());
@@ -167,6 +167,51 @@ app.whenReady().then(async () => {
   check(ui.firstSelected.some((o) => /Peak/.test(o)), "it opens on the groom's peak lapel", ui.firstSelected.join(' | '));
   check(ui.secondSelected.some((o) => /Shawl|Notch/.test(o)) && !ui.secondSelected.some((o) => /Peak/.test(o)),
     'switching suits switches what the page is editing', ui.secondSelected.join(' | '));
+
+  log('\n=== folded shut, and lined up when opened ===');
+  // Alignment is measurable, so it is measured rather than eyeballed: every
+  // input in an opened person starts at the same x and is the same width, and
+  // the remove buttons are all the same size. A row that finds its own width
+  // shows up here as a different number.
+  const layout = JSON.parse(await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    [...document.querySelectorAll('.step-tab')].find(x => x.textContent.includes('Order')).click(); await wait(900);
+    const heads = [...document.querySelectorAll('.party-head')];
+    const before = {
+      heads: heads.length,
+      openBodies: document.querySelectorAll('.party-body').length,
+      expanded: heads.map(h => h.getAttribute('aria-expanded')),
+      summaries: heads.map(h => h.textContent.replace(/\\s+/g, ' ').trim()),
+    };
+    heads[1].click(); await wait(500);
+    const body = document.querySelector('.party-person-block.open .party-body');
+    const inputs = [...(body?.querySelectorAll('.input') ?? [])].map(i => {
+      const r = i.getBoundingClientRect();
+      return { x: Math.round(r.x), w: Math.round(r.width) };
+    });
+    const icons = [...(body?.querySelectorAll('.btn-icon') ?? [])].map(b => {
+      const r = b.getBoundingClientRect();
+      return { w: Math.round(r.width), h: Math.round(r.height) };
+    });
+    const after = { openBodies: document.querySelectorAll('.party-body').length, inputs, icons };
+    heads[1].click(); await wait(500);
+    after.closedAgain = document.querySelectorAll('.party-body').length;
+    return JSON.stringify({ before, after });
+  })()`));
+  check(layout.before.heads === 2, 'each person is a block of their own', String(layout.before.heads));
+  check(layout.before.openBodies === 0, 'and they start folded shut on an order of several', String(layout.before.openBodies));
+  check(layout.before.expanded.every((e) => e === 'false'), 'which the header says out loud, for a screen reader');
+  check(layout.before.summaries.every((t) => /\d+ suits?/.test(t)),
+    'a folded person still says how many suits they are having', JSON.stringify(layout.before.summaries));
+  check(layout.after.openBodies === 1, 'opening one opens only that one', String(layout.after.openBodies));
+  check(layout.after.closedAgain === 0, 'and it folds shut again');
+  const xs = new Set(layout.after.inputs.map((i) => i.x));
+  const ws = new Set(layout.after.inputs.map((i) => i.w));
+  check(layout.after.inputs.length >= 2 && xs.size === 1,
+    'every field starts at the same place', JSON.stringify([...xs]));
+  check(ws.size === 1, 'and is the same width', JSON.stringify([...ws]));
+  check(layout.after.icons.length === 0 || layout.after.icons.every((i) => i.w === i.h && i.w >= 24),
+    'the remove buttons are square and all one size', JSON.stringify(layout.after.icons));
 
   log('\n=== and disappears for an order of one ===');
   const soloClient = db.upsertClient({ name: 'Solo', surname: 'Client' });
