@@ -350,6 +350,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* --------------------------------------------------------- option cards */
 
 .options { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+/* Every row the height of the tallest tile, not just every tile in a row.
+   A choose-several list has one "Other" with a line under it; left to the
+   grid's default, it sits alone on the last row at a height of its own. */
+.options-even { grid-auto-rows: 1fr; }
 
 .option {
   position: relative; text-align: left; cursor: pointer;

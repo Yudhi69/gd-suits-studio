@@ -110,7 +110,11 @@ export default function Field({ field, spec, overrides = {}, onChange, onCatalog
       <div className="field">
         <label>{field.label}</label>
         {field.hint && <div className="hint" style={{ marginTop: -2 }}>{field.hint}</div>}
-        <div className="option-grid" style={{ marginTop: 8 }}>
+        {/* The same grid every single-choice field uses. It was "option-grid",
+            a class with no style behind it, so each tile sized itself to its own
+            words - five widths in one row, and "Other" taller than the rest
+            because it is the only one with a second line. */}
+        <div className="options options-even" style={{ marginTop: 8 }}>
           {field.options.map((opt) => (
             <button
               type="button"
