@@ -21,7 +21,7 @@
     "test:render": "cross-env DATA_DIR=.testdata/render electron scripts/test-render-pipeline.js",
     "test:tour": "cross-env DATA_DIR=.testdata/tour SHOT_DIR=.testdata/shots electron scripts/screenshot-tour.js",
     "test:security": "cross-env DATA_DIR=.testdata/security electron scripts/test-security.js",
-    "test": "npm run build && npm run test:migrations && npm run test:secrets && npm run test:security && npm run test:branding && npm run test:models && npm run test:updates && npm run test:catalog && npm run test:clientorder && npm run test:garment && npm run test:party && npm run test:persistence && npm run test:documents && npm run test:workflow && npm run test:client && npm run test:quote && npm run test:mail && npm run test:connections && npm run test:operations && npm run test:import && npm run test:render",
+    "test": "npm run build && npm run test:migrations && npm run test:secrets && npm run test:security && npm run test:branding && npm run test:models && npm run test:updates && npm run test:catalog && npm run test:clientorder && npm run test:garment && npm run test:party && npm run test:persistence && npm run test:documents && npm run test:workflow && npm run test:client && npm run test:quote && npm run test:mail && npm run test:connections && npm run test:attachments && npm run test:operations && npm run test:import && npm run test:render",
     "test:updates": "cross-env DATA_DIR=.testdata/updates electron scripts/test-updates.js",
     "test:catalog": "cross-env DATA_DIR=.testdata/catalog electron scripts/test-catalog.js",
     "test:workflow": "cross-env DATA_DIR=.testdata/workflow electron scripts/test-workflow.js",
@@ -42,11 +42,13 @@
     "test:persistence": "cross-env DATA_DIR=.testdata/persistence electron scripts/test-persistence.js",
     "test:documents": "cross-env DATA_DIR=.testdata/documents electron scripts/test-documents.js",
     "test:mail": "cross-env DATA_DIR=.testdata/mail electron scripts/test-mail.js",
-    "test:connections": "cross-env DATA_DIR=.testdata/connections electron scripts/test-connections.js"
+    "test:connections": "cross-env DATA_DIR=.testdata/connections electron scripts/test-connections.js",
+    "test:attachments": "cross-env DATA_DIR=.testdata/attachments electron scripts/test-attachments.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",
-    "better-sqlite3": "^12.2.0"
+    "better-sqlite3": "^12.2.0",
+    "nodemailer": "10.0.10"
   },
   "devDependencies": {
     "@electron/fuses": "^2.1.3",

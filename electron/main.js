@@ -16,6 +16,7 @@ const brand = require('./brand');
 const mail = require('./mailTemplate');
 const rules = require('./mailRules');
 const integrations = require('./integrations');
+const delivery = require('./mailDelivery');
 const business = require('./business');
 
 /** The shop's details as they are set today, never as they were compiled. */
@@ -930,21 +931,87 @@ handle('quote:template', () => ({
   defaults: { template: mail.DEFAULT_TEMPLATE, subject: mail.DEFAULT_SUBJECT },
 }));
 
-handle('quote:email', ({ projectId }) => {
+/**
+ * Everything about an email that is decided before it goes: who to, what it
+ * says, which pictures ride with it, and which way it will leave.
+ *
+ * One function, called by the preview and by the send, so what GD confirms
+ * is exactly what is sent. The recipient is the client on the order and the
+ * pictures are that order's own renders - nothing here takes an address or a
+ * file from the window.
+ */
+function composeEmail(project, { template, subjectTemplate, allowGmail = true }) {
+  if (!project.email) throw new Error('This client has no email address on their file yet.');
+  const values = mail.buildValues(project, shop());
+  // The placeholder is the switch: no {renders} in the wording, nothing attached.
+  const wantsRenders = /\{renders\}/.test(template);
+  const built = wantsRenders
+    ? delivery.buildAttachments(project, {
+        readImage: storage.readImage,
+        stamp: brand.stamp,
+        scope: storage.scopeForProject(project.id),
+      })
+    : { attachments: [], total: 0, omitted: 0 };
+  const gmail = integrations.statusOf('gmail', connections(), hasSecret);
+  const via = allowGmail && gmail.ready ? 'gmail' : built.attachments.length ? 'draft-file' : 'mailto';
+  return {
+    to: project.email,
+    subject: mail.fill(subjectTemplate, values),
+    body: mail.fill(template, values),
+    ...built,
+    gmail,
+    via,
+  };
+}
+
+function quoteTemplates() {
+  return {
+    template: db.getSetting('quoteEmailTemplate', mail.DEFAULT_TEMPLATE),
+    subjectTemplate: db.getSetting('quoteEmailSubject', mail.DEFAULT_SUBJECT),
+  };
+}
+
+async function sendComposed(project, composed, { allowGmail = true, draftName }) {
+  const config = connections();
+  return delivery.deliver({
+    to: composed.to,
+    from: shop().email,
+    subject: composed.subject,
+    body: composed.body,
+    attachments: composed.attachments,
+    gmail: composed.gmail,
+    allowGmail,
+    gmailAddress: config.gmail.address,
+    gmailPassword: allowGmail && composed.gmail.ready ? secrets.get('gmailAppPassword') : null,
+    draftDir: path.join(app.getPath('userData'), 'drafts'),
+    draftName,
+    openPath: (file) => shell.openPath(file),
+    openMail: security.openMailSafely,
+  });
+}
+
+/** What the quote email would be, for GD to read before anything is sent. */
+handle('quote:preview', ({ projectId }) => {
   const project = db.getProject(v.id(projectId, 'projectId'));
   if (!project) throw new Error('Order not found');
-  if (!project.email) throw new Error('This client has no email address on their file yet.');
+  const c = composeEmail(project, quoteTemplates());
+  return {
+    to: c.to, subject: c.subject, body: c.body, via: c.via,
+    from: c.via === 'gmail' ? connections().gmail.address : null,
+    attachments: c.attachments.map((a) => ({ name: a.filename, bytes: a.content.length })),
+    totalBytes: c.total,
+    omitted: c.omitted,
+  };
+});
 
-  const values = mail.buildValues(project, shop());
-
-  const template = db.getSetting('quoteEmailTemplate', mail.DEFAULT_TEMPLATE);
-  const subjectTemplate = db.getSetting('quoteEmailSubject', mail.DEFAULT_SUBJECT);
-  const body = mail.fill(template, values);
-  const subject = mail.fill(subjectTemplate, values);
-
-  const opened = security.openMailSafely({ to: project.email, subject, body });
-  if (!opened) throw new Error('Could not open a mail draft - check the client has a valid email address.');
-  return { opened: true, to: project.email };
+handle('quote:email', async ({ projectId }) => {
+  const project = db.getProject(v.id(projectId, 'projectId'));
+  if (!project) throw new Error('Order not found');
+  const composed = composeEmail(project, quoteTemplates());
+  const result = await sendComposed(project, composed, {
+    draftName: `Quote ${project.order_ref || project.id}`,
+  });
+  return { opened: result.via !== 'gmail', sent: result.via === 'gmail', ...result };
 });
 
 /* connections - where data may go, and nowhere by default */
@@ -1059,24 +1126,23 @@ handle('mail:due', ({ on } = {}) => {
  * rather than marking it sent and losing it. It is still only a record that
  * GD was handed the draft - this app never sends anything itself.
  */
-handle('mail:send', ({ ruleId, projectId }) => {
+handle('mail:send', async ({ ruleId, projectId }) => {
   const id = v.id(ruleId, 'ruleId');
   const pid = v.id(projectId, 'projectId');
   const rule = db.listMailRules().find((r) => r.id === id);
   if (!rule) throw new Error('That email no longer exists.');
   const project = db.getProject(pid);
   if (!project) throw new Error('Order not found');
-  if (!project.email) throw new Error('This client has no email address on their file yet.');
-
-  const values = mail.buildValues(project, shop());
-  const opened = security.openMailSafely({
-    to: project.email,
-    subject: mail.fill(rule.subject, values),
-    body: mail.fill(rule.body, values),
+  // A standing email is always a draft, Gmail or not: it was built on the rule
+  // that a timer decides what is due and a person sends it. It can still
+  // carry the renders, the same way a quote does.
+  const composed = composeEmail(project, { template: rule.body, subjectTemplate: rule.subject, allowGmail: false });
+  const result = await sendComposed(project, composed, {
+    allowGmail: false,
+    draftName: `${rule.name} - ${project.order_ref || project.id}`,
   });
-  if (!opened) throw new Error('Could not open a mail draft - check the client has a valid email address.');
   db.markMailSent(id, pid);
-  return { opened: true, to: project.email };
+  return { opened: true, ...result };
 });
 
 /**
@@ -1283,5 +1349,9 @@ handle('app:security', () => ({
       try { return new URL(db.getSetting('updateFeed', DEFAULT_FEED) || DEFAULT_FEED).host; }
       catch { return null; }
     })(),
+    // Only once it can actually be used - listing it before then would
+    // overstate what leaves the machine, and leaving it off after would
+    // understate it.
+    integrations.statusOf('gmail', connections(), hasSecret).ready ? 'smtp.gmail.com' : null,
   ].filter(Boolean),
 }));
