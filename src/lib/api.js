@@ -10,18 +10,37 @@
 const bridge = window.gd;
 
 export class AppError extends Error {
-  constructor({ message, code, retryable }) {
-    super(message || 'Something went wrong');
+  /**
+   * `channel` is which call failed.
+   *
+   * Without it an error from any of thirty groups reads only as "Something
+   * went wrong" - which is how the bug below sat unnoticed: a rejection at
+   * startup that nothing in it could place.
+   */
+  constructor({ message, code, retryable }, channel) {
+    super(message || `Something went wrong (${channel ?? 'unknown call'})`);
     this.name = 'AppError';
     this.code = code ?? null;
     this.retryable = !!retryable;
+    this.channel = channel ?? null;
   }
 }
 
+/**
+ * Bridge entries that are not calls and must not be wrapped as one.
+ *
+ * `onProgress` subscribes and hands back the function that unsubscribes. Put
+ * through the wrapper it was treated as an answer of `{ ok, data }`, found
+ * neither, and threw - so the update progress bar never received a single
+ * event and sat empty for the whole download.
+ */
+const SUBSCRIPTIONS = new Set(['updates:onProgress']);
+
 function wrap(group, action) {
+  const channel = `${group}:${action}`;
   return async (payload) => {
     const res = await bridge[group][action](payload);
-    if (!res?.ok) throw new AppError(res?.error ?? {});
+    if (!res?.ok) throw new AppError(res?.error ?? {}, channel);
     return res.data;
   };
 }
@@ -38,7 +57,9 @@ for (const group of GROUPS) {
   if (!bridge[group]) continue;
   api[group] = {};
   for (const action of Object.keys(bridge[group])) {
-    api[group][action] = wrap(group, action);
+    api[group][action] = SUBSCRIPTIONS.has(`${group}:${action}`)
+      ? bridge[group][action]
+      : wrap(group, action);
   }
 }
 
