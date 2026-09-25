@@ -81,11 +81,11 @@ jobs:
             # Each architecture is built in its own pass on purpose: in one
             # pass electron-builder runs them in parallel and they collide in
             # a shared temp directory, and you silently get only one DMG.
-            build: npm run build && npx electron-builder --mac --arm64 && npx electron-builder --mac --x64
+            build: npm run build && npx electron-builder --mac --arm64 --publish never && npx electron-builder --mac --x64 --publish never
             artifacts: release/*.dmg
           - os: windows-2022
             name: Windows
-            build: npm run build && npx electron-builder --win --x64
+            build: npm run build && npx electron-builder --win --x64 --publish never
             artifacts: release/*Setup*.exe
     runs-on: ${{ matrix.os }}
     steps:
@@ -118,6 +118,10 @@ jobs:
       - run: npm ci
       - name: Stamp the version being released
         run: npm version ${{ needs.version.outputs.version }} --no-git-tag-version --allow-same-version
+      # --publish never on every call above, not just here: on CI
+      # electron-builder decides by itself to publish, then stops the build
+      # because there is no GH_TOKEN. The release is cut by the job below,
+      # from artifacts, which is the only place that should be doing it.
       - run: ${{ matrix.build }}
         env:
           # Ad-hoc signing only. There is no Developer ID yet, and without
