@@ -125,7 +125,7 @@ app.whenReady().then(async () => {
   // down here and read by someone, not slip in under a number.
   const DECLARED = [
     'ai', 'alterations', 'analytics', 'app', 'brandedRender', 'business', 'catalog',
-    'clientMeasurements', 'clients', 'clientMedia', 'extras', 'fittings', 'forms', 'mail',
+    'clientMeasurements', 'clients', 'clientMedia', 'connections', 'extras', 'fittings', 'forms', 'mail',
     'measurements', 'media', 'mediaUrl', 'members', 'notes', 'payments', 'photos',
     'projectMedia', 'project', 'projects', 'quote', 'references', 'renders',
     'secrets', 'settings', 'suits', 'updates',
