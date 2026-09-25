@@ -603,6 +603,19 @@ const MIGRATIONS = [
        WHERE client_id IS NULL;
     `);
   },
+
+  /* v16 - renders belong to a suit, and until now none of them said so.
+     The column was added with the party work and backfilled once, but
+     addRender never wrote it, so every render made since has been orphaned.
+     On a single-person order nothing showed; on a wedding party the groom's
+     preview could be showing the best man's jacket. */
+  (d) => {
+    d.exec(`
+      UPDATE renders
+         SET suit_id = (SELECT id FROM suits WHERE suits.project_id = renders.project_id ORDER BY position, id LIMIT 1)
+       WHERE suit_id IS NULL;
+    `);
+  },
 ];
 
 function open(userDataPath) {
@@ -1118,14 +1131,24 @@ function saveMeasurement({ projectId, suitId, garment, fieldId, value, unit, sou
 
 /* ---------------------------------------------------------------- renders */
 
-function addRender({ projectId, parentId, view, provider, model, prompt, instruction, filename }) {
+/**
+ * A render belongs to one suit, not to the order.
+ *
+ * It was being stored without one, which is invisible on an order for a
+ * single man and wrong on a wedding party: every render landed in a pool
+ * shared by everyone on the order. The fallback is the same one photographs
+ * use, so a render and a photograph taken at the same moment cannot disagree
+ * about whose they are.
+ */
+function addRender({ projectId, suitId, parentId, view, provider, model, prompt, instruction, filename }) {
   const info = get()
     .prepare(
-      `INSERT INTO renders (project_id, parent_id, view, provider, model, prompt, instruction, filename)
-       VALUES (@projectId, @parentId, @view, @provider, @model, @prompt, @instruction, @filename)`
+      `INSERT INTO renders (project_id, suit_id, parent_id, view, provider, model, prompt, instruction, filename)
+       VALUES (@projectId, @suitId, @parentId, @view, @provider, @model, @prompt, @instruction, @filename)`
     )
     .run({
       projectId,
+      suitId: suitId ?? defaultPhotoOwner(projectId).suitId,
       parentId: parentId ?? null,
       view: view ?? 'front',
       provider: provider ?? 'gemini',

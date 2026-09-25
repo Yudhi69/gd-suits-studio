@@ -759,7 +759,7 @@ function loadRefImages(refs, defaultScope) {
   });
 }
 
-handle('ai:render', async ({ projectId, prompt, view, refs = [], referenceIds = [], parentId, instruction, model }) => {
+handle('ai:render', async ({ projectId, suitId, prompt, view, refs = [], referenceIds = [], parentId, instruction, model }) => {
   const pid = v.id(projectId, 'projectId');
   const scope = storage.scopeForProject(pid);
   const config = getAiConfig();
@@ -777,6 +777,7 @@ handle('ai:render', async ({ projectId, prompt, view, refs = [], referenceIds = 
 
   const id = db.addRender({
     projectId: pid,
+    suitId: v.optionalId(suitId, 'suitId'),
     parentId: v.optionalId(parentId, 'parentId'),
     view: v.str(view, 'view', 40),
     provider: config.image.provider,

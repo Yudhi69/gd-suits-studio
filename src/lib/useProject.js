@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api.js';
 
 /**
@@ -155,9 +155,25 @@ export function useProject(projectId) {
     [project, activeSuit]
   );
 
+  /**
+   * The renders belonging to the suit on screen.
+   *
+   * A render with no suit predates them being recorded and belongs to the
+   * first suit, which is the same rule the migration used to backfill the
+   * ones already on disk - kept here too so a database that has not been
+   * through it still shows the tailor his work rather than an empty stage.
+   */
+  const renders = useMemo(() => {
+    const all = project?.renders ?? [];
+    if (!activeSuit) return all;
+    const primary = suits[0]?.id ?? null;
+    return all.filter((r) => r.suit_id === activeSuit.id || (r.suit_id == null && activeSuit.id === primary));
+  }, [project, activeSuit, suits]);
+
   return {
     project, references, loading, error, reload,
     suits,
+    renders,
     activeSuit,
     activeSuitId: activeSuit?.id ?? null,
     setActiveSuitId,
