@@ -132,6 +132,34 @@ app.whenReady().then(async () => {
   check(/notch/i.test(db.getProject(projectId).spec.lapel ?? ''), 'and the choice reached the order', 
     JSON.stringify(db.getProject(projectId).spec.lapel));
 
+  log('\n=== choose-several tiles are one size ===');
+  // Measured, not eyeballed. These sat in a container with no style behind
+  // it, so each tile took the width of its own words and "Other" - the only
+  // one with a second line - stood a row taller than everything else.
+  setSpec({ suitType: 'two_piece' });
+  await open();
+  const sizes = JSON.parse(await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    const out = {};
+    for (const [tabName, fieldName] of [['Detail Customisation', 'Embroidery Monogram'], ['Pants', 'Waistband Extras']]) {
+      [...document.querySelectorAll('.step-tab')].find(t => t.textContent.includes(tabName))?.click();
+      await wait(700);
+      const field = [...document.querySelectorAll('.field')]
+        .find(f => f.querySelector('label')?.textContent.trim() === fieldName);
+      out[fieldName] = [...(field?.querySelectorAll('.option') ?? [])].map(t => {
+        const r = t.getBoundingClientRect();
+        return { label: t.querySelector('.option-label')?.textContent.trim(), w: Math.round(r.width), h: Math.round(r.height) };
+      });
+    }
+    return JSON.stringify(out);
+  })()`));
+  for (const [name, tiles] of Object.entries(sizes)) {
+    const shapes = new Set(tiles.map((t) => `${t.w}x${t.h}`));
+    check(tiles.length >= 2 && shapes.size === 1,
+      `every tile in ${name} is the same size`,
+      JSON.stringify(tiles.map((t) => `${t.label} ${t.w}x${t.h}`)));
+  }
+
   log('\n=== a waistcoat counts its buttons by how it fastens ===');
   setSpec({ suitType: 'three_piece', wcBreast: 'single' });
   await open();
