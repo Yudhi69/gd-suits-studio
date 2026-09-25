@@ -170,6 +170,32 @@ jobs:
             echo
             echo "Your orders, clients, photographs and measurements are never touched by an update."
           } > notes.md
+      # Whether this is really the newest version, rather than merely the
+      # newest release.
+      #
+      # Run numbers only ever go up, but the runs do not finish in that order:
+      # 0.1.10 published at 13:37 and 0.1.9 at 13:42, so GitHub marked 0.1.9
+      # as Latest because it was created last. The app asks for
+      # /releases/latest, so a copy on 0.1.10 would have been offered 0.1.9 -
+      # a downgrade it would go on being offered forever.
+      #
+      # So the comparison is against the highest tag that exists, by version
+      # and not by date, and this release claims Latest only if it wins.
+      - name: Is this actually the newest version?
+        id: newest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          new='${{ needs.version.outputs.version }}'
+          highest=$(gh release list --limit 200 --json tagName -q '.[].tagName' \
+                      | sed 's/^v//' | sort -V | tail -1)
+          echo "highest published: ${highest:-none}, this one: $new"
+          if [ -z "$highest" ] || [ "$(printf '%s\n%s\n' "$highest" "$new" | sort -V | tail -1)" = "$new" ]; then
+            echo 'make=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'make=false' >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.version.outputs.version }}
@@ -177,3 +203,4 @@ jobs:
           body_path: notes.md
           files: installers/*
           fail_on_unmatched_files: true
+          make_latest: ${{ steps.newest.outputs.make }}
