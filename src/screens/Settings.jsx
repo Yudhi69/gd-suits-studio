@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { api, messageFor } from '../lib/api.js';
 import { priceCatalogEntries, formatMoney } from '../lib/pricing.js';
 import { CURRENCY } from '../lib/catalog.js';
@@ -153,6 +153,338 @@ function QuoteEmail() {
         </p>
       </div>
     </div>
+  );
+}
+
+
+/**
+ * Standing emails: wording GD writes once, offered when it falls due.
+ *
+ * The app does not send them. There is no mail server here and no password
+ * for his mailbox - a draft opens in his own mail client, written and
+ * addressed, and he presses send. A tool that quietly emails clients on a
+ * timer is one bad template away from sending four hundred people the wrong
+ * thing, and he would hear about it from a client rather than from the app.
+ */
+function StandingEmails() {
+  const [meta, setMeta] = useState(null);
+  const [clients, setClients] = useState([]);
+  const [due, setDue] = useState([]);
+  const [editing, setEditing] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const toast = useToast();
+
+  // Both halves are caught: a page that throws on mount leaves a spinner
+  // that never resolves, and nothing on screen says why.
+  const load = React.useCallback(async () => {
+    try {
+      setMeta(await api.mail.rules());
+      setDue((await api.mail.due()).due);
+    } catch (err) {
+      setMeta((m) => m ?? { rules: [], anchors: [], audiences: [], variables: [], defaults: {} });
+      setLoadError(messageFor(err));
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    api.clients.list().then(setClients).catch(() => setClients([]));
+  }, [load]);
+
+  async function save(rule) {
+    try {
+      await api.mail.saveRule(rule);
+      setEditing(null);
+      await load();
+      toast(rule.id ? 'Email saved' : 'Email added', 'ok');
+    } catch (err) { toast(messageFor(err), 'err'); }
+  }
+
+  if (!meta) return <div className="card"><div className="card-pad"><Spinner /></div></div>;
+
+  return (
+    <div className="stack">
+      {loadError && <Banner kind="warn">{loadError}</Banner>}
+
+      <div className="card">
+        <div className="card-head">
+          <h3>Standing emails</h3>
+          <div className="spacer" />
+          <button className="btn btn-gold btn-sm" onClick={() => setEditing({})}>New email</button>
+        </div>
+        <div className="card-pad">
+          {meta.rules.length === 0 && (
+            <p className="muted" style={{ margin: 0 }}>
+              Nothing standing yet. A reminder a week before the final fitting, say, or a note the day
+              after delivery.
+            </p>
+          )}
+
+          {meta.rules.map((r) => (
+            <div key={r.id} className="mail-rule">
+              <div className="mail-rule-main">
+                <div style={{ fontWeight: 600 }}>{r.name}</div>
+                <div className="tiny faint">
+                  {describeRule(r, meta.anchors)}
+                  {r.audience === 'only' && ` - ${r.clientIds.length} client${r.clientIds.length === 1 ? '' : 's'} only`}
+                  {r.audience === 'except' && ` - everyone except ${r.clientIds.length}`}
+                </div>
+              </div>
+              <Switch checked={r.enabled} onChange={(on) => save({ ...r, offsetDays: r.offset_days, enabled: on })} />
+              <button className="btn btn-sm" onClick={() => setEditing({ ...r, offsetDays: r.offset_days })}>Edit</button>
+              <ConfirmButton
+                className="btn btn-sm btn-ghost btn-danger"
+                confirmLabel="Delete this email?"
+                onConfirm={async () => { await api.mail.deleteRule({ id: r.id }); await load(); toast('Email deleted', 'ok'); }}
+              >
+                Delete
+              </ConfirmButton>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <h3>Due now</h3>
+          <div className="spacer" />
+          <span className="tiny faint">{due.length === 0 ? 'Nothing waiting' : `${due.length} waiting`}</span>
+        </div>
+        <div className="card-pad">
+          {due.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>
+              Nothing has come due. This is checked each time the page opens - the app never sends
+              anything on its own.
+            </p>
+          ) : (
+            due.map((d) => (
+              <div key={`${d.ruleId}-${d.projectId}`} className="mail-rule">
+                <div className="mail-rule-main">
+                  <div style={{ fontWeight: 600 }}>{d.client} <span className="mono small faint">{d.orderRef}</span></div>
+                  <div className="tiny faint">
+                    {d.ruleName} - due {d.dueOn}{d.overdue ? ' (overdue)' : ''}
+                  </div>
+                </div>
+                <button
+                  className="btn btn-sm btn-gold"
+                  onClick={async () => {
+                    try {
+                      await api.mail.send({ ruleId: d.ruleId, projectId: d.projectId });
+                      await load();
+                      toast(`Draft opened for ${d.client}`, 'ok');
+                    } catch (err) { toast(messageFor(err), 'err'); }
+                  }}
+                >
+                  Open the draft
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {editing && (
+        <EmailEditor
+          rule={editing}
+          meta={meta}
+          clients={clients}
+          onClose={() => setEditing(null)}
+          onSave={save}
+        />
+      )}
+    </div>
+  );
+}
+
+/** "A week before the final fitting", read back from a stored rule. */
+function describeRule(r, anchors) {
+  const days = r.offsetDays ?? r.offset_days ?? 0;
+  const anchor = anchors.find((a) => a.key === r.anchor)?.label.toLowerCase() ?? r.anchor;
+  if (days === 0) return `On the day of ${anchor}`;
+  const n = Math.abs(days);
+  const unit = n % 7 === 0 ? `${n / 7} week${n === 7 ? '' : 's'}` : `${n} day${n === 1 ? '' : 's'}`;
+  return `${unit} ${days < 0 ? 'before' : 'after'} ${anchor}`;
+}
+
+function EmailEditor({ rule, meta, clients, onClose, onSave }) {
+  const [form, setForm] = useState({
+    id: rule.id,
+    name: rule.name ?? '',
+    subject: rule.subject ?? meta.defaults.subject,
+    body: rule.body ?? meta.defaults.body,
+    anchor: rule.anchor ?? 'event_date',
+    offsetDays: rule.offsetDays ?? -7,
+    audience: rule.audience ?? 'all',
+    enabled: rule.enabled ?? true,
+    clientIds: rule.clientIds ?? [],
+  });
+  const [search, setSearch] = useState('');
+  const [preview, setPreview] = useState(null);
+  const bodyRef = useRef(null);
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+
+  /**
+   * Drops a placeholder in where the cursor is, rather than at the end.
+   * GD is writing a sentence; the name belongs in the middle of it.
+   */
+  function insert(key) {
+    const el = bodyRef.current;
+    const token = `{${key}}`;
+    if (!el) { set({ body: `${form.body}${token}` }); return; }
+    const start = el.selectionStart ?? form.body.length;
+    const end = el.selectionEnd ?? start;
+    const next = form.body.slice(0, start) + token + form.body.slice(end);
+    set({ body: next });
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(start + token.length, start + token.length);
+    });
+  }
+
+  const picked = new Set(form.clientIds);
+  const shown = clients
+    .filter((c) => `${c.name} ${c.surname}`.toLowerCase().includes(search.trim().toLowerCase()))
+    .slice(0, 60);
+
+  return (
+    <Modal title={form.id ? 'Edit email' : 'New email'} onClose={onClose} wide>
+      <div className="stack">
+        <div className="field">
+          <label>What it is for</label>
+          <input
+            className="input"
+            placeholder="Final fitting reminder"
+            value={form.name}
+            autoFocus
+            onChange={(e) => set({ name: e.target.value })}
+          />
+        </div>
+
+        <div className="field">
+          <label>When it goes</label>
+          <div className="inline">
+            <input
+              className="input"
+              type="number"
+              min="0"
+              max="365"
+              style={{ width: 90 }}
+              value={Math.abs(form.offsetDays)}
+              onChange={(e) => {
+                const n = Math.max(0, Math.min(365, Number(e.target.value) || 0));
+                set({ offsetDays: form.offsetDays < 0 ? -n : n });
+              }}
+            />
+            <span className="tiny faint">days</span>
+            <select
+              className="select"
+              value={form.offsetDays < 0 ? 'before' : 'after'}
+              onChange={(e) => set({ offsetDays: (e.target.value === 'before' ? -1 : 1) * Math.abs(form.offsetDays) })}
+            >
+              <option value="before">before</option>
+              <option value="after">after</option>
+            </select>
+            <select className="select" value={form.anchor} onChange={(e) => set({ anchor: e.target.value })}>
+              {meta.anchors.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
+            </select>
+          </div>
+          <div className="tiny faint" style={{ marginTop: 6 }}>
+            {describeRule(form, meta.anchors)}. Orders with no {(meta.anchors.find((a) => a.key === form.anchor)?.label ?? '').toLowerCase()} set are skipped.
+          </div>
+        </div>
+
+        <div className="field">
+          <label>Who it goes to</label>
+          <select className="select" value={form.audience} onChange={(e) => set({ audience: e.target.value })}>
+            {meta.audiences.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
+          </select>
+
+          {form.audience !== 'all' && (
+            <div className="mail-clients">
+              <input
+                className="input input-sm"
+                placeholder="Search clients..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <div className="mail-client-list">
+                {shown.map((c) => (
+                  <label key={c.id} className="mail-client">
+                    <input
+                      type="checkbox"
+                      checked={picked.has(c.id)}
+                      onChange={(e) => {
+                        const next = new Set(picked);
+                        e.target.checked ? next.add(c.id) : next.delete(c.id);
+                        set({ clientIds: [...next] });
+                      }}
+                    />
+                    <span>{c.name} {c.surname}</span>
+                    {!c.email && <span className="tiny faint">no email</span>}
+                  </label>
+                ))}
+                {shown.length === 0 && <div className="tiny faint">Nobody by that name.</div>}
+              </div>
+              <div className="tiny faint">
+                {form.clientIds.length} picked
+                {form.audience === 'only' && form.clientIds.length === 0 && ' - so this goes to nobody'}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="field">
+          <label>Subject</label>
+          <input className="input" value={form.subject} onChange={(e) => set({ subject: e.target.value })} />
+        </div>
+
+        <div className="field">
+          <label>Message</label>
+          <div className="inline" style={{ marginBottom: 6 }}>
+            <select
+              className="select btn-sm"
+              value=""
+              onChange={(e) => { if (e.target.value) insert(e.target.value); }}
+            >
+              <option value="">Insert a detail...</option>
+              {meta.variables.map((v) => (
+                <option key={v.key} value={v.key}>{`{${v.key}}`} - {v.describes}</option>
+              ))}
+            </select>
+            <span className="tiny faint">Dropped in where the cursor is.</span>
+          </div>
+          <textarea
+            ref={bodyRef}
+            className="input mono"
+            rows={12}
+            value={form.body}
+            onChange={(e) => set({ body: e.target.value })}
+          />
+        </div>
+
+        {preview && (
+          <Banner kind="info">
+            <div>
+              <div style={{ fontWeight: 600 }}>{preview.subject}</div>
+              <div style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{preview.body}</div>
+            </div>
+          </Banner>
+        )}
+
+        <div className="inline">
+          <button className="btn btn-gold" onClick={() => onSave(form)} disabled={!form.name.trim()}>
+            {form.id ? 'Save' : 'Add this email'}
+          </button>
+          <button
+            className="btn"
+            onClick={async () => setPreview(await api.mail.preview({ rule: form }))}
+          >
+            See it filled in
+          </button>
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -313,6 +645,7 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
           <button className={`step-tab ${tab === 'ai' ? 'active' : ''}`} onClick={() => setTab('ai')}>AI rendering</button>
           <button className={`step-tab ${tab === 'prices' ? 'active' : ''}`} onClick={() => setTab('prices')}>Price list</button>
           <button className={`step-tab ${tab === 'business' ? 'active' : ''}`} onClick={() => setTab('business')}>Your business</button>
+          <button className={`step-tab ${tab === 'emails' ? 'active' : ''}`} onClick={() => setTab('emails')}>Emails</button>
           <button className={`step-tab ${tab === 'updates' ? 'active' : ''}`} onClick={() => setTab('updates')}>
             Updates{update?.updateAvailable ? ' •' : ''}
           </button>
@@ -394,9 +727,11 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
           </div>
         )}
 
-        {tab === 'business' && (
+        {tab === 'business' && <BusinessDetails />}
+
+        {tab === 'emails' && (
           <>
-            <BusinessDetails />
+            <StandingEmails />
             <QuoteEmail />
           </>
         )}

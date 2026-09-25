@@ -627,6 +627,40 @@ const MIGRATIONS = [
       UPDATE renders SET batch_id = 'single-' || id WHERE batch_id IS NULL;
     `);
   },
+
+  /* v18 - standing emails: wording, a date to count from, and who it is for.
+     Nothing is sent by this app, so mail_sent records what GD has already
+     opened a draft for, which is what stops the same reminder being offered
+     to him every time he opens the page. */
+  (d) => {
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS mail_rules (
+        id          INTEGER PRIMARY KEY,
+        name        TEXT NOT NULL,
+        subject     TEXT NOT NULL DEFAULT '',
+        body        TEXT NOT NULL DEFAULT '',
+        anchor      TEXT NOT NULL DEFAULT 'event_date',
+        offset_days INTEGER NOT NULL DEFAULT -7,
+        audience    TEXT NOT NULL DEFAULT 'all',
+        enabled     INTEGER NOT NULL DEFAULT 1,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS mail_rule_clients (
+        rule_id   INTEGER NOT NULL REFERENCES mail_rules(id) ON DELETE CASCADE,
+        client_id INTEGER NOT NULL REFERENCES clients(id)    ON DELETE CASCADE,
+        PRIMARY KEY (rule_id, client_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS mail_sent (
+        rule_id    INTEGER NOT NULL REFERENCES mail_rules(id) ON DELETE CASCADE,
+        project_id INTEGER NOT NULL REFERENCES projects(id)   ON DELETE CASCADE,
+        sent_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (rule_id, project_id)
+      );
+    `);
+  },
 ];
 
 function open(userDataPath) {
@@ -1138,6 +1172,85 @@ function saveMeasurement({ projectId, suitId, garment, fieldId, value, unit, sou
       source: source ?? 'measured',
       updated_at: nowStamp(),
     });
+}
+
+/* ------------------------------------------------------------ mail rules */
+
+function listMailRules() {
+  const d = get();
+  const rules = d.prepare('SELECT * FROM mail_rules ORDER BY name').all();
+  const picked = d.prepare('SELECT rule_id, client_id FROM mail_rule_clients').all();
+  return rules.map((r) => ({
+    ...r,
+    enabled: !!r.enabled,
+    clientIds: picked.filter((p) => p.rule_id === r.id).map((p) => p.client_id),
+  }));
+}
+
+/**
+ * Writes a rule and the clients it names, together.
+ *
+ * In one transaction because the audience is meaningless without its list:
+ * a rule saved as "everyone except these three" with the three lost would
+ * mail all of them.
+ */
+function saveMailRule({ id, name, subject, body, anchor, offsetDays, audience, enabled, clientIds = [] }) {
+  return tx(() => {
+  const d = get();
+  let ruleId = id ?? null;
+  if (ruleId) {
+    d.prepare(
+      `UPDATE mail_rules SET name = @name, subject = @subject, body = @body, anchor = @anchor,
+              offset_days = @offsetDays, audience = @audience, enabled = @enabled,
+              updated_at = datetime('now')
+         WHERE id = @id`
+    ).run({ id: ruleId, name, subject, body, anchor, offsetDays, audience, enabled: enabled ? 1 : 0 });
+  } else {
+    ruleId = d.prepare(
+      `INSERT INTO mail_rules (name, subject, body, anchor, offset_days, audience, enabled)
+       VALUES (@name, @subject, @body, @anchor, @offsetDays, @audience, @enabled)`
+    ).run({ name, subject, body, anchor, offsetDays, audience, enabled: enabled ? 1 : 0 }).lastInsertRowid;
+  }
+  d.prepare('DELETE FROM mail_rule_clients WHERE rule_id = ?').run(ruleId);
+  const add = d.prepare('INSERT OR IGNORE INTO mail_rule_clients (rule_id, client_id) VALUES (?, ?)');
+  for (const cid of clientIds) add.run(ruleId, cid);
+  return ruleId;
+  });
+}
+
+function deleteMailRule(id) {
+  get().prepare('DELETE FROM mail_rules WHERE id = ?').run(id);
+}
+
+function markMailSent(ruleId, projectId) {
+  get()
+    .prepare(`INSERT OR REPLACE INTO mail_sent (rule_id, project_id, sent_at) VALUES (?, ?, datetime('now'))`)
+    .run(ruleId, projectId);
+}
+
+/**
+ * The orders a rule could apply to: open, with an email address, and not
+ * already sent this rule.
+ *
+ * Whether each is actually *due* is decided against the dates by mailRules,
+ * which is where the arithmetic lives. This only narrows the field, and it
+ * does it in one query rather than one per order.
+ */
+function mailCandidates(ruleId) {
+  return get()
+    .prepare(
+      `SELECT p.id, p.order_ref, p.client_id, p.status, p.event_date, p.delivery_date,
+              p.consultation_date, p.measurement_date, p.first_fitting_date,
+              p.final_fitting_date, p.review_date,
+              c.name, c.surname, c.email
+         FROM projects p
+         JOIN clients  c ON c.id = p.client_id
+        WHERE p.status NOT IN ${DONE_SQL}
+          AND COALESCE(c.email, '') <> ''
+          AND NOT EXISTS (SELECT 1 FROM mail_sent m WHERE m.rule_id = ? AND m.project_id = p.id)
+        ORDER BY p.event_date`
+    )
+    .all(ruleId);
 }
 
 /* ---------------------------------------------------------------- renders */
@@ -1767,6 +1880,7 @@ module.exports = {
   addPhoto, getPhoto, deletePhoto, updatePhotoMeta,
   addNote, deleteNote,
   saveMeasurement,
+  listMailRules, saveMailRule, deleteMailRule, markMailSent, mailCandidates,
   addRender, getRender, setRenderApproved, deleteRender,
   addFitting, updateFitting, deleteFitting,
   listCustomCategories, addCustomCategory, updateCustomCategory, deleteCustomCategory,
