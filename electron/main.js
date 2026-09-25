@@ -14,6 +14,7 @@ const security = require('./security');
 const media = require('./mediaUrl');
 const brand = require('./brand');
 const mail = require('./mailTemplate');
+const rules = require('./mailRules');
 const business = require('./business');
 
 /** The shop's details as they are set today, never as they were compiled. */
@@ -933,44 +934,7 @@ handle('quote:email', ({ projectId }) => {
   if (!project) throw new Error('Order not found');
   if (!project.email) throw new Error('This client has no email address on their file yet.');
 
-  const GD = shop();
-  const money = (n) => `R${Math.round(Number(n) || 0).toLocaleString('en-ZA')}`;
-  const quote = project.quote;
-  const suits = project.suits ?? [];
-  const people = project.members ?? [];
-
-  // What is being made: one cloth, or a list when there is a party.
-  const what = suits.length > 1
-    ? [`${people.length} people, ${suits.length} suits:`,
-       ...suits.map((s) => `  - ${`${s.name} ${s.surname}`.trim()}: ${s.label || s.fabric_name || 'suit'}`)].join('\n')
-    : (suits[0]?.fabric_name
-        ? `Cloth: ${suits[0].fabric_name}${suits[0].fabric_code ? ` (${suits[0].fabric_code})` : ''}`
-        : '');
-
-  const quoteBlock = quote?.lines?.length
-    ? ['Quote:',
-       ...quote.lines.map((l) => `  ${l.label}  ${money(l.amount)}`),
-       '',
-       `Total: ${money(quote.total)}`,
-       `Deposit to start (${Math.round(GD.depositFraction * 100)}%): ${money((quote.total ?? 0) * GD.depositFraction)}`].join('\n')
-    : 'I will follow up with the figures shortly.';
-
-  const values = {
-    client_first: project.name ?? '',
-    client_name: `${project.name ?? ''} ${project.surname ?? ''}`.trim(),
-    order_ref: project.order_ref ?? '',
-    what,
-    cloth: suits[0]?.fabric_name
-      ? `${suits[0].fabric_name}${suits[0].fabric_code ? ` (${suits[0].fabric_code})` : ''}`
-      : '',
-    event_date: project.event_date ?? '',
-    event_line: project.event_date ? `Needed by: ${project.event_date}` : '',
-    quote_block: quoteBlock,
-    total: quote ? money(quote.total) : '',
-    deposit: quote ? money((quote.total ?? 0) * GD.depositFraction) : '',
-    gd_name: GD.name, gd_role: GD.role, gd_phone: GD.phone, gd_email: GD.email,
-    business_name: GD.businessName,
-  };
+  const values = mail.buildValues(project, shop());
 
   const template = db.getSetting('quoteEmailTemplate', mail.DEFAULT_TEMPLATE);
   const subjectTemplate = db.getSetting('quoteEmailSubject', mail.DEFAULT_SUBJECT);
@@ -980,6 +944,111 @@ handle('quote:email', ({ projectId }) => {
   const opened = security.openMailSafely({ to: project.email, subject, body });
   if (!opened) throw new Error('Could not open a mail draft - check the client has a valid email address.');
   return { opened: true, to: project.email };
+});
+
+/* standing emails - written once, offered when they fall due, sent by hand */
+
+handle('mail:rules', () => ({
+  rules: db.listMailRules(),
+  anchors: rules.ANCHORS,
+  audiences: rules.AUDIENCES,
+  variables: mail.VARIABLES,
+  defaults: { subject: rules.DEFAULT_SUBJECT, body: rules.DEFAULT_BODY },
+}));
+
+handle('mail:saveRule', (rule) => {
+  const clean = rules.normalise({
+    name: rule.name, subject: rule.subject, body: rule.body,
+    anchor: rule.anchor, offsetDays: rule.offsetDays,
+    audience: rule.audience, enabled: rule.enabled,
+  });
+  const clientIds = (Array.isArray(rule.clientIds) ? rule.clientIds : [])
+    .slice(0, 500)
+    .map((id) => v.id(id, 'clientId'));
+  return { id: db.saveMailRule({ id: v.optionalId(rule.id, 'id'), ...clean, clientIds }) };
+});
+
+handle('mail:deleteRule', ({ id }) => {
+  db.deleteMailRule(v.id(id, 'id'));
+  return { deleted: true };
+});
+
+/**
+ * The reminders that have come due.
+ *
+ * Everything is worked out here rather than in the window: the window is not
+ * trusted with which orders exist, and a date comparison is not something to
+ * do twice in two places and hope they agree.
+ */
+handle('mail:due', ({ on } = {}) => {
+  const today = /^\d{4}-\d{2}-\d{2}$/.test(String(on ?? '')) ? String(on) : new Date().toISOString().slice(0, 10);
+  const out = [];
+  for (const rule of db.listMailRules()) {
+    if (!rule.enabled) continue;
+    const spec = { ...rule, offsetDays: rule.offset_days };
+    for (const project of db.mailCandidates(rule.id)) {
+      if (!rules.covers(spec, project.client_id, rule.clientIds)) continue;
+      const due = rules.dueOn(spec, project);
+      // Due today or overdue. A reminder whose day has passed is still worth
+      // offering - it was missed, and the client has not had it.
+      if (!due || due > today) continue;
+      out.push({
+        ruleId: rule.id,
+        ruleName: rule.name,
+        projectId: project.id,
+        orderRef: project.order_ref,
+        client: `${project.name ?? ''} ${project.surname ?? ''}`.trim(),
+        email: project.email,
+        dueOn: due,
+        overdue: due < today,
+      });
+    }
+  }
+  return { on: today, due: out.sort((a, b) => a.dueOn.localeCompare(b.dueOn)) };
+});
+
+/**
+ * Opens the draft for one due reminder and records that it went.
+ *
+ * Recorded *after* the draft opens, so a failure to open leaves it due
+ * rather than marking it sent and losing it. It is still only a record that
+ * GD was handed the draft - this app never sends anything itself.
+ */
+handle('mail:send', ({ ruleId, projectId }) => {
+  const id = v.id(ruleId, 'ruleId');
+  const pid = v.id(projectId, 'projectId');
+  const rule = db.listMailRules().find((r) => r.id === id);
+  if (!rule) throw new Error('That email no longer exists.');
+  const project = db.getProject(pid);
+  if (!project) throw new Error('Order not found');
+  if (!project.email) throw new Error('This client has no email address on their file yet.');
+
+  const values = mail.buildValues(project, shop());
+  const opened = security.openMailSafely({
+    to: project.email,
+    subject: mail.fill(rule.subject, values),
+    body: mail.fill(rule.body, values),
+  });
+  if (!opened) throw new Error('Could not open a mail draft - check the client has a valid email address.');
+  db.markMailSent(id, pid);
+  return { opened: true, to: project.email };
+});
+
+/**
+ * What one rule would say for a real order, so GD can read it back before it
+ * goes to anybody.
+ */
+handle('mail:preview', ({ rule, projectId }) => {
+  const clean = rules.normalise(rule ?? {});
+  const project = projectId ? db.getProject(v.id(projectId, 'projectId')) : null;
+  const values = project
+    ? mail.buildValues(project, shop())
+    : mail.buildValues({ name: 'Sipho', surname: 'Ndlovu', order_ref: 'GD-2026-0042', event_date: '2026-11-14', suits: [] }, shop());
+  return {
+    subject: mail.fill(clean.subject, values),
+    body: mail.fill(clean.body, values),
+    when: rules.describe(clean),
+  };
 });
 
 /* export - the "client file" the brief asks the system to keep */

@@ -857,6 +857,24 @@ button, input, select, textarea { font: inherit; color: inherit; }
   display: inline-flex; align-items: center; gap: 8px; margin-left: auto;
 }
 
+/* Standing emails. One row per rule, the wording on the left and what to do
+   with it on the right, so a column of rules reads down rather than across. */
+.mail-rule {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 0; border-bottom: 1px solid var(--line);
+}
+.mail-rule:last-child { border-bottom: 0; }
+.mail-rule-main { flex: 1; min-width: 0; }
+
+.mail-clients { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+/* Capped and scrolling: there are hundreds of clients and this is a picker,
+   not a directory. */
+.mail-client-list {
+  max-height: 210px; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 8px;
+}
+.mail-client { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; }
+
 /* A square button for a single glyph, so a column of them lines up. */
 .btn-icon {
   width: 28px; height: 28px; padding: 0; display: inline-flex;
