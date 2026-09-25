@@ -94,13 +94,24 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      # node-gyp 9.4.1, which npm ships with Node 20, cannot run Python 3.14 -
-      # and 3.14 is what both runners now offer by default. better-sqlite3 has
-      # no prebuilt binary for this target, so it is compiled here, and this
-      # is the interpreter that compiles it.
+      # Python 3.11, and not a digit higher.
+      #
+      # better-sqlite3 ships no prebuilt binary for this target, so it is
+      # compiled here, by node-gyp 9.4.1 - the version @electron/rebuild pins,
+      # so electron-builder uses it too and there is no escaping it.
+      #
+      # That node-gyp bundles a gyp that does `from distutils.version import
+      # StrictVersion`, and distutils was removed from the standard library in
+      # Python 3.12. It accepts any Python >=3.6.0, so a newer one is taken
+      # happily and then dies inside with `configure error`, which names
+      # neither Python nor distutils.
+      #
+      # Reproduced locally before being changed again: 3.12 fails exactly as
+      # the runner did, and an interpreter that still has distutils configures
+      # cleanly. 3.11 is the last release that has it.
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'
       - name: Compile native modules with that Python
         shell: bash
         run: echo "npm_config_python=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
