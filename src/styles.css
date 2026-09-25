@@ -321,6 +321,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 .pill {
   display: inline-flex; align-items: center; gap: 6px;
+  /* One line, always. A pill is a label; wrapped, it becomes a rounded blob
+     twice the height of the one beside it - which is what the order list's
+     status column did as soon as the window was not wide. */
+  white-space: nowrap;
   padding: 3px 9px; border-radius: 999px;
   font-size: 11.5px; font-weight: 600;
   background: var(--gold-wash); color: var(--gold-deep);
@@ -617,6 +621,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* --------------------------------------------------------------- tables */
 
 .table { width: 100%; border-collapse: collapse; }
+/* Somewhere for a wide table to go. The order list was already wider than
+   its card on a narrow window and ran straight out through the card's edge;
+   now it scrolls inside it, and the other columns are left to wrap first. */
+.table-scroll { overflow-x: auto; }
 .table th, .table td { padding: 9px 10px; text-align: left; border-bottom: 1px solid var(--line-soft); }
 .table th { font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); font-weight: 700; }
 .table tr:last-child td { border-bottom: 0; }
