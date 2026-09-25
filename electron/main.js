@@ -15,6 +15,7 @@ const media = require('./mediaUrl');
 const brand = require('./brand');
 const mail = require('./mailTemplate');
 const rules = require('./mailRules');
+const integrations = require('./integrations');
 const business = require('./business');
 
 /** The shop's details as they are set today, never as they were compiled. */
@@ -665,7 +666,7 @@ handle('catalog:deleteItem', ({ id }) => db.deleteCustomItem(v.id(id)));
 
 /* settings + secrets */
 const SETTING_KEYS = ['priceOverrides', 'imageModel', 'visionModel', 'theme', 'updateFeed', 'autoCheckUpdates', 'measureUnit', 'aiConfig',
-  'quoteEmailTemplate', 'quoteEmailSubject', 'business'];
+  'quoteEmailTemplate', 'quoteEmailSubject', 'business', 'integrations'];
 handle('settings:get', ({ key, fallback }) => db.getSetting(v.oneOf(key, SETTING_KEYS, 'setting'), fallback ?? null));
 handle('settings:set', ({ key, value }) => {
   const name = v.oneOf(key, SETTING_KEYS, 'setting');
@@ -681,7 +682,7 @@ handle('settings:set', ({ key, value }) => {
   if (name === 'business') return db.setSetting(name, business.withDefaults(v.jsonBlob(value, 'business details', 16 * 1024)));
   return db.setSetting(name, v.jsonBlob(value, 'value', 128 * 1024));
 });
-const SECRET_NAMES = [...aiProviders.SECRET_NAMES, 'updateToken'];
+const SECRET_NAMES = [...aiProviders.SECRET_NAMES, 'updateToken', ...integrations.SECRET_NAMES];
 handle('secrets:describe', ({ name }) => secrets.describe(v.oneOf(name, SECRET_NAMES, 'secret')));
 handle('secrets:set', ({ name, value }) => {
   const secret = v.oneOf(name, SECRET_NAMES, 'secret');
@@ -944,6 +945,50 @@ handle('quote:email', ({ projectId }) => {
   const opened = security.openMailSafely({ to: project.email, subject, body });
   if (!opened) throw new Error('Could not open a mail draft - check the client has a valid email address.');
   return { opened: true, to: project.email };
+});
+
+/* connections - where data may go, and nowhere by default */
+
+const connections = () => integrations.withDefaults(db.getSetting('integrations', null));
+const hasSecret = (name) => !!secrets.describe(name)?.present;
+
+/**
+ * The configuration, with each service's own answer to whether it can run.
+ *
+ * The keys themselves never cross the bridge - only whether one is saved -
+ * which is the same rule the API keys already follow.
+ */
+function connectionState() {
+  const config = connections();
+  return {
+    config,
+    methods: integrations.SEND_METHODS,
+    secrets: Object.fromEntries(integrations.SECRET_NAMES.map((n) => [n, secrets.describe(n)])),
+    status: Object.fromEntries(
+      integrations.SERVICES.map((s) => [s, integrations.statusOf(s, config, hasSecret)])
+    ),
+  };
+}
+
+handle('connections:get', () => connectionState());
+
+handle('connections:set', (patch) => {
+  const next = integrations.withDefaults({ ...connections(), ...(patch ?? {}) });
+  db.setSetting('integrations', next);
+  return connectionState();
+});
+
+/**
+ * What one service would do if asked right now.
+ *
+ * It reports rather than connects. Nothing here opens a socket: until GD has
+ * supplied credentials there is nothing to connect to, and a button that
+ * pretends to test and always says "fine" is worse than one that tells him
+ * exactly which detail is still missing.
+ */
+handle('connections:test', ({ service }) => {
+  const name = v.oneOf(service, integrations.SERVICES, 'service');
+  return { service: name, ...integrations.statusOf(name, connections(), hasSecret) };
 });
 
 /* standing emails - written once, offered when they fall due, sent by hand */

@@ -488,6 +488,275 @@ function EmailEditor({ rule, meta, clients, onClose, onSave }) {
   );
 }
 
+
+/**
+ * Where GD's data may go.
+ *
+ * Everything else in this app works on his own machine. These three things
+ * would change that, so they are off until he turns them on, one at a time,
+ * behind a gate that says plainly what it is letting out.
+ */
+function Connections() {
+  const [state, setState] = useState(null);
+  const [inputs, setInputs] = useState({});
+  const [tests, setTests] = useState({});
+  const toast = useToast();
+
+  const load = React.useCallback(async () => {
+    try { setState(await api.connections.get()); }
+    catch (err) { toast(messageFor(err), 'err'); }
+  }, [toast]);
+  useEffect(() => { load(); }, [load]);
+
+  async function patch(next, message) {
+    try {
+      setState(await api.connections.set(next));
+      if (message) toast(message, 'ok');
+    } catch (err) { toast(messageFor(err), 'err'); }
+  }
+
+  async function saveSecret(name) {
+    const value = (inputs[name] ?? '').trim();
+    if (!value) return;
+    try {
+      await api.secrets.set({ name, value });
+      setInputs((i) => ({ ...i, [name]: '' }));
+      await load();
+      toast('Saved to the keychain', 'ok');
+    } catch (err) { toast(messageFor(err), 'err'); }
+  }
+
+  async function test(service) {
+    try {
+      const result = await api.connections.test({ service });
+      setTests((t) => ({ ...t, [service]: result }));
+    } catch (err) { toast(messageFor(err), 'err'); }
+  }
+
+  if (!state) return <div className="card"><div className="card-pad"><Spinner /></div></div>;
+  const { config, methods, secrets: keys, status } = state;
+  const locked = !config.consent;
+
+  const Status = ({ service }) => {
+    const s = tests[service] ?? status[service];
+    return (
+      <span className={`pill ${s.ready ? 'pill-ok' : 'pill-quiet'}`} title={s.why}>
+        {s.ready ? 'Ready' : 'Not connected'}
+      </span>
+    );
+  };
+
+  const Secret = ({ name, label, hint }) => (
+    <div className="field">
+      <label>{label}</label>
+      <div className="inline">
+        <SecretInput
+          value={inputs[name] ?? ''}
+          placeholder={keys[name]?.present ? 'Saved - type to replace' : hint}
+          onChange={(val) => setInputs((i) => ({ ...i, [name]: val }))}
+        />
+        <button className="btn" onClick={() => saveSecret(name)} disabled={!(inputs[name] ?? '').trim()}>
+          Save
+        </button>
+        {keys[name]?.present && <span className="pill pill-ok">Saved</span>}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="stack">
+      <div className="card">
+        <div className="card-head"><h3>Letting data off this machine</h3></div>
+        <div className="card-pad">
+          <div className="toggle-row">
+            <div>
+              <div style={{ fontWeight: 600 }}>Allow this app to send your data to Google</div>
+              <div className="tiny faint" style={{ maxWidth: 620 }}>
+                Everything below stays switched off until this is on. What would leave: your clients&apos;
+                names, telephone numbers, email addresses, measurements and photographs - to a Google
+                account you choose. Turning this off again stops all of it at once and keeps the settings.
+              </div>
+            </div>
+            <Switch checked={config.consent} onChange={(on) => patch({ consent: on },
+              on ? 'Allowed - each service still has its own switch' : 'Switched off everywhere')} />
+          </div>
+        </div>
+      </div>
+
+      <div className={`card ${locked ? 'card-dim' : ''}`}>
+        <div className="card-head">
+          <h3>Gmail</h3>
+          <div className="spacer" />
+          <Status service="gmail" />
+        </div>
+        <div className="card-pad">
+          <div className="field">
+            <label>How mail leaves</label>
+            {methods.map((m) => (
+              <label key={m.key} className="radio-row">
+                <input
+                  type="radio"
+                  name="sendMethod"
+                  checked={config.gmail.method === m.key}
+                  disabled={locked && m.key !== 'draft'}
+                  onChange={() => patch({ gmail: { ...config.gmail, method: m.key } })}
+                />
+                <span>
+                  <span style={{ fontWeight: 600 }}>{m.label}</span>
+                  <span className="tiny faint" style={{ display: 'block' }}>{m.describes}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+
+          {config.gmail.method === 'gmail' && (
+            <>
+              <div className="field">
+                <label>The Gmail address to send from</label>
+                <DebouncedInput
+                  className="input"
+                  placeholder="gareth@gdsuits.co.za"
+                  value={config.gmail.address}
+                  onCommit={(val) => patch({ gmail: { ...config.gmail, address: val } }, 'Address saved')}
+                />
+              </div>
+              <Secret
+                name="gmailAppPassword"
+                label="App password"
+                hint="Sixteen letters from your Google account"
+              />
+              <Banner kind="info">
+                <div>
+                  This is not your Google password. In your Google account, under Security, switch on
+                  two-step verification and then create an <strong>app password</strong> - a sixteen-letter
+                  code made for one program. It can be revoked without changing anything else.
+                </div>
+              </Banner>
+            </>
+          )}
+          <button className="btn btn-sm" onClick={() => test('gmail')}>Check</button>
+          {tests.gmail && <span className="tiny faint" style={{ marginLeft: 8 }}>{tests.gmail.why}</span>}
+        </div>
+      </div>
+
+      <div className={`card ${locked ? 'card-dim' : ''}`}>
+        <div className="card-head">
+          <h3>Google Sheets</h3>
+          <div className="spacer" />
+          <Status service="sheets" />
+        </div>
+        <div className="card-pad">
+          <div className="toggle-row">
+            <div>
+              <div style={{ fontWeight: 600 }}>Write orders to a spreadsheet</div>
+              <div className="tiny faint">One row per order, kept up to date.</div>
+            </div>
+            <Switch
+              checked={config.sheets.enabled}
+              onChange={(on) => patch({ sheets: { ...config.sheets, enabled: on } })}
+            />
+          </div>
+          <div className="field">
+            <label>Spreadsheet</label>
+            <DebouncedInput
+              className="input mono"
+              placeholder="Paste the spreadsheet link, or its id"
+              value={config.sheets.spreadsheetId}
+              onCommit={(val) => patch({ sheets: { ...config.sheets, spreadsheetId: val } }, 'Spreadsheet saved')}
+            />
+            <div className="tiny faint">The whole link is fine - the id is taken out of it.</div>
+          </div>
+          <div className="field">
+            <label>Which tab</label>
+            <DebouncedInput
+              className="input"
+              placeholder="Orders"
+              value={config.sheets.tab}
+              onCommit={(val) => patch({ sheets: { ...config.sheets, tab: val } })}
+            />
+          </div>
+          <div className="field">
+            <label>When to write</label>
+            <select
+              className="select"
+              value={config.sheets.when}
+              onChange={(e) => patch({ sheets: { ...config.sheets, when: e.target.value } })}
+            >
+              <option value="manual">When I press the button</option>
+              <option value="onSave">Every time an order changes</option>
+            </select>
+          </div>
+          <button className="btn btn-sm" onClick={() => test('sheets')}>Check</button>
+          {tests.sheets && <span className="tiny faint" style={{ marginLeft: 8 }}>{tests.sheets.why}</span>}
+        </div>
+      </div>
+
+      <div className={`card ${locked ? 'card-dim' : ''}`}>
+        <div className="card-head">
+          <h3>Google Drive</h3>
+          <div className="spacer" />
+          <Status service="drive" />
+        </div>
+        <div className="card-pad">
+          <div className="toggle-row">
+            <div>
+              <div style={{ fontWeight: 600 }}>Keep photographs and client files in Drive</div>
+              <div className="tiny faint">A copy goes up; the originals stay on this machine.</div>
+            </div>
+            <Switch
+              checked={config.drive.enabled}
+              onChange={(on) => patch({ drive: { ...config.drive, enabled: on } })}
+            />
+          </div>
+          <div className="field">
+            <label>Folder for photographs</label>
+            <DebouncedInput
+              className="input mono"
+              placeholder="Paste the folder link, or its id"
+              value={config.drive.photosFolderId}
+              onCommit={(val) => patch({ drive: { ...config.drive, photosFolderId: val } }, 'Folder saved')}
+            />
+          </div>
+          <div className="field">
+            <label>Folder for client files</label>
+            <DebouncedInput
+              className="input mono"
+              placeholder="Paste the folder link, or its id"
+              value={config.drive.exportsFolderId}
+              onCommit={(val) => patch({ drive: { ...config.drive, exportsFolderId: val } })}
+            />
+          </div>
+          <button className="btn btn-sm" onClick={() => test('drive')}>Check</button>
+          {tests.drive && <span className="tiny faint" style={{ marginLeft: 8 }}>{tests.drive.why}</span>}
+        </div>
+      </div>
+
+      <Collapsible title="Google account details" summary="Needed for Sheets and Drive">
+        <div style={{ marginTop: 12 }}>
+          <Banner kind="info">
+            <div>
+              Sheets and Drive need an application of your own in the Google Cloud console - a client id
+              and secret. They identify this app to Google; they are not a password and they do not give
+              anyone access to your account on their own.
+              <div className="small" style={{ marginTop: 6, opacity: .85 }}>
+                Both are kept in the machine&apos;s keychain, like the AI keys, and never leave it except
+                to Google.
+              </div>
+            </div>
+          </Banner>
+          <Secret name="googleClientId" label="Client id" hint="Ends in .apps.googleusercontent.com" />
+          <Secret name="googleClientSecret" label="Client secret" hint="From the same Google Cloud page" />
+          <div className="tiny faint">
+            {keys.googleRefreshToken?.present
+              ? 'A Google account is linked.'
+              : 'No Google account linked yet. Once the two details above are saved, linking is the last step.'}
+          </div>
+        </div>
+      </Collapsible>
+    </div>
+  );
+}
+
 export default function Settings({ catalog, overrides, onOverridesChanged, keyState, onKeyChanged }) {
   const [providers, setProviders] = useState([]);
   const [config, setConfig] = useState({
@@ -646,6 +915,7 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
           <button className={`step-tab ${tab === 'prices' ? 'active' : ''}`} onClick={() => setTab('prices')}>Price list</button>
           <button className={`step-tab ${tab === 'business' ? 'active' : ''}`} onClick={() => setTab('business')}>Your business</button>
           <button className={`step-tab ${tab === 'emails' ? 'active' : ''}`} onClick={() => setTab('emails')}>Emails</button>
+          <button className={`step-tab ${tab === 'connections' ? 'active' : ''}`} onClick={() => setTab('connections')}>Connections</button>
           <button className={`step-tab ${tab === 'updates' ? 'active' : ''}`} onClick={() => setTab('updates')}>
             Updates{update?.updateAvailable ? ' •' : ''}
           </button>
@@ -728,6 +998,8 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
         )}
 
         {tab === 'business' && <BusinessDetails />}
+
+        {tab === 'connections' && <Connections />}
 
         {tab === 'emails' && (
           <>

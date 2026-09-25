@@ -857,6 +857,12 @@ button, input, select, textarea { font: inherit; color: inherit; }
   display: inline-flex; align-items: center; gap: 8px; margin-left: auto;
 }
 
+/* A service that cannot run until the gate above it is open. Dimmed rather
+   than hidden, so what is configurable is still visible while it is off. */
+.card-dim { opacity: .62; }
+.radio-row { display: flex; align-items: flex-start; gap: 10px; padding: 6px 0; cursor: pointer; }
+.radio-row input { margin-top: 3px; }
+
 /* Standing emails. One row per rule, the wording on the left and what to do
    with it on the right, so a column of rules reads down rather than across. */
 .mail-rule {
