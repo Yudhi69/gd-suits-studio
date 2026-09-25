@@ -97,7 +97,7 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
             {!projects.length && 'Start a consultation to capture the client, their photos and the suit they want.'}
           </Empty>
         ) : (
-          <div className="card">
+          <div className="card table-scroll">
             <table className="table">
               <thead>
                 <tr>

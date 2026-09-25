@@ -120,6 +120,39 @@ app.whenReady().then(async () => {
     'and is no longer counted as open', `${a.totals.openOrders} open of ${a.totals.orders}`);
   check(a.byStage.completed_paid?.orders >= 1, 'the pipeline knows the new stage', JSON.stringify(Object.keys(a.byStage)));
 
+  log('\n=== every status fits on one line ===');
+  // On a narrow window the status column wrapped: "Ready for first fitting"
+  // became two lines and a pill twice the height of the one beside it. Every
+  // stage is put on the list and read back at a width where that happened.
+  const stages = ['first_consultation', 'quoted', 'deposit_paid', 'in_production', 'ready_first_fitting',
+    'alterations', 'ready_final_fit', 'completed_due', 'completed_paid'];
+  for (const [i, status] of stages.entries()) {
+    const cid = db.upsertClient({ name: `Stage${i}`, surname: 'Check', contact: '', email: '' });
+    const pid = db.createProject({ clientId: cid, title: `Stage ${i}` });
+    await js(`window.gd.projects.update({ id: ${pid}, patch: { status: '${status}' } })`);
+  }
+  const [wWas, hWas] = win.getSize();
+  win.setSize(950, hWas);
+  win.webContents.reload(); await wait(2400);
+  const list = JSON.parse(await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    [...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('Orders')).click(); await wait(900);
+    const pills = [...document.querySelectorAll('.table tbody td .pill')].map(p => ({
+      text: p.textContent.trim(), h: Math.round(p.getBoundingClientRect().height),
+    }));
+    const card = document.querySelector('.table').closest('.card');
+    return JSON.stringify({ pills, overflowX: getComputedStyle(card).overflowX,
+      scrolls: card.scrollWidth > card.clientWidth });
+  })()`));
+  win.setSize(wWas, hWas);
+  const seen = new Set(list.pills.map((p) => p.text));
+  check(stages.length <= seen.size, 'every stage is on the list', JSON.stringify([...seen]));
+  const heights = new Set(list.pills.map((p) => p.h));
+  check(heights.size === 1, 'and every status is one line, the same height as the rest',
+    JSON.stringify(list.pills.filter((p) => p.h !== Math.min(...heights)).map((p) => `${p.text} ${p.h}`)));
+  check(list.overflowX === 'auto', 'a table too wide for the window scrolls inside its card',
+    `overflow-x: ${list.overflowX}`);
+
   log(`\n${fail === 0 ? 'ALL CLIENT & ORDER CHECKS PASSED' : 'FAILED'} — ${pass} passed, ${fail} failed`);
   app.exit(fail === 0 ? 0 : 1);
 }).catch((e) => { log('HARNESS FAIL', e.stack); app.exit(1); });
