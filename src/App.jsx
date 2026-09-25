@@ -9,6 +9,7 @@ import Analytics from './screens/Analytics.jsx';
 import ProjectView from './screens/ProjectView.jsx';
 import ClientFile from './screens/ClientFile.jsx';
 import Settings from './screens/Settings.jsx';
+import FirstRunUpdate from './components/FirstRunUpdate.jsx';
 
 export default function App() {
   const [route, setRoute] = useState({ name: 'dashboard' });
@@ -19,6 +20,10 @@ export default function App() {
   const theme = useTheme();
   const catalog = useCatalog();
   const [updateReady, setUpdateReady] = useState(null);
+  // The newer version found on this install's first launch, shown as a prompt
+  // rather than only as the flag in the corner.
+  const [firstRunUpdate, setFirstRunUpdate] = useState(null);
+  const [platform, setPlatform] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -36,12 +41,22 @@ export default function App() {
         setKeyState({ present: false });
       }
 
-      // Only if the tailor asked for it. Nothing about them is sent - it is a
-      // plain GET for the latest published version number.
-      if (await api.settings.get({ key: 'autoCheckUpdates', fallback: false })) {
+      // An installed copy looks once on its first launch, so a package sent
+      // out a few versions ago brings itself up to date; after that, only if
+      // the tailor asked. Nothing about him is sent either way - it is a plain
+      // GET for the latest published version number. With no signal the
+      // check simply fails, and the first launch that has one tries again.
+      const info = await api.app.info().catch(() => null);
+      setPlatform(info?.platform ?? null);
+      const firstRun = !!info?.firstRunCheck;
+      if (firstRun || (await api.settings.get({ key: 'autoCheckUpdates', fallback: false }))) {
         api.updates
           .check()
-          .then((result) => result.updateAvailable && setUpdateReady(result))
+          .then((result) => {
+            if (!result.updateAvailable) return;
+            setUpdateReady(result);
+            if (firstRun) setFirstRunUpdate(result);
+          })
           .catch(() => {});
       }
     })();
@@ -55,6 +70,9 @@ export default function App() {
 
   return (
     <ToastProvider>
+      {firstRunUpdate && (
+        <FirstRunUpdate update={firstRunUpdate} platform={platform} onClose={() => setFirstRunUpdate(null)} />
+      )}
       <div className="app">
         <aside className="sidebar">
           <div className="brand">
