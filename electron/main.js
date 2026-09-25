@@ -759,7 +759,7 @@ function loadRefImages(refs, defaultScope) {
   });
 }
 
-handle('ai:render', async ({ projectId, suitId, prompt, view, refs = [], referenceIds = [], parentId, instruction, model }) => {
+handle('ai:render', async ({ projectId, suitId, batchId, prompt, view, refs = [], referenceIds = [], parentId, instruction, model }) => {
   const pid = v.id(projectId, 'projectId');
   const scope = storage.scopeForProject(pid);
   const config = getAiConfig();
@@ -778,6 +778,10 @@ handle('ai:render', async ({ projectId, suitId, prompt, view, refs = [], referen
   const id = db.addRender({
     projectId: pid,
     suitId: v.optionalId(suitId, 'suitId'),
+    // The four views of one press carry the same batch, so the preview can
+    // show them as one render rather than four that happened to be close
+    // together.
+    batchId: v.batchId(batchId),
     parentId: v.optionalId(parentId, 'parentId'),
     view: v.str(view, 'view', 40),
     provider: config.image.provider,
