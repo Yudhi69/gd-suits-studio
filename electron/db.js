@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const Database = require('better-sqlite3');
 
@@ -616,6 +617,16 @@ const MIGRATIONS = [
        WHERE suit_id IS NULL;
     `);
   },
+
+  /* v17 - the four views of one press are one render, and need to say which.
+     Everything already stored was made by its own press, so each existing
+     render becomes a batch of one rather than being guessed into groups. */
+  (d) => {
+    d.exec(`
+      ALTER TABLE renders ADD COLUMN batch_id TEXT;
+      UPDATE renders SET batch_id = 'single-' || id WHERE batch_id IS NULL;
+    `);
+  },
 ];
 
 function open(userDataPath) {
@@ -1140,15 +1151,17 @@ function saveMeasurement({ projectId, suitId, garment, fieldId, value, unit, sou
  * use, so a render and a photograph taken at the same moment cannot disagree
  * about whose they are.
  */
-function addRender({ projectId, suitId, parentId, view, provider, model, prompt, instruction, filename }) {
+function addRender({ projectId, suitId, batchId, parentId, view, provider, model, prompt, instruction, filename }) {
   const info = get()
     .prepare(
-      `INSERT INTO renders (project_id, suit_id, parent_id, view, provider, model, prompt, instruction, filename)
-       VALUES (@projectId, @suitId, @parentId, @view, @provider, @model, @prompt, @instruction, @filename)`
+      `INSERT INTO renders (project_id, suit_id, batch_id, parent_id, view, provider, model, prompt, instruction, filename)
+       VALUES (@projectId, @suitId, @batchId, @parentId, @view, @provider, @model, @prompt, @instruction, @filename)`
     )
     .run({
       projectId,
       suitId: suitId ?? defaultPhotoOwner(projectId).suitId,
+      // A render made without one is its own: a batch of exactly one view.
+      batchId: batchId ?? `single-${randomUUID()}`,
       parentId: parentId ?? null,
       view: view ?? 'front',
       provider: provider ?? 'gemini',

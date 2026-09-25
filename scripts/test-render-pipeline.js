@@ -168,6 +168,11 @@ app.whenReady().then(async () => {
   check(stored.every((r2) => r2.suit_id), 'every render records the suit it is of',
     JSON.stringify(stored.map((r2) => r2.suit_id)));
 
+  // One press is one render with four pictures in it, not four renders that
+  // happened close together.
+  const batches = new Set(stored.map((r2) => r2.batch_id));
+  check(batches.size === 1 && [...batches][0], 'all four belong to one render', JSON.stringify([...batches]));
+
   log('\n=== the tabs show their own view ===');
   const seen = await js(`(async () => {
     const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -184,6 +189,39 @@ app.whenReady().then(async () => {
   check(shown.length === 4 && shown.every(Boolean), 'every tab shows a picture', JSON.stringify(seen));
   check(new Set(shown).size === 4, 'and a different one on each - not the newest render four times', JSON.stringify(seen));
 
+  log('\n=== a second press is a second render ===');
+  resetCalls();
+  await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    [...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith('Render all four')).click();
+    for (let i = 0; i < 60 && [...document.querySelectorAll('button')].some(b => b.disabled && /Render all four/.test(b.textContent)); i++) await wait(500);
+    await wait(800);
+    return true;
+  })()`);
+  const after = db.getProject(projectId).renders;
+  const sets = [...new Set(after.map((r2) => r2.batch_id))];
+  check(after.length === 8 && sets.length === 2, 'two presses, two renders of four', `${after.length} pictures in ${sets.length} sets`);
+  check(sets.every((id) => after.filter((r2) => r2.batch_id === id).length === 4), 'and each set holds four');
+
+  // The strip picks the render; the tabs turn round it. Choosing the older
+  // one and walking the tabs must stay inside it.
+  const walked = await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    const thumbs = [...document.querySelectorAll('.render-thumb')];
+    if (thumbs.length < 2) return JSON.stringify({ thumbs: thumbs.length, shown: [] });
+    thumbs[1].click(); await wait(600);
+    const out = { thumbs: thumbs.length, shown: [] };
+    for (const tab of [...document.querySelectorAll('.card-head .stepper .step-tab')]) {
+      tab.click(); await wait(450);
+      out.shown.push((document.querySelector('.render-stage img')?.getAttribute('src') ?? '').split('/').pop().split('?')[0]);
+    }
+    return JSON.stringify(out);
+  })()`).then(JSON.parse);
+  check(walked.thumbs === 2, 'the strip lists renders, not pictures - two presses, two entries', String(walked.thumbs));
+  const older = new Set(after.filter((r2) => r2.batch_id === sets[1]).map((r2) => r2.filename));
+  check(walked.shown.length === 4 && walked.shown.every((f) => older.has(f)),
+    'choosing the older render and turning round it stays in that render', JSON.stringify(walked.shown));
+
   /* ---------------------------------------------------------------------
      A render belongs to one man, not to the order.
      --------------------------------------------------------------------- */
@@ -193,9 +231,9 @@ app.whenReady().then(async () => {
   db.addRender({ projectId, suitId: suitB, view: 'front', filename: 'render-bestman.png', prompt: '', instruction: '' });
   const all = db.getProject(projectId).renders;
   const groomSuit = db.primarySuitId(projectId);
-  check(all.length === 5, 'the order holds both men\u2019s renders');
-  check(all.filter((r2) => r2.suit_id === groomSuit).length === 4,
-    'four of them are the groom\u2019s');
+  check(all.length === after.length + 1, 'the order holds both men\u2019s renders', `${all.length}`);
+  check(all.filter((r2) => r2.suit_id === groomSuit).length === after.length,
+    'all but one of them are the groom\u2019s', `${all.filter((r2) => r2.suit_id === groomSuit).length} of ${all.length}`);
   check(all.filter((r2) => r2.suit_id === suitB).length === 1,
     'and one is the best man\u2019s - they are no longer one pool');
 

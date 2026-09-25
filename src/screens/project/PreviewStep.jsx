@@ -21,7 +21,7 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
   const [tweak, setTweak] = useState('');
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(null);
-  const [activeId, setActiveId] = useState(null);
+  const [activeBatch, setActiveBatch] = useState(null);
   const [showPrompt, setShowPrompt] = useState(false);
   // A hand-edited prompt replaces the generated one until it is reset. Kept
   // separate from the generated text so the spec can carry on driving that,
@@ -38,19 +38,27 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
   const renders = ctx.renders ?? project.renders ?? [];
 
   /**
-   * What the stage shows: the newest render *of the selected view*.
+   * One press is one render, and it has four pictures in it.
    *
-   * It used to be the newest render of any view, so the four tabs changed
-   * only what would be rendered next - render the back and all four tabs
-   * showed the back. The tabs are a way of looking at the suit, so each one
-   * shows its own picture, and a tweak applies to the one being looked at.
+   * The tabs are angles on a single thing, not four separate things: pressing
+   * render produces a set, and the tabs walk round it. So what is selected is
+   * the *set*, and the stage shows that set's picture for the angle being
+   * looked at. Choosing an older set keeps you in that set as you turn round
+   * it, rather than dropping you back into the newest picture per tab, which
+   * would be four halves of two different suits.
+   *
+   * Renders arrive newest first, so the first match in a set is the current
+   * one for that angle - a refinement lands in the set it refines.
    */
-  const thisView = useMemo(() => renders.filter((r) => r.view === view), [renders, view]);
-  const active = thisView.find((r) => r.id === activeId) ?? thisView[0] ?? null;
-  const rendered = useMemo(
-    () => new Set(renders.map((r) => r.view)),
-    [renders]
-  );
+  const batches = useMemo(() => {
+    const seen = [];
+    for (const r of renders) if (!seen.includes(r.batch_id)) seen.push(r.batch_id);
+    return seen;
+  }, [renders]);
+  const batch = batches.includes(activeBatch) ? activeBatch : batches[0] ?? null;
+  const inBatch = useMemo(() => renders.filter((r) => r.batch_id === batch), [renders, batch]);
+  const active = inBatch.find((r) => r.view === view) ?? null;
+  const rendered = useMemo(() => new Set(inBatch.map((r) => r.view)), [inBatch]);
 
   /**
    * Reference images for one view, in the order the prompt describes them.
@@ -136,8 +144,13 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
    * three calls would meet too, and there is no sense spending them to be
    * told the same thing four times. A failure *after* something worked is
    * treated as that one view's bad luck, and the others still go.
+   *
+   * `into` is the set they join. A whole set starts a new one; redoing a
+   * single view joins the set it is correcting, so the tailor still has one
+   * render with four pictures in it rather than a loose image beside it.
    */
-  async function renderViews(views, overridePrompt) {
+  async function renderViews(views, overridePrompt, into) {
+    const batchId = into ?? crypto.randomUUID();
     setBusy(true);
     const failed = [];
     let succeeded = 0;
@@ -154,6 +167,7 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
           const result = await api.ai.render({
             projectId: project.id,
             suitId: ctx.activeSuitId ?? undefined,
+            batchId,
             prompt: usePrompt,
             view: which,
             refs: refsForView(which).map((r) => ({
@@ -176,9 +190,9 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
     }
 
     await reload();
-    // After a set, each view falls back to its own newest. After a single
-    // view, that one render is what the tailor asked to see.
-    setActiveId(views.length === 1 && last ? last.id : null);
+    // Show what was just made, whether that is a new set or the set a single
+    // view was corrected in.
+    if (succeeded > 0) setActiveBatch(batchId);
 
     const name = (key) => VIEWS.find((v) => v.key === key)?.label.toLowerCase() ?? key;
     if (failed.length && succeeded === 0) toast(failed[0].message, 'err');
@@ -187,7 +201,8 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
   }
 
   const renderEverything = () => renderViews(VIEWS.map((v) => v.key));
-  const renderThisView = (overridePrompt) => renderViews([view], overridePrompt);
+  // Correcting one angle of the render on screen, not starting a new one.
+  const renderThisView = (overridePrompt) => renderViews([view], overridePrompt, batch ?? undefined);
 
   async function applyTweak() {
     if (!active || !tweak.trim()) return;
@@ -196,6 +211,8 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
       const result = await api.ai.render({
         projectId: project.id,
         suitId: ctx.activeSuitId ?? undefined,
+        // A refinement belongs to the render it refines.
+        batchId: active.batch_id,
         prompt: buildTweakPrompt({ instruction: tweak, spec, view: active.view }),
         view: active.view,
         parentId: active.id,
@@ -203,7 +220,6 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
         refs: [{ filename: active.filename, mime: 'image/png', scope: `project-${project.id}` }],
       });
       await reload();
-      setActiveId(result.id);
       setTweak('');
       toast('Tweak applied', 'ok');
     } catch (err) {
@@ -272,18 +288,27 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
                 )}
               </div>
 
-              {thisView.length > 1 && (
+              {/* One entry per render, not per picture. Each shows the angle
+                  currently being looked at, so moving along the strip
+                  compares like with like. */}
+              {batches.length > 1 && (
                 <div className="render-strip" style={{ marginTop: 12 }}>
-                  {thisView.map((r) => (
+                  {batches.map((id) => {
+                    const r = renders.find((x) => x.batch_id === id && x.view === view)
+                      ?? renders.find((x) => x.batch_id === id);
+                    if (!r) return null;
+                    const views = renders.filter((x) => x.batch_id === id).length;
+                    return (
                     <button
-                      key={r.id}
-                      className={`render-thumb ${active?.id === r.id ? 'active' : ''}`}
-                      onClick={() => setActiveId(r.id)}
-                      title={r.instruction || `${r.view} view`}
+                      key={id}
+                      className={`render-thumb ${batch === id ? 'active' : ''}`}
+                      onClick={() => setActiveBatch(id)}
+                      title={r.instruction || `${views} view${views === 1 ? '' : 's'}`}
                     >
                       <img src={projectMedia(project.id, r.filename)} alt="" />
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 
@@ -330,7 +355,6 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
                       confirmLabel="Delete render?"
                       onConfirm={async () => {
                         await api.renders.delete({ id: active.id });
-                        setActiveId(null);
                         await reload();
                       }}
                     >

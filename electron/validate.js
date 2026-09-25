@@ -66,6 +66,24 @@ function filename(value, field = 'filename') {
   return v;
 }
 
+/**
+ * The token that ties the four views of one render together.
+ *
+ * Supplied by the renderer, which is the only place that knows the four calls
+ * were one press. It is a label on rows the caller already owns and nothing
+ * is looked up by it across an ownership boundary - but it is still checked,
+ * because a value that reaches a database column unexamined is a habit worth
+ * not having.
+ */
+const BATCH = /^[A-Za-z0-9-]{1,64}$/;
+
+function batchId(value, field = 'batchId') {
+  if (value === undefined || value === null || value === '') return null;
+  const v = str(value, field, 64);
+  if (!BATCH.test(v)) fail(`${field} is not a valid render batch`);
+  return v;
+}
+
 /** A media scope folder: `project-12` or `client-3`. */
 const SCOPE = /^(project|client)-\d+$/;
 
@@ -124,7 +142,7 @@ const FITTING_KINDS = ['first', 'final', 'extra'];
 module.exports = {
   ValidationError,
   id, optionalId, str, oneOf, num,
-  filename, scope, dataUrl, jsonBlob, modelName,
+  filename, scope, dataUrl, jsonBlob, modelName, batchId,
   PHOTO_SLOTS, GARMENTS, REFERENCE_KINDS, PROJECT_STATUSES, FITTING_KINDS,
   PAYMENT_KINDS, ALTERATION_STATUSES, EXTRA_STATUSES,
   MAX_IMAGE_BYTES,
