@@ -1,5 +1,7 @@
 'use strict';
 
+const { rendersLine } = require('./mailDelivery');
+
 /**
  * The wording of the quote email, which belongs to GD rather than to the app.
  *
@@ -16,6 +18,8 @@ Thank you for coming in. Here is a summary of your order {order_ref}.
 {what}
 {event_line}
 {quote_block}
+
+{renders}
 
 This is a summary - the order form with the full specification and terms
 follows separately.
@@ -41,6 +45,10 @@ const VARIABLES = [
   { key: 'final_fitting_date', describes: 'the final fitting and delivery date' },
   { key: 'delivery_date', describes: 'the delivery date' },
   { key: 'quote_block', describes: 'the priced lines, the total and the deposit' },
+  {
+    key: 'renders',
+    describes: 'attaches the latest renders, and says so - leave it out and none are attached',
+  },
   { key: 'total', describes: 'the agreed total on its own' },
   { key: 'deposit', describes: 'half the total, which starts the work' },
   { key: 'gd_name', describes: 'your name' },
@@ -92,6 +100,9 @@ function buildValues(project, shop) {
     final_fitting_date: project.final_fitting_date ?? '',
     delivery_date: project.delivery_date ?? '',
     quote_block: quoteBlock,
+    // Worked out from the same render sets that are attached, so the
+    // sentence cannot mention pictures the email does not carry.
+    renders: rendersLine(project),
     total: quote ? money(quote.total) : '',
     deposit: quote ? money((quote.total ?? 0) * shop.depositFraction) : '',
     gd_name: shop.name, gd_role: shop.role, gd_phone: shop.phone, gd_email: shop.email,

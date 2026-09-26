@@ -7,7 +7,7 @@ import { ConfirmButton } from '../../components/ui.jsx';
 import { EVENT_TYPES, MEASUREMENTS, statusLabel, PROCESS_DATES } from '../../lib/catalog.js';
 import { formatMeasure, unitLabel } from '../../lib/units.js';
 import { ORDER_TERMS, GD_CONTACT } from '../../lib/terms.js';
-import { useToast, Spinner, Banner } from '../../components/ui.jsx';
+import { useToast, Spinner, Banner, Modal } from '../../components/ui.jsx';
 
 /**
  * The spec sheet is assembled as raw HTML and then written to disk, so every
@@ -32,7 +32,40 @@ const esc = (value) =>
 export default function SummaryStep({ ctx, overrides, steps, unit = 'cm', business }) {
   const { project } = ctx;
   const [exporting, setExporting] = useState(false);
+  const [mailing, setMailing] = useState(false);
+  const [confirmSend, setConfirmSend] = useState(null);
   const toast = useToast();
+
+  const megabytes = (bytes) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
+  /**
+   * Emails the quote, with the renders if the wording asks for them.
+   *
+   * Through Gmail the app sends it itself, so it is shown first - to whom,
+   * what it says, what is attached - and sent only when GD says so. As a
+   * draft it opens in his own mail program, which is its own review, so it
+   * opens straight away as it always has.
+   */
+  async function emailQuote() {
+    setMailing(true);
+    try {
+      const preview = await api.quote.preview({ projectId: project.id });
+      if (preview.via === 'gmail') { setConfirmSend(preview); return; }
+      await sendQuote();
+    } catch (err) {
+      toast(messageFor(err), 'err');
+    } finally {
+      setMailing(false);
+    }
+  }
+
+  async function sendQuote() {
+    const r = await api.quote.email({ projectId: project.id });
+    const withRenders = r.attached ? ` with ${r.attached} render${r.attached === 1 ? '' : 's'}` : '';
+    if (r.sent) toast(`Sent to ${r.to}${withRenders}`, 'ok');
+    else if (r.via === 'draft-file') toast(`Draft opened${withRenders} - check it, then send`, 'ok');
+    else toast(`Draft opened for ${r.to}`, 'ok');
+  }
 
   const spec = project.spec ?? {};
   const analysis = project.analysis ?? {};
@@ -167,6 +200,50 @@ ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c"
   }
 
   return (
+    <>
+    {confirmSend && (
+      <Modal title="Send the quote" onClose={() => setConfirmSend(null)} wide>
+        <div className="stack">
+          <div className="price-line"><span className="muted">To</span><span>{confirmSend.to}</span></div>
+          <div className="price-line"><span className="muted">From</span><span>{confirmSend.from}</span></div>
+          <div className="price-line"><span className="muted">Subject</span><span>{confirmSend.subject}</span></div>
+          <div className="note" style={{ whiteSpace: 'pre-wrap', maxHeight: 300, overflowY: 'auto' }}>{confirmSend.body}</div>
+          {confirmSend.attachments.length > 0 ? (
+            <div>
+              <div className="price-group-title">
+                Attached - {confirmSend.attachments.length} render{confirmSend.attachments.length === 1 ? '' : 's'}, {megabytes(confirmSend.totalBytes)}
+              </div>
+              {confirmSend.attachments.map((a) => (
+                <div key={a.name} className="tiny faint mono">{a.name}</div>
+              ))}
+            </div>
+          ) : (
+            <div className="tiny faint">No renders attached.</div>
+          )}
+          {confirmSend.omitted > 0 && (
+            <Banner kind="warn">
+              {confirmSend.omitted} render{confirmSend.omitted === 1 ? '' : 's'} left off - together they would
+              be too large for Gmail to accept.
+            </Banner>
+          )}
+          <div className="inline">
+            <button
+              className="btn btn-gold"
+              disabled={mailing}
+              onClick={async () => {
+                setMailing(true);
+                try { await sendQuote(); setConfirmSend(null); }
+                catch (err) { toast(messageFor(err), 'err'); }
+                finally { setMailing(false); }
+              }}
+            >
+              {mailing ? <><Spinner /> Sending...</> : 'Send it'}
+            </button>
+            <button className="btn btn-ghost" onClick={() => setConfirmSend(null)}>Cancel</button>
+          </div>
+        </div>
+      </Modal>
+    )}
     <div className="row" style={{ alignItems: 'flex-start' }}>
       <div style={{ flex: 2, minWidth: 440 }}>
         <div className="card">
@@ -175,16 +252,11 @@ ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c"
             <div className="spacer" />
             <button
               className="btn btn-sm"
-              title={project.email ? `Draft an email to ${project.email}` : 'The client has no email address yet'}
-              disabled={!project.email}
-              onClick={async () => {
-                try {
-                  const r = await api.quote.email({ projectId: project.id });
-                  if (r?.opened) toast(`Draft opened for ${r.to}`, 'ok');
-                } catch (err) { toast(messageFor(err), 'err'); }
-              }}
+              title={project.email ? `Email the quote to ${project.email}` : 'The client has no email address yet'}
+              disabled={!project.email || mailing}
+              onClick={emailQuote}
             >
-              Email the quote
+              {mailing ? <><Spinner /> Preparing...</> : 'Email the quote'}
             </button>
             <button className="btn btn-sm btn-primary" onClick={exportFile} disabled={exporting}>
               {exporting ? <><Spinner /> Exporting...</> : 'Export client file'}
@@ -334,5 +406,6 @@ ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c"
         </div>
       </div>
     </div>
+    </>
   );
 }

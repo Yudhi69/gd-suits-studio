@@ -19,7 +19,7 @@ const CHANNELS = [
   'extras:add', 'extras:update', 'extras:delete',
   'analytics:get',
   'media:download',
-  'quote:email', 'quote:template',
+  'quote:email', 'quote:template', 'quote:preview',
   'connections:get', 'connections:set', 'connections:test',
   'mail:rules', 'mail:saveRule', 'mail:deleteRule', 'mail:due', 'mail:send', 'mail:preview',
   'business:get',
