@@ -1239,6 +1239,7 @@ handle('app:info', () => ({
   userData: app.getPath('userData'),
   platform: process.platform,
   online: true,
+  firstRunCheck: firstRunCheck(),
 }));
 
 handle('app:openDataFolder', () => shell.openPath(app.getPath('userData')));
@@ -1264,8 +1265,30 @@ handle('updates:check', async () => {
   const feedUrl = db.getSetting('updateFeed', DEFAULT_FEED) || DEFAULT_FEED;
   const result = await updater.check({ feedUrl, token: secrets.get('updateToken') });
   lastRelease = { ...result, feedUrl };
+  // Recorded only when the check got an answer. An install opened for the
+  // first time with no signal has not yet found out whether it is current,
+  // so it has not had its first check - and gets one next time it opens.
+  db.setSetting('updatesLastChecked', result.checkedAt);
   return result;
 });
+
+/**
+ * Whether this launch should look for a newer version without being asked.
+ *
+ * An install that has never once heard back from the update feed looks on
+ * its first launch, so a package sent out a few versions ago brings its owner
+ * up to date the first time he opens it rather than whenever he happens to
+ * open Settings. After that it is his setting.
+ *
+ * Only in an installed copy. A development build - and every test suite,
+ * which each starts from an empty folder and so is always "new" - would
+ * otherwise go out to GitHub on launch and put a prompt over whatever it was
+ * about to test. GD_TEST_FIRST_RUN lets the one suite that tests this do so.
+ */
+function firstRunCheck() {
+  const installed = app.isPackaged || process.env.GD_TEST_FIRST_RUN === '1';
+  return installed && !db.getSetting('updatesLastChecked', null);
+}
 
 /**
  * Fetches the release file into the Downloads folder.
