@@ -4,6 +4,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { flipFuses, FuseVersion, FuseV1Options } = require('@electron/fuses');
+const { checkFloor, FLOOR } = require('./macosFloor');
 
 /**
  * Ad-hoc signs the macOS bundle after packing, so the app runs on Apple
@@ -75,9 +76,25 @@ async function applyFuses(context) {
   console.log('  • fuses flipped (RunAsNode off, asar integrity enforced)');
 }
 
+/**
+ * Refuses to package a Mac build that would not open on the oldest macOS we
+ * promise. GD's Intel MacBook runs Catalina, 10.15; the build he was first
+ * sent asked for 11.0 and would not start. See macosFloor.js.
+ */
+function enforceMacosFloor(context) {
+  const appPath = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
+  const result = checkFloor(appPath, FLOOR);
+  if (result.problems.length) {
+    const list = result.problems.map((p) => `    needs ${p.needs}: ${p.file}`).join('\n');
+    throw new Error(`This build would not run on macOS ${FLOOR}:\n${list}`);
+  }
+  console.log(`  • runs on macOS ${FLOOR} and later (${result.binaries} compiled files checked)`);
+}
+
 exports.default = async function afterPack(context) {
   await applyFuses(context);
   if (context.electronPlatformName !== 'darwin') return;
+  enforceMacosFloor(context);
   if (context.packager.config?.mac?.identity) return; // a real identity is configured
 
   const appName = `${context.packager.appInfo.productFilename}.app`;

@@ -15,6 +15,15 @@ Everything except rendering works with no internet at all.
 across. Three are built: a `-arm64.dmg` for Apple Silicon, a plain `.dmg` for
 Intel, and a `Setup ... .exe` for Windows.
 
+**It runs on macOS 10.15 Catalina and later**, and Windows 10 and later. The
+floor is set by Electron, not by this code: Electron 33 and newer need macOS 11,
+so the app is held on **Electron 32** - the newest that still runs on Catalina,
+which is what the client's Intel MacBook has. Every Mac build checks this for
+itself (`build/macosFloor.js`, run from `afterPack`): it reads the minimum macOS
+recorded in every compiled file in the bundle and refuses to package one that
+asks for more than 10.15. Raising Electron past 32 will fail that check, by
+design - drop Catalina knowingly or not at all.
+
 The builds are **ad-hoc signed, not notarised**, so the first launch on macOS
 needs a right-click → *Open* to get past Gatekeeper. See *Signing* below.
 
@@ -359,10 +368,12 @@ npm run dist:mac     # both .dmg files
 npm run dist:win     # .exe installer
 ```
 
-Both build from a Mac with no extra tooling — the Windows `.exe` was produced
-on this machine. All three installers in `release/` were built and the macOS
-one was launched and verified; the `.exe` has been built but not yet run on a
-Windows machine.
+The Mac installers build on a Mac. **The Windows installer is built by the
+release workflow on a Windows runner.** On a Mac, electron-builder stamps the
+`.exe` through Wine, which is Intel-only, so it needs Rosetta - and macOS 27 no
+longer has it. On Apple silicon without Rosetta `dist:win` fails at that step,
+and worse, leaves a Windows build of the SQLite driver in `node_modules`, so run
+`npx electron-builder install-app-deps` afterwards before any test.
 
 The mac target builds each architecture in a separate pass. Running them in one
 pass makes electron-builder do both in parallel, and they collide in a shared

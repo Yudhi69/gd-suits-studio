@@ -10,6 +10,13 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+// A keychain entry of its own for each Electron version. safeStorage names its
+// entry after the app, and this script runs as plain "Electron" - so it shared
+// "Electron Safe Storage" with every other Electron binary on the machine. When
+// the engine changed version, the new binary was signed differently, macOS
+// would not hand over the old one's entry, and the keychain read as missing.
+app.setName(`gd-suits-secrets-test-${process.versions.electron}`);
+
 let pass = 0, fail = 0;
 const log = (...a) => process.stdout.write(a.join(' ') + '\n');
 const check = (ok, label, detail = '') => { ok ? (pass++, log('  ✓', label)) : (fail++, log('  ✗ FAIL:', label, detail)); };
@@ -31,6 +38,11 @@ app.whenReady().then(() => {
     check(!read().gemini.plain, 'the plain copy is gone from disk');
     check(!!read().gemini.enc, 'and an encrypted one is in its place');
     check(secrets.get('gemini') === 'AIza-test-key-1234', 'it still reads back after the upgrade');
+  } else if (process.platform === 'darwin') {
+    // A Mac always has a keychain. Skipping here is how this suite once kept
+    // passing - nine checks instead of twelve - with none of the encryption
+    // tested at all.
+    check(false, 'the keychain is available on a Mac', 'safeStorage.isEncryptionAvailable() returned false');
   } else {
     log('  - no OS keychain here, so the upgrade cannot be checked');
   }
