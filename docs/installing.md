@@ -22,6 +22,10 @@ then **About This Mac**. It says *Chip* (an Apple one) or *Processor* (Intel).
 
 Taking the wrong Mac file is not harmful. It simply will not open.
 
+**Which version of macOS you need.** macOS 10.15 Catalina or anything newer.
+The same About This Mac window shows yours, under the name - for example
+"macOS Catalina, Version 10.15.8". On Windows, Windows 10 or 11.
+
 ---
 
 ## 2. Install it

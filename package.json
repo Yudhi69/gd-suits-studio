@@ -21,7 +21,7 @@
     "test:render": "cross-env DATA_DIR=.testdata/render electron scripts/test-render-pipeline.js",
     "test:tour": "cross-env DATA_DIR=.testdata/tour SHOT_DIR=.testdata/shots electron scripts/screenshot-tour.js",
     "test:security": "cross-env DATA_DIR=.testdata/security electron scripts/test-security.js",
-    "test": "npm run build && npm run test:migrations && npm run test:secrets && npm run test:security && npm run test:branding && npm run test:models && npm run test:updates && npm run test:firstrun && npm run test:catalog && npm run test:clientorder && npm run test:garment && npm run test:party && npm run test:persistence && npm run test:documents && npm run test:workflow && npm run test:client && npm run test:quote && npm run test:mail && npm run test:connections && npm run test:attachments && npm run test:operations && npm run test:import && npm run test:render",
+    "test": "npm run build && npm run test:migrations && npm run test:macosfloor && npm run test:secrets && npm run test:security && npm run test:branding && npm run test:models && npm run test:updates && npm run test:firstrun && npm run test:catalog && npm run test:clientorder && npm run test:garment && npm run test:party && npm run test:persistence && npm run test:documents && npm run test:workflow && npm run test:client && npm run test:quote && npm run test:mail && npm run test:connections && npm run test:attachments && npm run test:operations && npm run test:import && npm run test:render",
     "test:updates": "cross-env DATA_DIR=.testdata/updates electron scripts/test-updates.js",
     "test:catalog": "cross-env DATA_DIR=.testdata/catalog electron scripts/test-catalog.js",
     "test:workflow": "cross-env DATA_DIR=.testdata/workflow electron scripts/test-workflow.js",
@@ -44,7 +44,8 @@
     "test:mail": "cross-env DATA_DIR=.testdata/mail electron scripts/test-mail.js",
     "test:connections": "cross-env DATA_DIR=.testdata/connections electron scripts/test-connections.js",
     "test:attachments": "cross-env DATA_DIR=.testdata/attachments electron scripts/test-attachments.js",
-    "test:firstrun": "cross-env DATA_DIR=.testdata/firstrun GD_TEST_FIRST_RUN=1 electron scripts/test-first-run.js"
+    "test:firstrun": "cross-env DATA_DIR=.testdata/firstrun GD_TEST_FIRST_RUN=1 electron scripts/test-first-run.js",
+    "test:macosfloor": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-macos-floor.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",
@@ -56,7 +57,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
     "cross-env": "^7.0.3",
-    "electron": "^33.4.11",
+    "electron": "32.3.3",
     "electron-builder": "^25.1.8",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -77,7 +78,13 @@
       "electron/**/*",
       "package.json",
       "!**/*.map",
-      "!**/*.tmp.js"
+      "!**/*.tmp.js",
+      "!**/node_modules/better-sqlite3/build/node_gyp_bins/**",
+      "!**/node_modules/better-sqlite3/build/Release/obj/**",
+      "!**/node_modules/better-sqlite3/build/Release/test_extension.node",
+      "!**/node_modules/better-sqlite3/build/deps/**",
+      "!**/node_modules/better-sqlite3/deps/**",
+      "!**/node_modules/better-sqlite3/src/**"
     ],
     "asar": true,
     "asarUnpack": [
@@ -98,7 +105,8 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "gatekeeperAssess": false,
-      "identity": null
+      "identity": null,
+      "minimumSystemVersion": "10.15"
     },
     "dmg": {
       "title": "${productName} ${arch}",
