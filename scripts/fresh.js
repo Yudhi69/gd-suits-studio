@@ -22,6 +22,15 @@ const path = require('path');
  * database on the path this sets.
  */
 function freshUserData(app) {
+  // A keychain entry of the suites' own, one per Electron version. Run as a
+  // script, every suite is plain "Electron", and safeStorage keeps its key in
+  // the "Electron Safe Storage" entry - which belongs to whichever Electron
+  // binary made it first. After the engine went from 33 to 32 for Catalina,
+  // that was a different binary, and storing a test API key put a keychain
+  // password prompt on the screen and waited for it. An entry this binary
+  // makes for itself is read back without asking. test-secrets does the same.
+  app.setName(`gd-suits-test-${process.versions.electron}`);
+
   const dir = path.resolve(process.env.DATA_DIR ?? '.testdata/default');
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });

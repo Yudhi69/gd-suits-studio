@@ -1088,9 +1088,10 @@ function addPhoto({ projectId, clientId, suitId, slot, filename, mime, garment, 
   // A capture slot holds one current photograph, and re-shooting replaces it.
   // Whose slot, though: a front shot belongs to the person, and a fabric
   // swatch to the suit. Scoped to the order alone, photographing the best man
-  // would have deleted the groom's front shot without a word.
+  // would have deleted the groom's front shot without a word. The shoes go
+  // into the render as one pair, so they are one photograph per suit too.
   const SUBJECT = ['front', 'side', 'back', 'face'];
-  const SWATCH = ['fabric', 'lining'];
+  const SWATCH = ['fabric', 'lining', 'shoes'];
   if (!fittingId && [...SUBJECT, ...SWATCH].includes(slot)) {
     if (SUBJECT.includes(slot) && clientId) {
       d.prepare('DELETE FROM photos WHERE project_id = ? AND slot = ? AND fitting_id IS NULL AND client_id = ?')

@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, nativeImage } = require('electron');
 require('./fresh.js').freshUserData(app);
 
 const log = (...a) => process.stdout.write(a.join(' ') + '\n');
@@ -14,6 +14,14 @@ const captured = [];
 let renderCalls = 0;
 let failOn = new Set();
 const resetCalls = () => { renderCalls = 0; failOn = new Set(); };
+// Every render comes back as a different picture, so a test can tell which
+// one was sent on as a reference.
+let served = 0;
+const distinctPng = (n) => {
+  const px = Buffer.alloc(4 * 4 * 4);
+  for (let i = 0; i < 16; i++) px.set([n & 255, (n * 37) & 255, (n * 91) & 255, 255], i * 4);
+  return nativeImage.createFromBitmap(px, { width: 4, height: 4 }).toPNG().toString('base64');
+};
 const realFetch = global.fetch;
 global.fetch = async (url, opts) => {
   captured.push({ url: String(url), headers: opts?.headers, body: JSON.parse(opts.body) });
@@ -23,12 +31,10 @@ global.fetch = async (url, opts) => {
       status: 500, headers: { 'content-type': 'application/json' },
     });
   }
-  const onePixelPng =
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
   return new Response(
     JSON.stringify({
       candidates: [{
-        content: { parts: [{ text: 'Rendered.' }, { inlineData: { mimeType: 'image/png', data: onePixelPng } }] },
+        content: { parts: [{ text: 'Rendered.' }, { inlineData: { mimeType: 'image/png', data: distinctPng(++served) } }] },
         finishReason: 'STOP',
       }],
     }),
@@ -39,6 +45,7 @@ global.fetch = async (url, opts) => {
 require('../electron/main.js');
 const db = require('../electron/db.js');
 const secrets = require('../electron/secrets.js');
+const storage = require('../electron/storage.js');
 
 app.whenReady().then(async () => {
   await new Promise((r) => setTimeout(r, 2200));
@@ -277,6 +284,243 @@ app.whenReady().then(async () => {
   check(outcomes.filter(Boolean).length === 3 && outcomes[2] === false,
     'the one that failed is the one that failed, and the rest still land', JSON.stringify(outcomes));
   check(db.getProject(project2).renders.length === 3, 'only the successful three are stored');
+
+
+  /* ---------------------------------------------------------------------
+     The shoes, and one cloth in all four views.
+
+     GD's set came back with a gold check covering a twentieth of the
+     trousers from three angles and a third of them from the fourth: four
+     renders, each guessing at the cloth on its own. These drive the real
+     pages - the shoes go in through Extras, the cloth through the Cloth
+     page - and read what reaches the model off the wire.
+     --------------------------------------------------------------------- */
+  log('\n=== the shoes, from the Extras page ===');
+  const shoeClient = db.upsertClient({ name: 'Shoe', surname: 'Cloth', contact: '', email: '' });
+  const shoeProject = db.createProject({ clientId: shoeClient, title: 'Shoes and cloth' });
+  db.updateProject(shoeProject, { spec: { suitType: 'two_piece', lapel: 'notch' } });
+  await js(`(async () => {
+    const un = async (p) => { const r = await p; if (!r.ok) throw new Error(r.error.message); return r.data; };
+    const solid = (hex) => { const c = document.createElement('canvas'); c.width = 60; c.height = 80;
+      const x = c.getContext('2d'); x.fillStyle = hex; x.fillRect(0, 0, 60, 80); return c.toDataURL('image/png'); };
+    // Navy, with a gold stripe 4px wide every 64px: a sixteenth of the cloth.
+    // Each stripe starts half a pixel in, so its edges are part gold and part
+    // navy - as every fine line in a real photograph is.
+    const cloth = () => { const c = document.createElement('canvas'); c.width = 640; c.height = 480;
+      const x = c.getContext('2d'); x.fillStyle = '#1d2a44'; x.fillRect(0, 0, 640, 480);
+      x.fillStyle = '#b8a060'; for (let at = 30; at < 640; at += 64) x.fillRect(at + 0.5, 0, 4, 480);
+      return c.toDataURL('image/png'); };
+    const add = (slot, dataUrl) => un(window.gd.photos.add({ projectId: ${shoeProject}, slot, dataUrl }));
+    await add('front', solid('#a03030')); await add('side', solid('#30a030')); await add('back', solid('#3030a0'));
+    await add('face', solid('#a0a030')); await add('lining', solid('#a030a0')); await add('fabric', cloth());
+    return true;
+  })()`);
+  win.webContents.reload();
+  await new Promise((r2) => setTimeout(r2, 2400));
+
+  const openStep = (step) => js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    [...document.querySelectorAll('.step-tab')].find(t => t.textContent.includes(${JSON.stringify(step)})).click();
+    await wait(900);
+    return true;
+  })()`);
+  await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    [...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('Orders')).click(); await wait(800);
+    [...document.querySelectorAll('tbody tr')].find(r => r.textContent.includes('Shoe Cloth')).click(); await wait(1000);
+    return true;
+  })()`);
+  await openStep('Extras');
+
+  const shoesUi = JSON.parse(await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    const card = () => [...document.querySelectorAll('.photo-slot')]
+      .find(s => s.querySelector('.photo-meta')?.textContent.includes('Photo of the shoes'));
+    const before = !!card();
+    const toggle = [...document.querySelectorAll('.toggle-row')]
+      .find(r => r.firstElementChild?.firstElementChild?.textContent.trim() === 'Shoes');
+    toggle?.querySelector('[role=switch]')?.click();
+    await wait(900);
+    const after = !!card();
+    const upload = async (hex) => {
+      const c = document.createElement('canvas'); c.width = 90; c.height = 60;
+      const x = c.getContext('2d'); x.fillStyle = hex; x.fillRect(0, 0, 90, 60);
+      const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+      const dt = new DataTransfer(); dt.items.add(new File([blob], 'shoes.png', { type: 'image/png' }));
+      const input = card().querySelector('input[type=file]');
+      input.files = dt.files; input.dispatchEvent(new Event('change', { bubbles: true }));
+      await wait(1500);
+    };
+    if (after) { await upload('#202020'); await upload('#5a3a1a'); }
+    const shown = card()?.querySelector('.photo-frame img')?.getAttribute('src') ?? '';
+    return JSON.stringify({ before, after, shown });
+  })()`));
+  check(!shoesUi.before && shoesUi.after, 'a place for a photo of the shoes appears once Shoes is ticked, and not before',
+    JSON.stringify(shoesUi));
+  const groomSuitId = db.primarySuitId(shoeProject);
+  let shoePhotos = db.getProject(shoeProject).photos.filter((p) => p.slot === 'shoes');
+  check(shoePhotos.length === 1 && shoePhotos[0].suit_id === groomSuitId,
+    'a second photo replaces the first - one pair, kept with this suit', JSON.stringify(shoePhotos.map((p) => p.suit_id)));
+  check(shoePhotos.length === 1 && shoesUi.shown.includes(shoePhotos[0].filename), 'and the page shows the one that is kept');
+
+  const tie = JSON.parse(await js(`window.gd.photos.add({ projectId: ${shoeProject}, slot: 'tie_reference', dataUrl: '${png}' })
+    .then(r => JSON.stringify({ ok: r.ok, error: r.error?.message ?? '' }))`));
+  check(tie.ok, 'a tie photo can be added - the Extras page always offered one, and saving it used to be refused', tie.error);
+
+  log('\n=== the cloth, measured on the Cloth page ===');
+  await openStep('Cloth');
+  const measured = await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    for (let i = 0; i < 20 && !document.querySelector('.measured-cloth'); i++) await wait(250);
+    return JSON.stringify({
+      text: document.querySelector('.measured-cloth')?.textContent ?? '',
+      colours: document.querySelectorAll('.measured-cloth-colour').length,
+    });
+  })()`).then(JSON.parse);
+  // A sixteenth is 6.25%; the measurement samples 4000 points, so a point either way is the same answer.
+  check(/9[3-5]%/.test(measured.text) && /gold\s*[5-7]%/i.test(measured.text),
+    'it shows what the render will be told: the navy and the gold, and how much of each', measured.text);
+  check(measured.colours === 2, 'and only those two - the soft edges of a fine line are not a colour of their own',
+    `${measured.colours}: ${measured.text}`);
+
+  log('\n=== one press: the front first, then the rest drawn to match it ===');
+  await openStep('Preview');
+  const sentFrom = captured.length;
+  resetCalls();
+  await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    [...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith('Render all four')).click();
+    for (let i = 0; i < 60 && [...document.querySelectorAll('button')].some(b => b.disabled && /Render all four/.test(b.textContent)); i++) await wait(500);
+    await wait(800);
+    return true;
+  })()`);
+  const scope = storage.scopeForProject(shoeProject);
+  shoePhotos = db.getProject(shoeProject).photos.filter((p) => p.slot === 'shoes');
+  const shoesData = shoePhotos[0] ? storage.readAsBase64(scope, shoePhotos[0].filename) : null;
+  const firstSet = db.getProject(shoeProject).renders;
+  const frontRender = firstSet.find((r) => r.view === 'front');
+  const frontData = frontRender ? storage.readAsBase64(scope, frontRender.filename) : '';
+  const read = (c) => {
+    const parts = c.body.contents[0].parts;
+    const text = parts.find((p) => p.text)?.text ?? '';
+    return {
+      text,
+      images: parts.filter((p) => p.inlineData).map((p) => p.inlineData.data),
+      named: [...text.matchAll(/^Image (\d+) \(([^)]+)\)/gm)].map((m) => ({ n: Number(m[1]), label: m[2] })),
+    };
+  };
+  const sent = captured.slice(sentFrom).map(read);
+  if (process.env.DUMP_PROMPTS) require('fs').writeFileSync(process.env.DUMP_PROMPTS, sent.map((r) => r.text).join('\n\n=========\n\n'));
+  check(sent.length === 4 && firstSet.length === 4, 'four views, four renders', `${sent.length} sent, ${firstSet.length} stored`);
+  check(sent.every((r) => r.named.length === r.images.length && r.named.every((x, i) => x.n === i + 1)),
+    'each prompt names every image it is sent, numbered in the order they are attached',
+    JSON.stringify(sent.map((r) => [r.named.length, r.images.length])));
+  check(sent.every((r) => { const at = r.named.findIndex((x) => x.label === 'shoes'); return at >= 0 && r.images[at] === shoesData; }),
+    'the photo of the shoes goes with all four views, at the place the prompt says it is');
+  check(/Put exactly these on the client/.test(sent[0]?.text ?? ''), 'and the model is told to put exactly those shoes on the client');
+  check(/THE SHOT - this is FRONT/.test(sent[0]?.text ?? '') && !sent[0].named.some((x) => x.label === 'front view')
+    && !sent[0].images.includes(frontData), 'the front is drawn first, from the photographs alone');
+  check(sent.slice(1).length === 3 && sent.slice(1).every((r) => {
+    const at = r.named.findIndex((x) => x.label === 'front view');
+    return at >= 0 && r.images[at] === frontData;
+  }), 'the side, the back and the 3/4 are each sent the front that was just drawn');
+  check(/This picture is the SIDE view/.test(sent[1]?.text ?? '') && /This picture is the 3\/4 view/.test(sent[3]?.text ?? '')
+    && /Take nothing else from it: not its camera angle, its pose or its framing/.test(sent[2]?.text ?? ''),
+    'told to copy its cloth, and not its angle');
+
+  const clothOf = (t) => t.split('\n\n').find((para) => para.startsWith('The cloth:')) ?? '';
+  const cloths = sent.map((r) => clothOf(r.text));
+  check(cloths[0] && cloths.every((c) => c === cloths[0]), 'all four prompts describe the cloth in the same words', cloths[0]);
+  check(/the jacket and trousers are both cut from the one bolt/.test(cloths[0]), 'that the trousers are the same cloth as the jacket');
+  check(/is the ground, about 9[3-5]% of the cloth; gold \(#[0-9a-f]{6}\) about [5-7]%/.test(cloths[0]),
+    'and what the swatch measures - navy about 94%, gold about 6%', cloths[0]);
+  check(/The gold stays exactly as fine and as sparse as it is in the swatch/.test(cloths[0]), 'with the gold kept as fine as it is there');
+
+  log('\n=== redoing one view ===');
+  const oneFrom = captured.length;
+  await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    [...document.querySelectorAll('.card-head .stepper .step-tab')].find(t => t.textContent.trim().startsWith('Side')).click(); await wait(500);
+    [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Just the side').click();
+    for (let i = 0; i < 40 && [...document.querySelectorAll('button')].some(b => b.disabled && /Just the side/.test(b.textContent)); i++) await wait(400);
+    await wait(700);
+    return true;
+  })()`);
+  const redo = captured.slice(oneFrom).map(read);
+  check(redo.length === 1 && redo[0].images[redo[0].named.findIndex((x) => x.label === 'front view')] === frontData,
+    'just the side is sent the front of the set it joins', String(redo.length));
+
+  log('\n=== more images than a render takes ===');
+  for (const title of ['Ref A', 'Ref B', 'Ref C', 'Ref D']) {
+    await js(`window.gd.references.add({ clientId: ${shoeClient}, projectId: ${shoeProject}, dataUrl: '${png}', kind: 'style', title: '${title}' })`);
+  }
+  win.webContents.reload();
+  await new Promise((r2) => setTimeout(r2, 2400));
+  await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    [...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('Orders')).click(); await wait(800);
+    [...document.querySelectorAll('tbody tr')].find(r => r.textContent.includes('Shoe Cloth')).click(); await wait(1000);
+    return true;
+  })()`);
+  await openStep('Preview');
+  const capFrom = captured.length;
+  const capUi = await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    [...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith('Reference images')).click(); await wait(700);
+    for (const title of ['Ref A', 'Ref B', 'Ref C', 'Ref D']) {
+      [...document.querySelectorAll('.modal .ref-card')].find(c => c.textContent.includes(title))?.querySelector('.ref-thumb')?.click();
+      await wait(200);
+    }
+    [...document.querySelectorAll('.modal button')].find(b => b.textContent.trim() === 'Done').click(); await wait(500);
+    [...document.querySelectorAll('.card-head .stepper .step-tab')].find(t => t.textContent.trim().startsWith('Side')).click(); await wait(500);
+    const note = [...document.querySelectorAll('p.tiny')].find(p => /left out/.test(p.textContent))?.textContent ?? '';
+    [...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith('Render all four')).click();
+    for (let i = 0; i < 60 && [...document.querySelectorAll('button')].some(b => b.disabled && /Render all four/.test(b.textContent)); i++) await wait(500);
+    await wait(800);
+    return note;
+  })()`);
+  const capped = captured.slice(capFrom).map(read);
+  const capSets = new Set(db.getProject(shoeProject).renders.map((r) => r.batch_id));
+  check(capped.length === 4 && capped.every((r) => r.images.length <= 8 && r.named.length === r.images.length),
+    'the shoes, the front and four style references still render - no view is sent more than eight images',
+    JSON.stringify(capped.map((r) => r.images.length)));
+  check(capSets.size === 2 && db.getProject(shoeProject).renders.length === 9, 'and none of the four failed',
+    `${db.getProject(shoeProject).renders.length} renders in ${capSets.size} sets`);
+  check(capped.every((r) => r.named.some((x) => x.label === 'shoes') && r.named.some((x) => x.label === 'fabric swatch')),
+    'it is the style references that give way, not the shoes or the cloth');
+  check(/2 style references left out/.test(capUi), 'and the page says how many were left out', capUi);
+  const used = Object.fromEntries(db.styleHistory(shoeClient).references.map((r) => [r.title, r.times_used]));
+  check(used['Ref A'] === 4 && used['Ref B'] === 4 && used['Ref C'] === 1 && !used['Ref D'],
+    'the client’s style history counts only the references that were sent', JSON.stringify(used));
+
+  log('\n=== shoes no longer on the order ===');
+  await openStep('Extras');
+  await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    [...document.querySelectorAll('.toggle-row')].find(r => r.firstElementChild?.firstElementChild?.textContent.trim() === 'Shoes')
+      ?.querySelector('[role=switch]')?.click();
+    await wait(900);
+    return true;
+  })()`);
+  await openStep('Preview');
+  const untickedPrompt = await js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    [...document.querySelectorAll('button')].find(b => b.textContent.includes('See the prompt')).click(); await wait(600);
+    const text = document.querySelector('.modal textarea')?.value ?? '';
+    [...document.querySelectorAll('.modal button')].find(b => b.textContent.trim() === 'Close')?.click();
+    return text;
+  })()`);
+  check(untickedPrompt.includes('THE SHOT') && !/\(shoes\)/.test(untickedPrompt),
+    'untick Shoes and the photo stops going into the render');
+  check(db.getProject(shoeProject).photos.some((p) => p.slot === 'shoes'), 'though it stays on file, for when they are ticked again');
+
+  log('\n=== a second person on the order ===');
+  const bestMan2 = db.upsertClient({ name: 'Second', surname: 'Shoes', contact: '', email: '' });
+  const suitB2 = db.addSuit({ projectId: shoeProject, clientId: bestMan2, label: 'Best man' });
+  await js(`window.gd.photos.add({ projectId: ${shoeProject}, suitId: ${suitB2}, clientId: ${bestMan2}, slot: 'shoes', dataUrl: '${png}' })`);
+  const bySuit = db.getProject(shoeProject).photos.filter((p) => p.slot === 'shoes');
+  check(bySuit.filter((p) => p.suit_id === groomSuitId).length === 1 && bySuit.filter((p) => p.suit_id === suitB2).length === 1,
+    'the second person’s shoes are kept with their own suit, and do not replace the groom’s', JSON.stringify(bySuit.map((p) => p.suit_id)));
 
   log(`\n${fail === 0 ? 'ALL RENDER PIPELINE CHECKS PASSED' : 'FAILED'} \u2014 ${pass} passed, ${fail} failed`);
   app.exit(fail === 0 ? 0 : 1);

@@ -194,6 +194,186 @@ export function extractPalette(imageData, count = 5) {
     });
 }
 
+/** sRGB to CIE Lab (D65), the space in which distance follows what the eye sees. */
+export function rgbToLab({ r, g, b }) {
+  const lin = (c) => {
+    const v = c / 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  const R = lin(r), G = lin(g), B = lin(b);
+  const x = (0.4124564 * R + 0.3575761 * G + 0.1804375 * B) / 0.95047;
+  const y = 0.2126729 * R + 0.7151522 * G + 0.072175 * B;
+  const z = (0.0193339 * R + 0.119192 * G + 0.9503041 * B) / 1.08883;
+  const f = (t) => (t > 216 / 24389 ? Math.cbrt(t) : ((24389 / 27) * t + 16) / 116);
+  const fx = f(x), fy = f(y), fz = f(z);
+  return { L: 116 * fy - 16, a: 500 * (fx - fy), b: 200 * (fy - fz) };
+}
+
+/**
+ * How different two colours of cloth look. Lightness counts half, as it does
+ * in the textile trade's own colour-difference measure (CMC 2:1): the same
+ * navy in light and in the shade of a fold is one colour, while navy and gold
+ * are two at any brightness.
+ */
+export function clothDistance(p, q) {
+  return Math.hypot((p.L - q.L) / 2, p.a - q.a, p.b - q.b);
+}
+
+/** A repeatable sequence of positions, so one photograph always measures the same. */
+function seeded(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * The colours of a cloth and how much of it each one covers, measured from the
+ * swatch photograph - for the render prompt, which sends the swatch itself but
+ * cannot rely on it alone.
+ *
+ * A close-up shows the colours, but not how much of the finished suit an
+ * accent should cover, and left to judge that afresh for every view the model
+ * does not judge it the same way twice. One set came back with a gold check
+ * covering a twentieth of the trousers from the front, side and back, and a
+ * third of them at three-quarters, in a brighter, warmer gold. Stating the
+ * measured colours and shares gives every view the same answer to work from.
+ *
+ * Read from the middle of the photograph only - the edges are where a table,
+ * a hand or a label would be. Points are taken at seeded random positions
+ * rather than on a grid, which a striped cloth whose spacing happened to match
+ * the grid could fool entirely, and at full resolution, since shrinking the
+ * photograph first would blend a fine line into the ground around it. They are
+ * clustered in Lab, clusters that are the same colour of cloth are merged, and
+ * anything covering less than `minShare` is dropped as noise - a highlight, a
+ * stray thread. Shares are of the whole sample, so they can add up to a little
+ * under one.
+ */
+export function fabricPalette(imageData, { crop = 0.6, samples = 4000, k = 6, merge = 14, minShare = 0.02, max = 4 } = {}) {
+  const { width, height, data } = imageData;
+  if (!width || !height) return [];
+  const x0 = Math.floor((width * (1 - crop)) / 2);
+  const y0 = Math.floor((height * (1 - crop)) / 2);
+  const w = Math.max(1, Math.round(width * crop));
+  const h = Math.max(1, Math.round(height * crop));
+
+  const random = seeded(width * 73856093 ^ height * 19349663);
+  const points = [];
+  for (let n = 0; n < samples; n++) {
+    const px = x0 + Math.min(w - 1, Math.floor(random() * w));
+    const py = y0 + Math.min(h - 1, Math.floor(random() * h));
+    const i = (py * width + px) * 4;
+    if (data[i + 3] < 200) continue;
+    const rgb = { r: data[i], g: data[i + 1], b: data[i + 2] };
+    points.push({ ...rgbToLab(rgb), rgb });
+  }
+  if (!points.length) return [];
+
+  // Started from the mean, then from whichever point is furthest from every
+  // centre so far - so a small accent gets a centre of its own, rather than
+  // depending on luck to be picked.
+  const mean = (list) => {
+    const m = { L: 0, a: 0, b: 0 };
+    for (const p of list) { m.L += p.L; m.a += p.a; m.b += p.b; }
+    return { L: m.L / list.length, a: m.a / list.length, b: m.b / list.length };
+  };
+  const centres = [mean(points)];
+  const nearest = points.map((p) => clothDistance(p, centres[0]));
+  while (centres.length < k) {
+    let far = 0, at = -1;
+    for (let i = 0; i < points.length; i++) if (nearest[i] > far) { far = nearest[i]; at = i; }
+    if (at < 0 || far < merge / 2) break;
+    const c = { L: points[at].L, a: points[at].a, b: points[at].b };
+    centres.push(c);
+    for (let i = 0; i < points.length; i++) nearest[i] = Math.min(nearest[i], clothDistance(points[i], c));
+  }
+
+  const owner = new Int32Array(points.length).fill(-1);
+  for (let round = 0; round < 20; round++) {
+    let moved = 0;
+    for (let i = 0; i < points.length; i++) {
+      let best = 0, bestD = Infinity;
+      for (let c = 0; c < centres.length; c++) {
+        const d = clothDistance(points[i], centres[c]);
+        if (d < bestD) { bestD = d; best = c; }
+      }
+      if (owner[i] !== best) { owner[i] = best; moved++; }
+    }
+    for (let c = 0; c < centres.length; c++) {
+      const members = points.filter((_, i) => owner[i] === c);
+      if (members.length) centres[c] = mean(members);
+    }
+    if (!moved) break;
+  }
+
+  let groups = centres.map((centre, c) => {
+    const members = points.filter((_, i) => owner[i] === c);
+    return { centre, members };
+  }).filter((g) => g.members.length);
+
+  // The same colour of cloth found twice - in light and in shade - is one colour.
+  for (;;) {
+    let pair = null, closest = merge;
+    for (let i = 0; i < groups.length; i++) {
+      for (let j = i + 1; j < groups.length; j++) {
+        const d = clothDistance(groups[i].centre, groups[j].centre);
+        if (d < closest) { closest = d; pair = [i, j]; }
+      }
+    }
+    if (!pair) break;
+    const members = [...groups[pair[0]].members, ...groups[pair[1]].members];
+    groups = groups.filter((_, i) => !pair.includes(i)).concat({ centre: mean(members), members });
+  }
+  for (const g of groups) g.weight = g.members.length;
+
+  // A fine line is mostly edge: pixels part gold and part navy, which measure
+  // as a third colour between the two - and on a thin enough line, as more of
+  // it than the gold itself. Reported as such, the cloth would be described
+  // with an olive it does not have, and the gold would be short by however
+  // much of it was in the edges. So a group lying on the line between two
+  // others is a blend of them, and is shared back out in the proportion it
+  // sits between them. The ground colour is never a blend: it is the cloth.
+  const flat = (p) => [p.L / 2, p.a, p.b];
+  const ground = groups.reduce((top, g) => (g.weight > top.weight ? g : top), groups[0]);
+  for (const blend of [...groups].sort((p, q) => p.weight - q.weight)) {
+    if (blend === ground) continue;
+    const others = groups.filter((g) => g !== blend);
+    let best = null;
+    for (let i = 0; i < others.length; i++) {
+      for (let j = i + 1; j < others.length; j++) {
+        const [A, B, C] = [others[i], others[j], blend].map((g) => flat(g.centre));
+        const AB = B.map((v, n) => v - A[n]);
+        const length = AB.reduce((s, v) => s + v * v, 0);
+        if (!length) continue;
+        const t = C.reduce((s, v, n) => s + (v - A[n]) * AB[n], 0) / length;
+        if (t <= 0.1 || t >= 0.9) continue;
+        const off = Math.hypot(...C.map((v, n) => v - (A[n] + t * AB[n])));
+        if (off < merge / 2 && (!best || off < best.off)) best = { a: others[i], b: others[j], t, off };
+      }
+    }
+    if (!best) continue;
+    best.a.weight += blend.weight * (1 - best.t);
+    best.b.weight += blend.weight * best.t;
+    groups = groups.filter((g) => g !== blend);
+  }
+
+  return groups
+    .map(({ members, weight }) => {
+      const rgb = { r: 0, g: 0, b: 0 };
+      for (const p of members) { rgb.r += p.rgb.r; rgb.g += p.rgb.g; rgb.b += p.rgb.b; }
+      const avg = { r: rgb.r / members.length, g: rgb.g / members.length, b: rgb.b / members.length };
+      return { hex: toHex(avg), share: weight / points.length };
+    })
+    .filter((c) => c.share >= minShare)
+    .sort((a, b) => b.share - a.share)
+    .slice(0, max)
+    .map((c) => ({ ...c, share: Number(c.share.toFixed(3)) }));
+}
+
 /** Rough, human-readable name for a swatch colour, for notes and prompts. */
 export function nameColour(hex) {
   const rgb = hexToRgb(hex);

@@ -5,6 +5,7 @@ import { AddOptionTile, OptionEditor } from './AddOption.jsx';
 import { fileToDataUrl } from '../lib/image.js';
 import { useToast, ConfirmButton } from './ui.jsx';
 import DownloadButton from './DownloadButton.jsx';
+import PhotoSlot from './PhotoSlot.jsx';
 import { formatMoney } from '../lib/pricing.js';
 import { sketchFor } from './sketches.jsx';
 
@@ -154,6 +155,10 @@ export default function Field({ field, spec, overrides = {}, onChange, onCatalog
     return <ImageField field={field} media={media} />;
   }
 
+  if (field.type === 'photo') {
+    return <SinglePhotoField field={field} media={media} />;
+  }
+
   if (field.type === 'colour') {
     return <ColourField field={field} value={value} onChange={onChange} />;
   }
@@ -240,6 +245,28 @@ function ColourField({ field, value, onChange }) {
  * lining collage is artwork, not a choice. Several can be added, because a
  * collage is usually assembled from more than one picture.
  */
+/**
+ * One photograph that stands for something in the render - the shoes. The
+ * same card the Capture and Cloth steps use, camera included, because it is
+ * the same job: take one picture, and take it again if it is wrong.
+ */
+function SinglePhotoField({ field, media }) {
+  if (!media?.photoFor) return null;
+  const photo = media.photoFor(field.slot);
+  return (
+    <div className="field">
+      <div className="photo-grid">
+        <PhotoSlot
+          slot={{ key: field.slot, label: field.label, hint: field.hint }}
+          photo={photo ? { ...photo, url: media.urlFor(photo.filename) } : null}
+          onSave={({ dataUrl, meta }) => media.add({ slot: field.slot, dataUrl, meta })}
+          onClear={(p) => media.remove(p.id)}
+        />
+      </div>
+    </div>
+  );
+}
+
 function ImageField({ field, media }) {
   const inputRef = useRef(null);
   const [busy, setBusy] = useState(false);

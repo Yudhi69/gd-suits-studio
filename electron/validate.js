@@ -129,7 +129,7 @@ function modelName(value, field = 'model') {
   return v;
 }
 
-const PHOTO_SLOTS = ['front', 'side', 'back', 'face', 'fabric', 'lining', 'lining_collage', 'inspiration', 'fitting'];
+const PHOTO_SLOTS = ['front', 'side', 'back', 'face', 'fabric', 'lining', 'lining_collage', 'tie_reference', 'shoes', 'inspiration', 'fitting'];
 const GARMENTS = ['jacket', 'waistcoat', 'pants', 'shirt', ''];
 const REFERENCE_KINDS = ['style', 'fabric', 'lining', 'fit'];
 const PROJECT_STATUSES = [

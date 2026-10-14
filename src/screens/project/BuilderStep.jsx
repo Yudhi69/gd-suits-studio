@@ -6,13 +6,16 @@ import NotesPanel from '../../components/NotesPanel.jsx';
 
 /** Renders any catalog step. All the builder screens are this one component. */
 export default function BuilderStep({ ctx, step, overrides, onCatalogChanged }) {
-  const { project, updateSpec, addNote, deleteNote, savePhoto, deletePhoto } = ctx;
+  const { project, updateSpec, addNote, deleteNote, savePhoto, deletePhoto, photoBySlot } = ctx;
   const spec = ctx.spec ?? project.spec ?? {};
 
   // Image fields attach files to the order rather than setting a spec value,
   // so they get the media handlers instead of onChange.
   const media = {
     photosFor: (slot) => project.photos.filter((p) => p.slot === slot && !p.fitting_id),
+    // A single photograph, owned the way the render reads it: the shoes on the
+    // best man's page are the best man's.
+    photoFor: (slot) => photoBySlot?.(slot) ?? null,
     urlFor: (filename) => projectMedia(project.id, filename),
     add: ({ slot, dataUrl, meta }) => savePhoto({ slot, dataUrl, meta }),
     remove: (id) => deletePhoto(id),

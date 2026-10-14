@@ -556,6 +556,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .swatch-lg { width: 62px; height: 62px; border-radius: 9px; }
 .swatch-row { display: flex; gap: 7px; flex-wrap: wrap; }
+.swatch-sm { width: 18px; height: 18px; border-radius: 5px; }
+
+.measured-cloth { display: grid; gap: 8px; margin-top: 16px; }
+.measured-cloth-row { display: flex; gap: 8px 16px; flex-wrap: wrap; }
+.measured-cloth-colour { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; white-space: nowrap; }
 
 /* -------------------------------------------------------------- renders */
 
