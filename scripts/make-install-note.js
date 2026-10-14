@@ -15,7 +15,8 @@
  * in the repository: there is one source, and this is a rendering of it.
  *
  * The converter handles exactly what that file uses - headings, paragraphs,
- * bold, emphasis, inline code, tables, ordered and unordered lists, and rules.
+ * bold, emphasis, inline code, tables, ordered and unordered lists, quotes and
+ * rules.
  * It is not a markdown parser and is not trying to be; anything it does not
  * recognise would come out as plain text, which the check at the end catches.
  */
@@ -50,17 +51,26 @@ function toHtml(markdown) {
   const lines = markdown.split('\n');
   const out = [];
   let paragraph = [];
+  let quote = [];
   let list = null;
+  // The current list item as written, so a bold or a link that runs onto its
+  // continuation line is marked up whole rather than in two broken halves.
+  let item = null;
 
   const flushParagraph = () => {
     if (paragraph.length) out.push(`<p>${inline(paragraph.join(' '))}</p>`);
     paragraph = [];
   };
+  const flushQuote = () => {
+    if (quote.length) out.push(`<blockquote><p>${inline(quote.join(' '))}</p></blockquote>`);
+    quote = [];
+  };
   const flushList = () => {
     if (list) out.push(`</${list}>`);
     list = null;
+    item = null;
   };
-  const flush = () => { flushParagraph(); flushList(); };
+  const flush = () => { flushParagraph(); flushQuote(); flushList(); };
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -76,6 +86,15 @@ function toHtml(markdown) {
     }
 
     if (/^---+\s*$/.test(line)) { flush(); out.push('<hr>'); continue; }
+
+    // Words quoted exactly as they appear on screen.
+    const quoted = /^>\s?(.*)$/.exec(line);
+    if (quoted) {
+      flushParagraph();
+      flushList();
+      quote.push(quoted[1].trim());
+      continue;
+    }
 
     if (isTableRow(line)) {
       flush();
@@ -97,14 +116,15 @@ function toHtml(markdown) {
       flushParagraph();
       const want = ordered ? 'ol' : 'ul';
       if (list !== want) { flushList(); out.push(`<${want}>`); list = want; }
-      out.push(`<li>${inline((ordered ? ordered[2] : bullet[1]))}</li>`);
+      item = ordered ? ordered[2] : bullet[1];
+      out.push(`<li>${inline(item)}</li>`);
       continue;
     }
 
     // A continuation line of a list item, indented under it.
-    if (list && /^\s{2,}\S/.test(line)) {
-      const last = out.pop();
-      out.push(last.replace(/<\/li>$/, ` ${inline(line.trim())}</li>`));
+    if (list && item !== null && /^\s{2,}\S/.test(line)) {
+      item += ` ${line.trim()}`;
+      out[out.length - 1] = `<li>${inline(item)}</li>`;
       continue;
     }
 
@@ -132,6 +152,9 @@ const STYLE = `
   th { font-size: 13px; text-transform: uppercase; letter-spacing: 1.4px; color: #5d574c; }
   ol, ul { margin: 0 0 16px; padding-left: 22px; }
   li { margin: 0 0 7px; }
+  blockquote { margin: 0 0 16px; padding: 10px 16px; border-left: 3px solid #c9a227;
+               background: #ebe8e1; border-radius: 0 6px 6px 0; }
+  blockquote p { margin: 0; }
   .mark { display: flex; align-items: baseline; gap: 12px; margin-bottom: 30px;
           font-size: 13px; letter-spacing: 3px; text-transform: uppercase; color: #8a6d14; }
   @media print { body { background: #fff; } main { padding: 0; } }
@@ -149,15 +172,22 @@ ${toHtml(markdown)}
 </main></body></html>`;
 }
 
+/**
+ * Anything the converter did not understand, still sitting in the page as
+ * literal markdown. Cheaper to notice here than in the tailor's browser.
+ */
+function leftovers(html) {
+  const found = html.replace(/<[^>]+>/g, '').match(/\*\*|^#{1,4}\s|\|\s*-{3,}|^&gt;\s/gm);
+  return found ? [...new Set(found)] : [];
+}
+
 if (require.main === module) {
   const out = process.argv[2] ?? path.join(__dirname, '..', 'release', 'Read me first.html');
   const html = build(fs.readFileSync(SOURCE, 'utf8'));
 
-  // Anything the converter did not understand would be sitting in the page as
-  // literal markdown. Cheaper to notice here than in the tailor's browser.
-  const leftovers = html.replace(/<[^>]+>/g, '').match(/\*\*|^#{1,4}\s|\|\s*-{3,}/gm);
-  if (leftovers) {
-    console.error(`unconverted markdown left on the page: ${[...new Set(leftovers)].join(' ')}`);
+  const left = leftovers(html);
+  if (left.length) {
+    console.error(`unconverted markdown left on the page: ${left.join(' ')}`);
     process.exit(1);
   }
 
@@ -166,4 +196,4 @@ if (require.main === module) {
   console.log(`wrote ${path.relative(process.cwd(), out)}  ${(html.length / 1024).toFixed(1)} kB`);
 }
 
-module.exports = { build, toHtml, inline };
+module.exports = { build, toHtml, inline, leftovers, SOURCE };
