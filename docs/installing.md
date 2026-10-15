@@ -37,17 +37,38 @@ The same About This Mac window shows yours, under the name - for example
    **Applications**. Drag the icon onto Applications.
 3. Open Applications and find GD Suits Studio.
 4. **The first time only:** hold Control and click the icon, then choose
-   **Open** from the menu that appears. A box says the app cannot be checked
-   for malicious software. Click **Open**.
+   **Open** from the menu that appears. The same warning appears, but this
+   time it has an **Open** button. Click **Open**.
 
-That Control-click matters. Double-clicking the first time gives you a box
-with no Open button at all, and it looks like the app is broken.
+That Control-click matters. Double-clicking the first time gives you this
+box, with no Open button at all:
 
-If the box still has no **Open** button, go to the Apple menu → **System
-Settings** → **Privacy & Security**, scroll down, and click **Open Anyway**
-beside the message about GD Suits Studio.
+> "GD Suits Studio" can't be opened because Apple cannot check it for
+> malicious software. This software needs to be updated. Contact the
+> developer for more information.
 
-From then on it opens normally, from the dock like anything else.
+Nothing is wrong with the app, and you do not need a newer copy. That
+wording is what macOS shows for any app Apple has not checked itself. Click
+**Cancel**, not Move to Trash, and do the Control-click.
+
+**If there is still no Open button**, use the Apple menu. Do this within an
+hour of trying to open the app, because the button below only appears
+for an hour after a blocked attempt.
+
+- **macOS Catalina, Big Sur or Monterey** (10.15, 11 and 12): **System
+  Preferences** → **Security & Privacy** → the **General** tab. Near the
+  bottom, beside the message about GD Suits Studio, click **Open Anyway**.
+  If it is greyed out, first click the padlock in the bottom left corner and
+  type your Mac password.
+- **macOS Ventura or newer** (13 and up): **System Settings** → **Privacy &
+  Security**. Scroll down and click **Open Anyway** beside the message about
+  GD Suits Studio.
+
+Then click **Open** in the box that follows. On macOS 15 and newer the
+Control-click no longer offers Open, so this is the way in from the start.
+
+You only do this once. From then on it opens normally, from the dock like
+anything else.
 
 ### On Windows
 
@@ -166,8 +187,14 @@ downloads. That is deliberate.
 
 ## 6. If something goes wrong
 
-**It will not open on a Mac, and Control-click did not help.** System Settings
-→ Privacy & Security → **Open Anyway**.
+**It will not open on a Mac, and Control-click did not help.** Try to open it
+once, then go to **Open Anyway**: System Preferences → Security & Privacy →
+General on macOS Catalina, Big Sur and Monterey, or System Settings → Privacy &
+Security on anything newer. Section 2 has the detail.
+
+**It says it "needs to be updated" or "cannot check it for malicious
+software".** That is the same first-time warning, not a problem with the
+version you have. See section 2.
 
 **It opens to a blank window.** Close it and open it again. If it happens
 twice, that is a fault worth reporting — say what you were doing just before.
