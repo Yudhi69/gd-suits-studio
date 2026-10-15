@@ -5,6 +5,17 @@ import { buildRenderPrompt, buildTweakPrompt, VIEWS, describeGarment } from '../
 import { Banner, Modal, Spinner, useToast, ConfirmButton } from '../../components/ui.jsx';
 import ReferenceLibrary from '../../components/ReferenceLibrary.jsx';
 import NotesPanel from '../../components/NotesPanel.jsx';
+import useSwatchPalette from '../../lib/useSwatchPalette.js';
+
+/**
+ * The most images one render is sent. The main process refuses more, and past
+ * a handful the model gives each one less attention - so when there are more,
+ * the ones that matter least are left out, not the render.
+ */
+const MAX_REFS = 8;
+
+/** A render, as the reference that tells the other views what the front looks like. */
+const asAnchor = (render) => (render ? { filename: render.filename, mime: 'image/png' } : null);
 
 /**
  * Generates the client-facing visualisation and then refines it.
@@ -59,6 +70,14 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
   const inBatch = useMemo(() => renders.filter((r) => r.batch_id === batch), [renders, batch]);
   const active = inBatch.find((r) => r.view === view) ?? null;
   const rendered = useMemo(() => new Set(inBatch.map((r) => r.view)), [inBatch]);
+  // The front of the set on screen, newest first like everything else in it.
+  const frontOf = useCallback(
+    (batchId) => (batchId ? renders.find((r) => r.batch_id === batchId && r.view === 'front') ?? null : null),
+    [renders]
+  );
+
+  const swatch = photoBySlot('fabric');
+  const palette = useSwatchPalette(swatch ? projectMedia(project.id, swatch.filename) : null);
 
   /**
    * Reference images for one view, in the order the prompt describes them.
@@ -67,8 +86,12 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
    * the whole set needs each view's own photographs: the back view leads with
    * the photograph of the client's back, and sending the front one instead is
    * how every view used to come back front-on.
+   *
+   * `anchor` is the front render of the same set, sent with every other view
+   * so that all four show one cloth. The order is also the order of what
+   * matters: past MAX_REFS, the style references go first, then the lining.
    */
-  const refsForView = useCallback((which) => {
+  const refsForView = useCallback((which, anchor = null) => {
     const out = [];
     const face = photoBySlot('face');
     const front = photoBySlot('front');
@@ -82,6 +105,11 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
 
     const fabric = photoBySlot('fabric');
     if (fabric) out.push({ ...fabric, role: 'swatch', label: 'fabric', slot: 'fabric' });
+    if (anchor && which !== 'front') out.push({ ...anchor, role: 'consistency', label: 'front view', slot: 'render' });
+    // Only while shoes are part of the order: untick them in Extras and the
+    // photograph stays on file but stops going into the picture.
+    const shoes = spec.shoes ? photoBySlot('shoes') : null;
+    if (shoes) out.push({ ...shoes, role: 'shoes', label: 'shoes', slot: 'shoes' });
     const lining = photoBySlot('lining');
     if (lining) out.push({ ...lining, role: 'swatch', label: 'lining', slot: 'lining' });
 
@@ -95,14 +123,15 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
           role: 'reference',
           label: ref.title || 'style reference',
           slot: 'reference',
+          referenceId: ref.id,
         });
       }
     }
-    return out;
-  }, [selectedRefs, references, photoBySlot, project.client_id]);
+    return out.slice(0, MAX_REFS);
+  }, [selectedRefs, references, photoBySlot, project.client_id, spec.shoes]);
 
   const promptForView = useCallback(
-    (which) =>
+    (which, anchor = null) =>
       buildRenderPrompt({
         spec,
         client: { name: project.name, surname: project.surname },
@@ -114,15 +143,22 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
           posture: analysis.body?.posture,
         },
         view: which,
-        refs: refsForView(which),
+        refs: refsForView(which, anchor),
         notes: direction,
         steps,
+        cloth: { palette: palette ?? [], sampled: analysis.fabricColour?.hex },
       }),
-    [spec, analysis, refsForView, direction, project.name, project.surname, steps]
+    [spec, analysis, refsForView, direction, project.name, project.surname, steps, palette]
   );
 
-  const renderRefs = useMemo(() => refsForView(view), [refsForView, view]);
-  const prompt = useMemo(() => promptForView(view), [promptForView, view]);
+  // What "Just the side" would send: this set's own front goes with it.
+  const anchor = view === 'front' ? null : asAnchor(frontOf(batch));
+  const renderRefs = useMemo(() => refsForView(view, anchor), [refsForView, view, anchor?.filename]);
+  const prompt = useMemo(() => promptForView(view, anchor), [promptForView, view, anchor?.filename]);
+  // Counted against the references that still exist: one deleted from the
+  // library after it was picked was not left out by the limit.
+  const leftOut = selectedRefs.filter((id) => references.some((r) => r.id === id)).length
+    - renderRefs.filter((r) => r.referenceId).length;
 
   const clauses = describeGarment(spec, steps);
   const missingBase = !spec.suitType;
@@ -148,9 +184,16 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
    * `into` is the set they join. A whole set starts a new one; redoing a
    * single view joins the set it is correcting, so the tailor still has one
    * render with four pictures in it rather than a loose image beside it.
+   *
+   * The front goes first, and every other view is sent it. Drawn separately
+   * from the same swatch, four views were four guesses at the cloth - the
+   * gold that was a fine line from the front came back in patches at
+   * three-quarters. Drawn to match the front, they show one suit. A view
+   * redone on its own matches the front of the set it joins.
    */
   async function renderViews(views, overridePrompt, into) {
     const batchId = into ?? crypto.randomUUID();
+    let front = into ? asAnchor(frontOf(into)) : null;
     setBusy(true);
     const failed = [];
     let succeeded = 0;
@@ -160,25 +203,30 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
         const which = views[i];
         setProgress({ view: which, done: i, total: views.length });
         try {
+          const anchor = which === 'front' ? null : front;
+          const refs = refsForView(which, anchor);
           // A hand-edited prompt belongs to the view it was written for. The
           // others are still described by the spec.
           const usePrompt =
-            overridePrompt ?? (promptOverride !== null && which === view ? promptOverride : promptForView(which));
+            overridePrompt ?? (promptOverride !== null && which === view ? promptOverride : promptForView(which, anchor));
           const result = await api.ai.render({
             projectId: project.id,
             suitId: ctx.activeSuitId ?? undefined,
             batchId,
             prompt: usePrompt,
             view: which,
-            refs: refsForView(which).map((r) => ({
+            refs: refs.map((r) => ({
               filename: r.filename,
               mime: r.mime,
               scope: r.scope ?? `project-${project.id}`,
             })),
-            referenceIds: selectedRefs,
+            // Only the references that were actually sent count towards the
+            // client's style history.
+            referenceIds: refs.filter((r) => r.referenceId).map((r) => r.referenceId),
           });
           succeeded++;
           last = { id: result.id, view: which };
+          if (which === 'front') front = asAnchor(result);
         } catch (err) {
           failed.push({ view: which, message: messageFor(err) });
           if (succeeded === 0) break;
@@ -399,6 +447,11 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
             <div className="card-head"><h3>Going into the render</h3></div>
             <div className="card-pad">
               <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>Reference photos ({renderRefs.length})</div>
+              {leftOut > 0 && (
+                <p className="tiny faint" style={{ marginTop: 0 }}>
+                  {leftOut} style reference{leftOut === 1 ? '' : 's'} left out - a render takes {MAX_REFS} images at most.
+                </p>
+              )}
               {renderRefs.length === 0 ? (
                 <p className="tiny faint">No photos captured yet - the render will be generic.</p>
               ) : (

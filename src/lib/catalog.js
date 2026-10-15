@@ -630,6 +630,9 @@ export const STEPS = [
 
       { id: 'shoes', label: 'Shoes', type: 'toggle', prompt: (v, s) => (v ? `dress shoes${s.shoesNote ? ` - ${s.shoesNote}` : ''}` : null) },
       { id: 'shoesNote', label: 'Shoe detail', type: 'text', showIf: (s) => s.shoes, placeholder: 'Black oxford, size 9...', prompt: () => null },
+      { id: 'shoesPhoto', label: 'Photo of the shoes', type: 'photo', slot: 'shoes', showIf: (s) => s.shoes,
+        hint: 'The pair the client will wear. It goes into the render, so the shoes in the picture are theirs.',
+        prompt: () => null },
       { id: 'socks', label: 'Socks', type: 'toggle', prompt: (v, s) => (v ? `socks${s.socksNote ? ` - ${s.socksNote}` : ''}` : null) },
       { id: 'socksNote', label: 'Sock detail', type: 'text', showIf: (s) => s.socks, placeholder: 'Burgundy, mid-calf...', prompt: () => null },
     ],

@@ -6,13 +6,15 @@ import PhotoSlot from '../../components/PhotoSlot.jsx';
 import ColourSampler from '../../components/ColourSampler.jsx';
 import NotesPanel from '../../components/NotesPanel.jsx';
 import { Banner, Modal, useToast } from '../../components/ui.jsx';
+import useSwatchPalette from '../../lib/useSwatchPalette.js';
 
 const SWATCH_SLOTS = PHOTO_SLOTS.filter((s) => s.role === 'swatch');
 
 /**
  * The cloth and the lining. Photographing the actual bolt is what makes the
  * render match what will be cut - the swatch photo is sent to the model as a
- * reference, and the sampled colour is named in the prompt as a cross-check.
+ * reference, with the colours measured from it and the share of each, and the
+ * sampled colour stands in for the measured one it matches.
  */
 export default function FabricStep({ ctx }) {
   const { project, savePhoto, deletePhoto, addNote, deleteNote, updateAnalysis, photoBySlot } = ctx;
@@ -20,6 +22,8 @@ export default function FabricStep({ ctx }) {
   const toast = useToast();
 
   const analysis = project.analysis ?? {};
+  const fabric = photoBySlot('fabric');
+  const measured = useSwatchPalette(fabric ? projectMedia(project.id, fabric.filename) : null);
 
   return (
     <div className="stack">
@@ -84,6 +88,28 @@ export default function FabricStep({ ctx }) {
                   );
                 })}
               </div>
+
+              {/* What the render is told about the cloth. Shown so a photo
+                  that caught the table as well as the cloth is noticed here,
+                  rather than as a brown suit. */}
+              {measured?.length > 0 && (
+                <div className="measured-cloth">
+                  <div className="small" style={{ fontWeight: 600 }}>Measured from the fabric photo</div>
+                  <div className="measured-cloth-row">
+                    {measured.map((c, i) => (
+                      <span key={`${c.hex}-${i}`} className="measured-cloth-colour">
+                        <span className="swatch swatch-sm" style={{ background: c.hex }} />
+                        <span style={{ textTransform: 'capitalize' }}>{nameColour(c.hex)}</span>
+                        <span className="faint">{Math.round(c.share * 100)}%</span>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="tiny faint">
+                    Every view of the render is told these shares, so the trousers carry as much of each colour as
+                    the jacket. If a colour here is not in the cloth, retake the photo closer.
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

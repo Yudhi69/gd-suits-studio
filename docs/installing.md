@@ -129,7 +129,7 @@ The steps, in the order they usually happen:
 | **Base Garment** | Two-piece, three-piece, jacket only, trousers only |
 | **Lining & Stitching** | Lining cloth and colour, thread |
 | **Jacket**, **Waistcoat**, **Pants** | Lapels, buttons, pockets, vents, cuffs - each with its own page |
-| **Extras** | Shirt, tie, shoes, pocket square, anything else |
+| **Extras** | Shirt, tie, shoes, pocket square, anything else - and a photo of the shoes |
 | **Detail Customisation** | Monograms, lapel pins, the small things |
 | **Capture** | Photographs of the client: front, side, back, face |
 | **Cloth** | A photograph of the fabric and the lining |
@@ -153,6 +153,17 @@ between the four tabs to turn him round. If one view comes out wrong, *Just
 the front* redoes that one without paying for the other three. **Refine this
 render** changes the picture you are looking at while keeping his face and
 pose - "wider lapels", "a shade darker".
+
+The front is drawn first, and the other three are drawn to match it, so the
+cloth is the same all the way round - a gold check stays as fine on the
+trousers at an angle as it is on the jacket from the front. The **Cloth** page
+shows the colours measured from the fabric photo and how much of each the
+cloth has; that is what every view is told. If it lists a colour that is not
+in the cloth - the table it was lying on - retake the photo closer.
+
+**The shoes.** Tick **Shoes** on the **Extras** page and a place for a photo
+of them appears. Take one with the camera or choose a file, and the render
+puts exactly that pair on the client.
 
 This is the one part that needs the internet and an AI key. Everything else
 works with no signal at all.
