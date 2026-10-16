@@ -214,21 +214,33 @@ anything by itself: it tells you it is due and opens the draft for you.
 
 **Settings → Updates → Check for updates.**
 
-If there is a newer version it tells you what changed. **Download** fetches it
-into your Downloads folder and then offers to show you where it is. Install it
-the same way you installed this copy.
+If there is a newer version it tells you what changed. Press **Install**: it
+downloads the new version, checks it is genuine, and gets it ready. Then press
+**Restart now** and the app reopens as the new version. There is nothing else
+to do - no file to find, nothing to drag. If you are busy, carry on working:
+the update goes in the next time you quit the app.
 
-Until you install it, this copy is still the older version, so checking again
-still finds the update - but it shows the file it already saved rather than
-downloading it again. If you are on the newest version it says **Up to date**
-and there is nothing to download.
+On a Mac, the first time the new version opens it may ask for your password,
+so it can read the keys you saved in Settings. Type it and choose **Always
+Allow**.
+
+A copy you opened straight from the installer disk cannot replace itself.
+Drag it into Applications and open it from there first. The same goes for the
+copy you have now if it is older than this way of updating: install the next
+version by hand once, as you installed this one, and after that updates
+install themselves.
+
+If an update cannot install itself it says why, and offers **Download**
+instead, which saves it to your Downloads folder for you to install the same
+way you installed this copy. If you are on the newest version it says **Up to
+date** and there is nothing to do.
 
 **Your orders, clients, photographs and measurements are not touched by an
 update.** They live separately from the app itself. You can uninstall the app
 entirely, reinstall it, and everything is still there.
 
-The app does not install updates by itself, and it never opens what it
-downloads. That is deliberate.
+The app only installs its own releases, only after checking each one is
+exactly what was published, and never anything from anywhere else.
 
 ---
 

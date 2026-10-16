@@ -279,25 +279,60 @@ the judgement this app exists to support.
 against a release feed, shows what changed, and offers the download built for
 that machine (arm64 vs Intel vs Windows is chosen automatically).
 
-It **checks and notifies rather than installing by itself**, and that is a
-constraint rather than a preference. Squirrel — the machinery behind Electron's
-auto-update — verifies the code signature of the replacement bundle, and these
-builds are ad-hoc signed because there is no Apple Developer ID yet. A silent
-self-update would simply fail on macOS. Handing the download to the browser
-means the tailor sees what they are installing, which is the right default for
-an app that cannot yet prove its own provenance. Once the app is signed,
-`electron-updater` drops in behind the same button — the feed shape is already
-what it expects.
+**Install** then **Restart now**, and the next copy that opens is the new
+version: nothing to find in Downloads, nothing to drag, no installer to click
+through. **Later** works too - an update made ready goes in the next time the
+app quits.
 
-Nothing this app downloads is ever executed by this app.
+Electron's own updater (Squirrel / `electron-updater`) cannot do this here:
+Squirrel only accepts a replacement signed by the same Apple Developer ID as
+the running copy, and these builds are ad-hoc signed. So `electron/installer.js`
+does what an installer would, and everything that lets the app run what it
+downloaded is a gate passed first, in the main process:
 
-A release is downloaded **once**. The copy that is running stays the old
-version until the new one is installed, so the release goes on being newer
-than it; the app remembers the installer it saved and, while that file is still
-in the Downloads folder exactly as it was checked, shows it ("Already in your
-Downloads folder") instead of offering the download again. Delete or change
-the file and the release is offered afresh. On the newest version, Updates says
-"Up to date" and offers nothing - and main refuses a download if asked anyway.
+- Only a release read from **this repository's own feed**, whose file is one of
+  that repository's release files (checked after the URL is normalised, so
+  `../` cannot walk out of it). A custom update address still downloads, but
+  never installs itself - a setting is not a reason to run code.
+- Only when GitHub states the file's **SHA-256** and the download matches it.
+- **On a Mac**, the disk image is opened read-only and out of sight, the one
+  real `*.app` folder in it is copied out (a link is not followed), and it must
+  have this app's bundle identifier, exactly the version the release names, and
+  an intact code signature (`codesign --verify --deep --strict`) - checked when
+  it is unpacked and again at the moment it is handed over. A fixed `/bin/sh`
+  script, given the paths as arguments, waits for the app to exit, copies the
+  new bundle beside the old and swaps them with two renames in the same folder,
+  putting the old one back if the second fails, then reopens the app.
+- **On Windows**, the downloaded installer is hashed again at hand-over and run
+  silently as an update (`/S --updated --force-run`); it closes the app,
+  replaces it in place and reopens it.
+- Only in an **installed copy that this account can write to**. A copy run from
+  source, from the installer disk, from macOS's quarantine copy
+  (App Translocation) or from a folder the account cannot change says why and
+  falls back to the download.
+
+Anything that fails a gate falls back to the download the tailor installs by
+hand, with the reason shown. A version that was handed over and did not go in
+(the result is checked on the next launch) is offered as a download from then
+on rather than retried on every quit. The update is made ready inside the
+app's own data folder (`updates/`), never in Downloads, and the record of it is
+a setting a page can neither read nor write.
+
+On a Mac, the first launch after each update may ask for the keychain password
+once, so the new copy can read the saved API keys: ad-hoc signatures change
+with every build. The app says so and asks for **Always Allow**.
+
+Copies older than this change cannot install themselves - they update once by
+hand, the old way, and from then on they do.
+
+A release that is not installed in place is downloaded **once**. The copy that
+is running stays the old version until the new one is installed, so the
+release goes on being newer than it; the app remembers the installer it saved
+and, while that file is still in the Downloads folder exactly as it was
+checked, shows it ("Already in your Downloads folder") instead of offering the
+download again. Delete or change the file and the release is offered afresh.
+On the newest version, Updates says "Up to date" and offers nothing - and main
+refuses a download or an install if asked anyway.
 
 **Publishing a release.** Nothing to do by hand: every merge to `main` builds
 both platforms and publishes a release (`.github/workflows/release.yml`),
@@ -330,6 +365,7 @@ their clients is sent.
 npm test              # security, updates, catalog, workflow, then the render pipeline
 npm run test:security # proves the hardening actually blocks attacks
 npm run test:updates  # the update flow against a stubbed release feed
+npm run test:install  # an update installing itself, with real disk images and a real swap (macOS)
 npm run test:catalog  # adds a custom category and items, then checks the whole chain
 npm run test:models   # the model picker only offers models the key really has
 npm run test:workflow # units, custom options on built-in selectors, first/final fittings
@@ -350,7 +386,11 @@ tweak chains to its parent, and that reference usage is recorded.
 `test:security` attempts real attacks — path traversal, id injection, a
 disguised HTML payload, renderer network egress — and fails if any succeeds.
 `test:updates` covers version comparison, per-platform asset selection, and
-that a `file://` or `javascript:` download address is refused. `test:catalog`
+that a `file://` or `javascript:` download address is refused. `test:install`
+builds tiny ad-hoc signed app bundles and disk images, then runs the unpacking,
+the signature checks and the swap itself for real against folders of its own -
+nothing in Applications is touched; only the network and the final hand-over
+to the quitting app are stubbed. `test:catalog`
 adds a category and both kinds of item through the real UI, then checks they
 appear in the builder, charge the right amount and reach the spec sheet.
 

@@ -6,24 +6,18 @@ const path = require('node:path');
 const { app } = require('electron');
 
 /**
- * Update checking.
+ * Update checking and downloading.
  *
- * This deliberately checks and notifies rather than installing by itself.
- * Squirrel, the machinery behind Electron's auto-update, validates the code
- * signature of the replacement bundle, and these builds are ad-hoc signed
- * because there is no Apple Developer ID yet - a silent self-update would
- * simply fail on macOS. Handing the download to the browser instead means the
- * tailor sees what they are installing, which is the right default for an app
- * that cannot yet prove its own provenance.
+ * This module finds out whether there is a newer version and fetches its file,
+ * checked against the size and SHA-256 the release states. What happens to the
+ * file next is decided elsewhere: one of this app's own releases is put in
+ * place by installer.js, behind its own gates; anything else - a custom update
+ * address, a release with no fingerprint - is saved to the Downloads folder
+ * with no executable bit, for the tailor to install by hand.
  *
- * The app will, on request, fetch the file - that is a download, not an
- * install. It is written to disk with no executable bit and shown in the
- * file manager; opening it is the tailor's decision, taken in the operating
- * system's own dialogs, where an unsigned app is named as such. Nothing this
- * app downloads is ever run by this app.
- *
- * Once a Developer ID exists, `electron-updater` can be dropped in behind the
- * same button; the feed shape below is already what it expects.
+ * Electron's built-in updater (Squirrel) is not used: it insists the new
+ * bundle carries the same Apple Developer ID as the running one, and these
+ * builds are ad-hoc signed.
  */
 
 const GITHUB_API = /^https:\/\/api\.github\.com\/repos\/[\w.-]+\/[\w.-]+\/releases/;
@@ -355,11 +349,7 @@ async function check({ feedUrl, token }) {
     current,
     ...release,
     updateAvailable: compareVersions(release.version, current) > 0,
-    // The file can be fetched, but never applied: macOS refuses to swap out a
-    // bundle that is not properly signed, and this app does not run what it
-    // downloads. Installing stays a decision the tailor makes in Finder.
     canDownload: !!release.downloadUrl && allowedDownload(feedUrl, release.downloadUrl),
-    canSelfInstall: false,
     checkedAt: new Date().toISOString(),
   };
 }

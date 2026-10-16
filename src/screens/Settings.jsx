@@ -805,7 +805,7 @@ function Connections() {
   );
 }
 
-export default function Settings({ catalog, overrides, onOverridesChanged, keyState, onKeyChanged }) {
+export default function Settings({ catalog, overrides, onOverridesChanged, keyState, onKeyChanged, initialTab, onUpdateChanged }) {
   const [providers, setProviders] = useState([]);
   const [config, setConfig] = useState({
     image: { provider: 'gemini', model: '' },
@@ -821,6 +821,8 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
   const [downloading, setDownloading] = useState(false);
   const [progress, setProgress] = useState(null);
   const [downloaded, setDownloaded] = useState(null);
+  const [installing, setInstalling] = useState(false);
+  const [ready, setReady] = useState(false);
   const [feed, setFeed] = useState('');
   const [defaultFeed, setDefaultFeed] = useState('');
   const [autoCheck, setAutoCheck] = useState(false);
@@ -829,7 +831,7 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
   const [editing, setEditing] = useState(null);
   const [renaming, setRenaming] = useState(null);
   const [addingCategory, setAddingCategory] = useState(false);
-  const [tab, setTab] = useState('ai');
+  const [tab, setTab] = useState(initialTab ?? 'ai');
   const toast = useToast();
 
   const modelsFor = (id) => modelsByProvider[id] ?? null;
@@ -933,18 +935,48 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
       // release goes on being "available" and the button came back every
       // time - and each press saved another copy of the same file.
       setDownloaded(result.downloaded ?? null);
+      setReady(!!result.ready);
+      onUpdateChanged?.(result.updateAvailable ? result : null);
       toast(
         !result.updateAvailable ? 'You are on the latest version'
-          : result.downloaded ? `Version ${result.version} is already downloaded`
-            : `Version ${result.version} is available`,
+          : result.ready ? `Version ${result.version} is ready - restart to finish`
+            : result.downloaded ? `Version ${result.version} is already downloaded`
+              : `Version ${result.version} is available`,
         'ok'
       );
     } catch (err) {
       setUpdateError(messageFor(err));
       setUpdate(null);
       setDownloaded(null);
+      setReady(false);
     } finally {
       setChecking(false);
+    }
+  }
+
+  // Downloads the update, checks it and makes it ready to go in. Nothing is
+  // replaced until the app restarts or quits.
+  async function installUpdate() {
+    setInstalling(true);
+    setProgress(null);
+    try {
+      await api.updates.install();
+      setReady(true);
+      onUpdateChanged?.({ ...update, ready: true });
+      toast(`Version ${update.version} is ready - restart to finish`, 'ok');
+    } catch (err) {
+      toast(messageFor(err), 'err');
+    } finally {
+      setProgress(null);
+      setInstalling(false);
+    }
+  }
+
+  async function restartToUpdate() {
+    try {
+      await api.updates.restart();
+    } catch (err) {
+      toast(messageFor(err), 'err');
     }
   }
 
@@ -1238,7 +1270,7 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
                       </>
                     )}
 
-                    {progress && !downloaded && (
+                    {progress && (installing || !downloaded) && (
                       <div style={{ marginTop: 14 }}>
                         <div className="progress-track">
                           <div
@@ -1247,79 +1279,118 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
                           />
                         </div>
                         <div className="small muted" style={{ marginTop: 6 }}>
-                          {megabytes(progress.bytes)} of {progress.total ? megabytes(progress.total) : '?'} MB
+                          {progress.phase === 'preparing'
+                            ? 'Downloaded and checked - getting it ready...'
+                            : `${megabytes(progress.bytes)} of ${progress.total ? megabytes(progress.total) : '?'} MB`}
                         </div>
                       </div>
                     )}
 
-                    <div className="inline" style={{ marginTop: 14 }}>
-                      {!downloaded && (
-                        <button
-                          className="btn btn-gold"
-                          disabled={downloading || !update.canDownload}
-                          onClick={async () => {
-                            setDownloading(true);
-                            setProgress(null);
-                            try {
-                              const saved = await api.updates.fetch();
-                              setDownloaded(saved);
-                              toast(saved.already ? 'Already downloaded' : 'Update downloaded', 'ok');
-                            } catch (err) {
-                              setProgress(null);
-                              toast(messageFor(err), 'err');
-                            } finally {
-                              setDownloading(false);
-                            }
-                          }}
-                        >
-                          {downloading ? <><Spinner /> Downloading...</> : `Download ${update.version}`}
-                        </button>
-                      )}
-                      {downloading && (
-                        <button className="btn" onClick={() => api.updates.cancel()}>Stop</button>
-                      )}
-                      {downloaded && (
-                        <button className="btn btn-gold" onClick={async () => {
-                          try { await api.updates.reveal(); } catch (err) { toast(messageFor(err), 'err'); }
-                        }}>
-                          {info?.platform === 'darwin' ? 'Show in Finder' : 'Show in folder'}
-                        </button>
-                      )}
-                      {update.pageUrl && update.pageUrl !== update.downloadUrl && (
-                        <button className="btn" onClick={() => api.updates.download({ url: update.pageUrl })}>
-                          Open the release page
-                        </button>
-                      )}
-                    </div>
-
-                    {downloaded && (
-                      <Banner kind="ok">
-                        <div>
-                          {downloaded.already ? 'Already in' : 'Saved to'} your Downloads folder as{' '}
-                          <span className="mono">{downloaded.name}</span>
-                          {downloaded.verified === 'digest' && ' - checked against the release fingerprint.'}
-                          {downloaded.verified === 'size' && ' - the whole file arrived.'}
-                          <div className="small" style={{ marginTop: 6, opacity: .85 }}>
-                            Quit GD Suits Studio, open that file and install it the same way you installed this
-                            copy, then reopen. Your client files are untouched by an update.
-                          </div>
+                    {update.canInstall ? (
+                      <>
+                        <div className="inline" style={{ marginTop: 14 }}>
+                          {ready ? (
+                            <button className="btn btn-gold" onClick={restartToUpdate}>Restart now</button>
+                          ) : (
+                            <button className="btn btn-gold" disabled={installing} onClick={installUpdate}>
+                              {installing ? <><Spinner /> Installing...</> : `Install ${update.version}`}
+                            </button>
+                          )}
+                          {installing && progress?.phase !== 'preparing' && (
+                            <button className="btn" onClick={() => api.updates.cancel()}>Stop</button>
+                          )}
+                          {update.pageUrl && (
+                            <button className="btn" onClick={() => api.updates.download({ url: update.pageUrl })}>
+                              Open the release page
+                            </button>
+                          )}
                         </div>
-                      </Banner>
-                    )}
-
-                    {!downloaded && (
-                      <Banner kind="info">
-                        <div>
-                          The file is saved to your Downloads folder. GD Suits Studio never opens or runs it -
-                          quit the app, install it yourself the same way you installed this copy, and reopen.
-                          Your client files are untouched by an update.
-                          <div className="small" style={{ marginTop: 6, opacity: .85 }}>
-                            It does not update itself in place because these builds are ad-hoc signed. macOS refuses
-                            to swap out a bundle it cannot verify, so a silent update would fail. Once the app is
-                            signed with an Apple Developer ID, one-click updates can be switched on.
+                        <Banner kind={ready ? 'ok' : 'info'}>
+                          <div>
+                            {ready
+                              ? <>Version {update.version} is ready. Restart now to finish - or carry on, and it goes in
+                                  the next time you quit GD Suits Studio.</>
+                              : <>Installing downloads the new version, checks it against the release&apos;s fingerprint and
+                                  puts it in place of this copy. There is nothing else to do.</>}
+                            <div className="small" style={{ marginTop: 6, opacity: .85 }}>
+                              Your orders, clients, photographs and measurements are kept separately and are not touched.
+                              {info?.platform === 'darwin' && ' After the update your Mac may ask for your password once, so the new version can read your saved keys - choose Always Allow.'}
+                            </div>
                           </div>
+                        </Banner>
+                      </>
+                    ) : (
+                      <>
+                        <div className="inline" style={{ marginTop: 14 }}>
+                          {!downloaded && (
+                            <button
+                              className="btn btn-gold"
+                              disabled={downloading || !update.canDownload}
+                              onClick={async () => {
+                                setDownloading(true);
+                                setProgress(null);
+                                try {
+                                  const saved = await api.updates.fetch();
+                                  setDownloaded(saved);
+                                  toast(saved.already ? 'Already downloaded' : 'Update downloaded', 'ok');
+                                } catch (err) {
+                                  setProgress(null);
+                                  toast(messageFor(err), 'err');
+                                } finally {
+                                  setDownloading(false);
+                                }
+                              }}
+                            >
+                              {downloading ? <><Spinner /> Downloading...</> : `Download ${update.version}`}
+                            </button>
+                          )}
+                          {downloading && (
+                            <button className="btn" onClick={() => api.updates.cancel()}>Stop</button>
+                          )}
+                          {downloaded && (
+                            <button className="btn btn-gold" onClick={async () => {
+                              try { await api.updates.reveal(); } catch (err) { toast(messageFor(err), 'err'); }
+                            }}>
+                              {info?.platform === 'darwin' ? 'Show in Finder' : 'Show in folder'}
+                            </button>
+                          )}
+                          {update.pageUrl && update.pageUrl !== update.downloadUrl && (
+                            <button className="btn" onClick={() => api.updates.download({ url: update.pageUrl })}>
+                              Open the release page
+                            </button>
+                          )}
                         </div>
-                      </Banner>
+    
+                        {downloaded && (
+                          <Banner kind="ok">
+                            <div>
+                              {downloaded.already ? 'Already in' : 'Saved to'} your Downloads folder as{' '}
+                              <span className="mono">{downloaded.name}</span>
+                              {downloaded.verified === 'digest' && ' - checked against the release fingerprint.'}
+                              {downloaded.verified === 'size' && ' - the whole file arrived.'}
+                              <div className="small" style={{ marginTop: 6, opacity: .85 }}>
+                                Quit GD Suits Studio, open that file and install it the same way you installed this
+                                copy, then reopen. Your client files are untouched by an update.
+                              </div>
+                            </div>
+                          </Banner>
+                        )}
+    
+                        {!downloaded && (
+                          <Banner kind="info">
+                            <div>
+                              The file is saved to your Downloads folder. GD Suits Studio never opens or runs it -
+                              quit the app, install it yourself the same way you installed this copy, and reopen.
+                              Your client files are untouched by an update.
+                              {update.installBlocked && (
+                                <div className="small" style={{ marginTop: 6, opacity: .85 }}>
+                                  Why it does not install itself: {update.installBlocked}
+                                </div>
+                              )}
+                            </div>
+                          </Banner>
+                        )}
+                      </>
                     )}
                   </div>
                 )}
