@@ -152,6 +152,53 @@ price list *would* say and offers an explicit **Re-quote** rather than
 rewriting history. This applies to the dashboard, the client file and the
 exported sheet alike.
 
+**Orders of several suits.** A wedding party is one order with a suit per
+person (or several for one person). Every suit is priced from its own spec,
+and the running total, the dashboard, the frozen quote and the summary are
+the whole order - with the suit on screen shown beside the total. Each suit
+has its own cloth on the Order page; the first suit's cloth is mirrored onto
+the order row, which is what the order list and the database sheet read.
+
+**Retired options.** Taking an option off a list (GD's October notes did, for
+jacket fit "Other", the old cuff and shirt-button choices) marks it
+`retired` in `catalog.js` rather than deleting it: it is no longer offered,
+but an order that chose it still shows it, prices it and prints it.
+
+**Typed colours.** Lining, tuxedo, button, shirt, tie and pocket-square
+colours are typed in words (`colourText` fields); there is no colour wheel. A
+colour stored as a hex code by an older build is read out as words with the
+code beside it, in the builder, the spec sheet and the render prompt.
+
+**Renaming options.** Settings → Price list → **Rename** stores GD's own words
+for a built-in option in the `labelOverrides` setting, keyed exactly like the
+price list (`jacketFit:medium`). Only labels change; option keys - and so every
+order - stay as they were.
+
+**The informal quote.** From the Order page or the price bar: a summary of
+whatever has been chosen, sent by WhatsApp (`wa.me`), by email through the
+same path as the quote email, or copied. The recipient is decided in the main
+process from the order (the parent or provider for a minor), never taken from
+the window. What was sent, how, for how much, and the client's answer are
+stored on the order (`informal_quote_json`). Sending the formal quote from
+the Summary page fixes the price first if the order is still a draft.
+
+**The quote page.** `quote-page/` is a static page the informal quote can link
+to. The summary rides in the link after `#q=`, which browsers never send to a
+server, so the page needs no backend and stores nothing - see *Publishing the
+quote page* below. Without a page address the message carries the whole
+summary as text.
+
+**Alterations follow the measurement list.** On the Fitting page an
+alteration is entered against the measurements of a garment. Logging it moves
+the suit's measurement (and the wearer's body record); cancelling or deleting
+it moves the figure back, unless someone has changed it since.
+
+**Database.** A sidebar page with GD's workbook tabs (Current orders,
+Completed, Suit progress, Alterations, Extras) and columns, editable in place.
+DESIGN/LINING/SHIRT are worked out from the spec unless free text has been
+written over them; quoted, balance and quantity are derived and read-only.
+Export writes the tab as CSV for Excel.
+
 **Export.** Writes the whole client file to a folder — JSON, every photo and
 render, and a printable HTML spec sheet with the price breakdown to send for
 sign-off.
@@ -275,7 +322,12 @@ npm run test:quote    # an agreed quote must not move when the price list does
 npm run test:migrations # every historical schema version upgrades without data loss
 npm run test:render   # drives the whole render pipeline with the network stubbed
 npm run test:tour     # boots the UI, walks every step, writes screenshots
+npm run test:feedback # GD's October notes, end to end in the running app
 ```
+
+Run the suites from a plain terminal. A shell inside VS Code (or any Electron
+app) exports `ELECTRON_RUN_AS_NODE=1`, which turns `electron` into plain Node
+and every suite fails at `app.setName` - `unset ELECTRON_RUN_AS_NODE` first.
 
 Neither needs an API key. `test:render` intercepts the outbound call and checks
 the request shape, that the returned image is stored and served back, that a
@@ -331,6 +383,18 @@ Path traversal is impossible before it reaches the filesystem.
 dynamically assemble it from a fixed allowlist of column names, never from
 input.
 
+**Informal quotes** — the window supplies the words, the main process
+supplies the recipient from the order on file, so a compromised window cannot
+send an order's details to a number or address that is not on it. WhatsApp
+opens through `openExternalSafely` (https only).
+
+**Alterations** — an alteration may only name a suit on its own order; the
+measurement figures before and after are read from the database, not taken
+from the window.
+
+**Spreadsheet export** — a cell beginning `=`, `+`, `-` or `@` is prefixed
+with an apostrophe, so a client name typed as a formula stays text in Excel.
+
 **Exported spec sheets** — the export is assembled as raw HTML, so every
 interpolated value is escaped. Without that, a client whose name contained
 markup would produce a file that executed it when opened.
@@ -360,6 +424,28 @@ sees a masked hint.
   is a deliberate deferral rather than an oversight.
 
 ---
+
+## Publishing the quote page
+
+`quote-page/` (`index.html`, `quote.js`, `quote.css`, two logos) is four
+static files. Put them on any https host - GD's own website
+(`gdsuits.co.za/quote/`), GitHub Pages, Netlify, Cloudflare Pages - and enter
+that address in **Settings → Your business → Quote page address**. Until then
+the informal quote is sent as text, which works without it.
+
+What makes it safe to host anywhere:
+
+- The summary is in the link's fragment (`#q=` + base64url JSON). Browsers do
+  not send the fragment to the server, so the host never sees an order.
+- The page makes no requests (`connect-src` is not granted), keeps nothing,
+  sends no referrer and asks not to be indexed.
+- Everything read from a link is shown with `textContent`, after a shape
+  check. Anyone can craft a link; the worst it can do is make this page say
+  something untrue, and the formal quote is always drawn up in the app from
+  its own records.
+- Only first names, the shop's public contact details and the order's
+  options and prices go in the link - no phone number, address or
+  measurement of the client.
 
 ## Building installers
 

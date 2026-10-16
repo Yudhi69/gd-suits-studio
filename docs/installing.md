@@ -117,35 +117,56 @@ The whole job is one page per step, along the top, and you can jump between
 them in any order. A step with a tick has something in it. Nothing has to be
 filled in before you move on - an order half-taken is saved exactly as it is.
 
-**Making an order.** Orders, then **New order**. Put in the client's name and
-you have an order; everything else can follow while he is standing there.
+**Making an order.** Orders, then **New consultation**. Put in the client's
+name and you have an order; everything else can follow while he is standing
+there.
 
 The steps, in the order they usually happen:
 
 | Step | What it is for |
 | --- | --- |
-| **Client** | Name, telephone, email, date of birth, address |
-| **Order** | The people on the order and their suits, the event, the dates, money in and out |
-| **Base Garment** | Two-piece, three-piece, jacket only, trousers only |
-| **Lining & Stitching** | Lining cloth and colour, thread |
-| **Jacket**, **Waistcoat**, **Pants** | Lapels, buttons, pockets, vents, cuffs - each with its own page |
-| **Extras** | Shirt, tie, shoes, pocket square, anything else - and a photo of the shoes |
-| **Detail Customisation** | Monograms, lapel pins, the small things |
-| **Capture** | Photographs of the client: front, side, back, face |
-| **Cloth** | A photograph of the fabric and the lining |
+| **Client** | Name, telephone, email, date of birth, delivery address |
+| **Order** | The people on the order and their suits, each suit's cloth, the informal quote, money in and out |
+| **Base Garment** | 3-piece, 2-piece, single blazer, pants or waistcoat - and the shirt, tie or bow tie (with their colours), lapel chain, lapel pin, tie pin and cuff links |
+| **Lining & Stitching** | Standard or custom lining, its colour and code, thread |
+| **Jacket**, **Waistcoat**, **Pants** | Fit, lapels, buttons, pockets, vents - each with its own page |
+| **Extras** | The detail of what was ticked on Base Garment: collar, cuffs, shirt buttons, a photo of the tie, the pocket square |
+| **Photos & Cloth** | Photographs of the client, their shoes, the fabric and the lining |
 | **Measurements** | Every measurement, in inches or centimetres |
 | **Preview** | The AI render of the finished suit on him |
 | **Fitting** | What happened at each fitting, and any alterations |
-| **Summary** | The quote, the order form, the client file |
+| **Summary** | The whole order, the formal quote, the order form, the client file |
 
 **The price moves as you build.** Every choice that costs something adds to
 the running total on screen, so the figure you quote is the figure the
-choices add up to.
+choices add up to. On an order with several suits the total is all of them,
+with the suit you are on shown beside it.
+
+**Changing prices and wording.** Settings, then **Price list**. Type a new
+price beside any option and every order that is not yet agreed follows it; an
+agreed quote stays as it was until you re-quote it on the Summary page.
+**Rename** beside an option changes the words shown for it - in the
+consultation, on quotes and on the order form - without changing any order
+that already chose it. **+ Add item** adds something new, such as belts, to a
+page.
+
+**Colours are typed.** Lining, tuxedo finish, buttons, shirt, tie and pocket
+square colours are typed in words - "burgundy", "ivory" - because a colour
+picked off a screen is not one you can promise.
 
 **Several people on one order.** A wedding is one order. On the **Order**
 page, add each person - the groom, the best man, his father - and each gets
 their own suit, their own measurements and their own client file, waiting the
 next time they come in. Each person folds away so the page does not fill up.
+Each suit has its own fabric, code and supplier under **Order details**, and
+**+ Add another suit** adds a second suit for the same client.
+
+**The informal quote.** As soon as the base garment is chosen, **Informal
+quote** (on the Order page, or at the bottom of every page) shows a summary of
+the order and its price, ready to send by WhatsApp or email, or to copy. For a
+client under 18 it goes to the parent or provider. When the client answers,
+mark it **Client confirmed** or **Asked for changes**, make the changes, and
+send the formal quote from the Summary page - which fixes the price.
 
 **The render.** On **Preview**, one press of *Render all four views* draws the
 suit on the client from the front, the side, the back and at an angle. Click
@@ -156,20 +177,30 @@ pose - "wider lapels", "a shade darker".
 
 The front is drawn first, and the other three are drawn to match it, so the
 cloth is the same all the way round - a gold check stays as fine on the
-trousers at an angle as it is on the jacket from the front. The **Cloth** page
-shows the colours measured from the fabric photo and how much of each the
-cloth has; that is what every view is told. If it lists a colour that is not
-in the cloth - the table it was lying on - retake the photo closer.
+trousers at an angle as it is on the jacket from the front. The **Photos &
+Cloth** page shows the colours measured from the fabric photo and how much of
+each the cloth has; that is what every view is told. If it lists a colour that
+is not in the cloth - the table it was lying on - retake the photo closer.
 
-**The shoes.** Tick **Shoes** on the **Extras** page and a place for a photo
-of them appears. Take one with the camera or choose a file, and the render
-puts exactly that pair on the client.
+**The shoes.** Put a photo of the client's own shoes on the **Photos & Cloth**
+page and the render puts exactly that pair on him. Clear it and they are left
+out.
+
+**Alterations.** On the **Fitting** page, pick the garment and its
+measurements are listed with the figure on file. Type the change against the
+one that is changing - minus to take in, plus to let out - and logging it
+updates the measurement. Cancelling or removing the alteration puts it back.
+
+**The database.** **Database** in the sidebar is your workbook: Current
+orders, Completed, Suit progress, Alterations and Extras, with the same
+columns. Click any cell to change it - it changes the order itself. **Export
+to Excel** saves the tab as a spreadsheet.
 
 This is the one part that needs the internet and an AI key. Everything else
 works with no signal at all.
 
-**Sending things out.** On **Summary**: the quote email opens in your own mail
-program, already written, for you to read and send. The order form and the
+**Sending things out.** On **Summary**: the formal quote email opens in your
+own mail program, already written, for you to read and send. The order form and the
 measurement form print or save as a PDF. **Client file** saves the whole
 order - photographs, renders, specification - into a folder.
 
