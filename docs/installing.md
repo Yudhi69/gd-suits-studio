@@ -218,6 +218,11 @@ If there is a newer version it tells you what changed. **Download** fetches it
 into your Downloads folder and then offers to show you where it is. Install it
 the same way you installed this copy.
 
+Until you install it, this copy is still the older version, so checking again
+still finds the update - but it shows the file it already saved rather than
+downloading it again. If you are on the newest version it says **Up to date**
+and there is nothing to download.
+
 **Your orders, clients, photographs and measurements are not touched by an
 update.** They live separately from the app itself. You can uninstall the app
 entirely, reinstall it, and everything is still there.
