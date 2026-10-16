@@ -85,11 +85,33 @@ global.fetch = async (url, opts) => {
   }), { status: 200, headers: { 'content-type': 'application/json' } });
 };
 
+// Empties the stand-in Downloads folder - the tailor deleting what was saved.
+const clearDownloads = () => {
+  for (const f of fs.readdirSync(DOWNLOADS)) fs.rmSync(path.join(DOWNLOADS, f), { force: true });
+};
+
+// What the page scripts below share: waiting, finding a button by its words,
+// and whether any button offers a download.
+const PAGE_HELPERS = `
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const find = (t) => [...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith(t));
+  const offering = () => [...document.querySelectorAll('button')].some(b => /^Download\\b/.test(b.textContent.trim()));
+`;
+
+// Opens Settings at its Updates tab, from wherever the window is.
+const OPEN_UPDATES = `
+  [...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('Orders')).click(); await wait(400);
+  [...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('Settings')).click(); await wait(700);
+  [...document.querySelectorAll('.step-tab')].find(b => b.textContent.includes('Updates')).click(); await wait(400);
+`;
+
 const assetName = (suffix, version) =>
   suffix === '.dmg' ? `GD Suits Studio-${version}.dmg` : `GD Suits Studio-${version}-${suffix}`;
 
 require('../electron/main.js');
 const updater = require('../electron/updater.js');
+// The same module main has open, so a record written here is the one it reads.
+const db = require('../electron/db.js');
 const log = (...a) => process.stdout.write(a.join(' ') + '\n');
 let pass = 0, fail = 0;
 const check = (ok, label, detail = '') => { ok ? (pass++, log('  ✓', label)) : (fail++, log('  ✗ FAIL:', label, detail)); };
@@ -159,14 +181,72 @@ app.whenReady().then(async () => {
   check(reported.length > 0 && reported[reported.length - 1].bytes === INSTALLER.length,
     'the window was told how far it had got', JSON.stringify(reported.slice(-1)));
 
-  log('\n=== a second download does not overwrite the first ===');
-  await run(`gd.updates.check()`);
+  log('\n=== the same release is never downloaded twice ===');
+  // The copy that is running stays the old version until the new one is
+  // installed, so the release goes on being "available". Every check used to
+  // offer it again and every press saved another copy: three of 0.1.20 sat in
+  // the Downloads folder of the machine this was found on.
+  const first = path.basename(saved);
+  r = JSON.parse(await run(`gd.updates.check().then(JSON.stringify)`));
+  check(r.data?.updateAvailable === true && r.data?.downloaded?.name === first && r.data.downloaded.already === true,
+    'a check after downloading says the file is already there', JSON.stringify(r.data?.downloaded));
+  const beforeAgain = fs.readdirSync(DOWNLOADS).length;
   r = JSON.parse(await run(`gd.updates.fetch().then(JSON.stringify)`));
-  check(r.ok && r.data.name !== path.basename(saved) && fs.existsSync(path.join(DOWNLOADS, r.data.name)),
-    'it is given a name of its own', r.data?.name);
+  check(r.ok && r.data?.name === first && r.data?.already === true,
+    'asking for it again hands back that file', JSON.stringify(r.data ?? r.error));
+  check(fs.readdirSync(DOWNLOADS).length === beforeAgain,
+    'and no second copy is saved', fs.readdirSync(DOWNLOADS).join(', '));
+
+  fs.rmSync(saved);
+  r = JSON.parse(await run(`gd.updates.check().then(JSON.stringify)`));
+  check(r.ok && r.data?.updateAvailable === true && !r.data?.downloaded,
+    'once that file is deleted, the release is offered again', JSON.stringify(r.data?.downloaded));
+  r = JSON.parse(await run(`gd.updates.fetch().then(JSON.stringify)`));
+  check(r.ok && r.data?.name === first && !r.data?.already && fs.existsSync(saved),
+    'and downloading it again works', JSON.stringify(r.data ?? r.error));
+
+  log('\n=== a file of the same name that is not the release ===');
+  fs.writeFileSync(saved, 'not the installer');
+  r = JSON.parse(await run(`gd.updates.check().then(JSON.stringify)`));
+  check(r.ok && !r.data?.downloaded, 'a file changed since it was saved is not passed off as the download',
+    JSON.stringify(r.data?.downloaded));
+  r = JSON.parse(await run(`gd.updates.fetch().then(JSON.stringify)`));
+  check(r.ok && r.data.name !== first && fs.existsSync(path.join(DOWNLOADS, r.data.name)),
+    'the release is saved under a name of its own', r.data?.name);
+  check(fs.readFileSync(saved, 'utf8') === 'not the installer', 'and the other file is not overwritten');
+
+  log('\n=== a record of a download that is not to be believed ===');
+  const asset = JSON.parse(await run(`gd.updates.check().then(JSON.stringify)`)).data?.downloadName ?? '';
+  const planted = (over) => ({ version: NEWER, asset, bytes: INSTALLER.length, sha256: INSTALLER_SHA, verified: 'digest', ...over });
+  const outside = path.join(os.tmpdir(), `gd-updates-outside-${process.pid}.dmg`);
+  fs.writeFileSync(outside, INSTALLER);
+  db.setSetting('updateDownload', planted({ path: outside }));
+  r = JSON.parse(await run(`gd.updates.check().then(JSON.stringify)`));
+  check(r.ok && !r.data?.downloaded, 'a file outside the Downloads folder is never claimed', JSON.stringify(r.data?.downloaded));
+  fs.rmSync(outside, { force: true });
+  const inside = path.join(DOWNLOADS, asset);
+  fs.writeFileSync(inside, INSTALLER);
+  db.setSetting('updateDownload', planted({ path: inside, sha256: 'f'.repeat(64) }));
+  r = JSON.parse(await run(`gd.updates.check().then(JSON.stringify)`));
+  check(r.ok && !r.data?.downloaded, 'nor one whose fingerprint is not the release\'s', JSON.stringify(r.data?.downloaded));
+  db.setSetting('updateDownload', planted({ path: inside, version: INSTALLED }));
+  r = JSON.parse(await run(`gd.updates.check().then(JSON.stringify)`));
+  check(r.ok && !r.data?.downloaded, 'nor a download of a different version', JSON.stringify(r.data?.downloaded));
+  db.setSetting('updateDownload', planted({ path: inside }));
+  r = JSON.parse(await run(`gd.updates.check().then(JSON.stringify)`));
+  check(r.ok && r.data?.downloaded?.name === asset, 'the same record, true in every part, is believed',
+    JSON.stringify(r.data?.downloaded));
+  // Only main writes it. A page that could would point "Show in Finder" at
+  // anything, or hide a real update behind a file that is not there.
+  r = JSON.parse(await run(`gd.settings.get({ key: 'updateDownload' }).then(JSON.stringify)`));
+  check(!r.ok, 'the page cannot read where the download is kept', JSON.stringify(r.data));
+  r = JSON.parse(await run(`gd.settings.set({ key: 'updateDownload', value: { path: '/etc/hosts' } }).then(JSON.stringify)`));
+  check(!r.ok && db.getSetting('updateDownload').path === inside, 'nor write one of its own', JSON.stringify(r.error));
+  clearDownloads();
 
   log('\n=== a download that is not what the release says it is ===');
   served = Buffer.alloc(INSTALLER.length, 9); // right length, wrong bytes
+  clearDownloads();
   await run(`gd.updates.check()`);
   const beforeTampered = fs.readdirSync(DOWNLOADS).length;
   r = JSON.parse(await run(`gd.updates.fetch().then(JSON.stringify)`));
@@ -205,6 +285,7 @@ app.whenReady().then(async () => {
   // version that honoured the address would put a file on the disk, and this
   // would say so. Naming a host that does not answer would let the check pass
   // for the wrong reason.
+  clearDownloads();
   const beforeHostile = fs.readdirSync(DOWNLOADS);
   r = JSON.parse(await run(`gd.updates.fetch({ url: 'https://elsewhere.example/x.dmg', name: 'x.dmg' }).then(JSON.stringify)`));
   const added = fs.readdirSync(DOWNLOADS).filter((f) => !beforeHostile.includes(f));
@@ -214,6 +295,7 @@ app.whenReady().then(async () => {
 
   log('\n=== the buttons a tailor actually presses ===');
   mode = 'newer'; assetHost = 'github.com'; served = null; redirectTo = null; slowly = true;
+  clearDownloads();
   await run(`window.__errors = []; window.addEventListener('unhandledrejection', e => window.__errors.push(String(e.reason && e.reason.message || e.reason))); true;`);
   const ui = await run(`(async () => {
     const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -255,6 +337,60 @@ app.whenReady().then(async () => {
     'and says where it went', String(ui.says).slice(0, 120));
   check(revealed.length > 0 && revealed[revealed.length - 1].startsWith(DOWNLOADS),
     'and pressing that button shows the file it just saved', JSON.stringify(revealed.slice(-1)));
+
+  log('\n=== checking again once it is downloaded ===');
+  const again = await run(`(async () => {
+    ${PAGE_HELPERS}
+    const look = () => ({
+      offering: offering(),
+      shows: !!(find('Show in Finder') ?? find('Show in folder')),
+      says: document.body.textContent.includes('Already in your Downloads folder'),
+    });
+    find('Check for updates').click(); await wait(1200);
+    const checked = look();
+    // Leaving Settings and coming back starts the page from nothing, which is
+    // what a relaunch does to it.
+    ${OPEN_UPDATES}
+    find('Check for updates').click(); await wait(1200);
+    return JSON.stringify({ checked, returned: look() });
+  })()`).then(JSON.parse);
+  check(!again.checked.offering && again.checked.shows && again.checked.says,
+    'checking again shows the file already saved and offers no second download', JSON.stringify(again.checked));
+  check(!again.returned.offering && again.returned.shows,
+    'and so does a fresh visit to the page', JSON.stringify(again.returned));
+  check(fs.readdirSync(DOWNLOADS).length === 1, 'one copy in the folder, however often it is checked',
+    fs.readdirSync(DOWNLOADS).join(', '));
+
+  // The flag in the sidebar comes from the check made on launch.
+  await run(`gd.settings.set({ key: 'autoCheckUpdates', value: true })`);
+  win.webContents.reload();
+  await new Promise((r) => win.webContents.once('did-finish-load', r));
+  await new Promise((r) => setTimeout(r, 1500));
+  const flag = await run(`document.querySelector('.update-flag')?.textContent ?? ''`);
+  check(flag.includes(NEWER) && /downloaded/i.test(flag) && !/available/i.test(flag),
+    'on launch, the sidebar says it is downloaded rather than available', flag);
+  await run(`gd.settings.set({ key: 'autoCheckUpdates', value: false })`);
+
+  log('\n=== on the latest version, nothing is offered ===');
+  mode = 'same';
+  const latest = await run(`(async () => {
+    ${PAGE_HELPERS}
+    ${OPEN_UPDATES}
+    find('Check for updates').click(); await wait(1200);
+    return JSON.stringify({
+      upToDate: document.body.textContent.includes('Up to date'),
+      offering: offering(),
+      page: !!find('Open the release page'),
+      shows: !!(find('Show in Finder') ?? find('Show in folder')),
+    });
+  })()`).then(JSON.parse);
+  check(latest.upToDate && !latest.offering && !latest.page && !latest.shows,
+    'Updates says it is up to date and offers nothing to download', JSON.stringify(latest));
+  const beforeLatest = fs.readdirSync(DOWNLOADS).length;
+  r = JSON.parse(await run(`gd.updates.fetch().then(JSON.stringify)`));
+  check(!r.ok && fs.readdirSync(DOWNLOADS).length === beforeLatest,
+    'and a download asked for anyway is refused', JSON.stringify(r.error));
+  mode = 'newer';
 
   log('\n=== the download is never executed by the app ===');
   r = JSON.parse(await run(`gd.updates.download({ url: 'file:///etc/passwd' }).then(JSON.stringify)`));

@@ -923,16 +923,26 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
   async function checkForUpdates() {
     setChecking(true);
     setUpdateError(null);
-    // A new check is a new release; whatever was downloaded before is not it.
-    setDownloaded(null);
     setProgress(null);
     try {
       const result = await api.updates.check();
       setUpdate(result);
-      toast(result.updateAvailable ? `Version ${result.version} is available` : 'You are on the latest version', 'ok');
+      // The installer for this release may already be in the Downloads
+      // folder from an earlier check. Then it is shown, not offered again:
+      // this copy stays the old version until it is installed, so the
+      // release goes on being "available" and the button came back every
+      // time - and each press saved another copy of the same file.
+      setDownloaded(result.downloaded ?? null);
+      toast(
+        !result.updateAvailable ? 'You are on the latest version'
+          : result.downloaded ? `Version ${result.version} is already downloaded`
+            : `Version ${result.version} is available`,
+        'ok'
+      );
     } catch (err) {
       setUpdateError(messageFor(err));
       setUpdate(null);
+      setDownloaded(null);
     } finally {
       setChecking(false);
     }
@@ -1192,7 +1202,7 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
                     <span className="pill pill-ok">Up to date</span>
                   )}
                   {update?.updateAvailable && (
-                    <span className="pill">Version {update.version} available</span>
+                    <span className="pill">Version {update.version} {downloaded ? 'downloaded' : 'available'}</span>
                   )}
                 </div>
 
@@ -1251,8 +1261,9 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
                             setDownloading(true);
                             setProgress(null);
                             try {
-                              setDownloaded(await api.updates.fetch());
-                              toast('Update downloaded', 'ok');
+                              const saved = await api.updates.fetch();
+                              setDownloaded(saved);
+                              toast(saved.already ? 'Already downloaded' : 'Update downloaded', 'ok');
                             } catch (err) {
                               setProgress(null);
                               toast(messageFor(err), 'err');
@@ -1284,7 +1295,8 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
                     {downloaded && (
                       <Banner kind="ok">
                         <div>
-                          Saved to your Downloads folder as <span className="mono">{downloaded.name}</span>
+                          {downloaded.already ? 'Already in' : 'Saved to'} your Downloads folder as{' '}
+                          <span className="mono">{downloaded.name}</span>
                           {downloaded.verified === 'digest' && ' - checked against the release fingerprint.'}
                           {downloaded.verified === 'size' && ' - the whole file arrived.'}
                           <div className="small" style={{ marginTop: 6, opacity: .85 }}>

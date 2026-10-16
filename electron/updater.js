@@ -310,6 +310,40 @@ async function download({ feedUrl, url, name, size = 0, digest = '', token, dir,
   };
 }
 
+/**
+ * The installer an earlier download already saved for this release, if it is
+ * still where it was put.
+ *
+ * Without this the app forgot every download the moment the page changed: the
+ * copy installed is still the old one until the tailor installs the new, so
+ * every check found the same release "available" again and offered the same
+ * file - and each press saved another copy beside the last.
+ *
+ * `record` is what main wrote after the download finished. It is believed
+ * only as far as the disk agrees: the same version and file as this release,
+ * in the Downloads folder, under a name this app would have chosen, the size
+ * it was when it was checked, and - when the release states a fingerprint -
+ * the fingerprint it was checked against. Anything else and the release is
+ * offered again, which is the safe way to be wrong.
+ */
+function savedDownload(record, release, dir) {
+  if (!record || typeof record !== 'object' || !release?.version) return null;
+  if (record.version !== release.version || record.asset !== release.downloadName) return null;
+  const file = String(record.path ?? '');
+  const name = path.basename(file);
+  if (!path.isAbsolute(file) || path.dirname(file) !== path.resolve(dir) || safeAssetName(name) !== name) return null;
+  const expected = /^sha256:([0-9a-f]{64})$/i.exec(release.downloadDigest ?? '')?.[1]?.toLowerCase();
+  if (expected && record.sha256 !== expected) return null;
+  let stat;
+  try {
+    stat = fs.statSync(file);
+  } catch {
+    return null;
+  }
+  if (!stat.isFile() || stat.size !== record.bytes) return null;
+  return { path: file, name, bytes: record.bytes, sha256: record.sha256, verified: record.verified, version: record.version };
+}
+
 async function check({ feedUrl, token }) {
   const current = currentVersion();
   if (!feedUrl) throw new UpdateError('No update address is configured.', 'no_feed');
@@ -332,5 +366,5 @@ async function check({ feedUrl, token }) {
 
 module.exports = {
   check, download, compareVersions, pickAsset, currentVersion,
-  allowedDownload, safeAssetName, UpdateError,
+  allowedDownload, safeAssetName, savedDownload, UpdateError,
 };
