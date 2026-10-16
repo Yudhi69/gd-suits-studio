@@ -16,7 +16,7 @@
  * macOS only: the swap it tests is the Mac one. On Windows the release's own
  * installer does the work, and that cannot be run from here.
  */
-const { app, BrowserWindow, shell } = require('electron');
+const { app, BrowserWindow, shell, ipcMain } = require('electron');
 const childProcess = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -151,6 +151,23 @@ let quits = 0;
 const realQuit = app.quit.bind(app);
 app.quit = () => { quits++; };
 
+// Every update call the page makes, and what it got back - printed when the
+// first-launch prompt is not what it should be, so a failure there says
+// whether the page was told the update was ready, or decided so itself.
+const calls = [];
+const realHandle = ipcMain.handle.bind(ipcMain);
+ipcMain.handle = (channel, fn) => realHandle(channel, async (...args) => {
+  const out = await fn(...args);
+  if (channel.startsWith('updates:')) {
+    const d = out?.data;
+    calls.push({ channel, at: Date.now() - started, ok: out?.ok, version: d?.version, ready: d?.ready, prompt: d?.prompt,
+      canInstall: d?.canInstall, staged: require('../electron/db.js').getSetting('updateStaged', null)?.version ?? null,
+      error: out?.error?.code });
+  }
+  return out;
+});
+const started = Date.now();
+
 const beforeMain = app.listeners('will-quit');
 require('../electron/main.js');
 const onQuit = app.listeners('will-quit').filter((l) => !beforeMain.includes(l));
@@ -258,6 +275,31 @@ app.whenReady().then(async () => {
   }
   check(!mountedHere(), 'no image is left open after any of them');
 
+  // macOS's disk-image service is now and then too busy to open an image it
+  // opens a moment later - one run in about fifteen of this suite.
+  const realExecFile = childProcess.execFile;
+  let busy = 0;
+  childProcess.execFile = (file, args, ...rest) => {
+    if (file === '/usr/bin/hdiutil' && args?.[0] === 'attach' && busy < 2) {
+      busy++;
+      const done = rest.pop();
+      setImmediate(() => done(Object.assign(new Error('Command failed'), { code: 1 }), '',
+        'hdiutil: attach failed - Resource temporarily unavailable\n'));
+      return { pid: 0 };
+    }
+    return realExecFile(file, args, ...rest);
+  };
+  const busyDir = path.join(WORK, 'stage-busy');
+  fs.mkdirSync(busyDir);
+  const afterBusy = await installer.stageMac({ dmg: dmg.good, version: NEWER, dir: busyDir }).catch((e) => e);
+  childProcess.execFile = realExecFile;
+  check(busy === 2 && typeof afterBusy === 'string' && versionOf(afterBusy) === NEWER,
+    'an image the system was too busy to open is tried again, and opens', `${busy} ${afterBusy?.code ?? afterBusy}`);
+  const unopened = await installer.stageMac({ dmg: dmg.notAnImage, version: NEWER,
+    dir: fs.mkdtempSync(path.join(WORK, 'stage-again-')) }).catch((e) => e);
+  check(unopened?.code === 'attach_failed' && /\S/.test(unopened.detail ?? '') && !/WARNING/.test(unopened.detail),
+    'one that never opens is still refused, keeping what the system said for the log', unopened?.detail);
+
   log('\n=== putting it in place ===');
   // A process that is "the app", so the swap can be seen to wait for it.
   const place = fs.mkdtempSync(path.join(WORK, 'place-'));
@@ -334,13 +376,18 @@ app.whenReady().then(async () => {
   const call = async (js) => JSON.parse(await run(`${js}.then(JSON.stringify)`));
 
   log('\n=== the first launch finds a newer version ===');
+  const beforeAsked = { staged: db.getSetting('updateStaged', null), dir: fs.existsSync(UPDATES),
+    installs: calls.filter((c) => c.channel === 'updates:install').length };
+  check(!beforeAsked.staged && !beforeAsked.dir && beforeAsked.installs === 0,
+    'nothing is made ready before he is asked', JSON.stringify({ ...beforeAsked, calls }));
   const modal = await until(async () => run(`(() => {
     const m = document.querySelector('.modal-backdrop');
     if (!m) return null;
     const b = [...m.querySelectorAll('button')].map(x => x.textContent.trim());
     return JSON.stringify({ text: m.textContent, buttons: b });
   })()`).then((v) => v && JSON.parse(v)));
-  check(modal?.buttons?.includes(`Install ${NEWER}`), 'it offers to install it', JSON.stringify(modal?.buttons));
+  check(modal?.buttons?.includes(`Install ${NEWER}`), 'it offers to install it',
+    `${JSON.stringify(modal?.buttons)} calls=${JSON.stringify(calls)}`);
   check(modal && !modal.buttons.some((b) => b.startsWith('Download')), 'not to download it for him to install',
     JSON.stringify(modal?.buttons));
   const afterInstall = await run(`(async () => {

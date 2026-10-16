@@ -1,10 +1,12 @@
 /**
- * The first launch of an installed copy that is not the newest.
+ * Launches of an installed copy that is not the newest.
  *
  * A package sent out a few versions ago should bring its owner up to date the
- * first time he opens it with a connection - and not before, and not over and
- * over, and never in a development build or a test run, which would otherwise
- * go out to GitHub on every launch.
+ * first time he opens it with a connection - and not before. After that it
+ * goes on looking each time it opens, unless he turns that off, and puts each
+ * new version in front of him once rather than on every launch. Never in a
+ * development build or a test run, which would otherwise go out to GitHub on
+ * every launch.
  *
  * Runs as an installed copy would, via GD_TEST_FIRST_RUN in its npm script.
  * The feed, the download and the file manager are all stubbed: nothing here
@@ -23,10 +25,12 @@ const revealed = [];
 shell.showItemInFolder = (target) => { revealed.push(String(target)); };
 
 const INSTALLED = require('../package.json').version;
-const NEWER = (() => { const p = INSTALLED.split('.').map(Number); p[p.length - 1] += 1; return p.join('.'); })();
+const bump = (v, by) => { const p = v.split('.').map(Number); p[p.length - 1] += by; return p.join('.'); };
+const NEWER = bump(INSTALLED, 1);
+const NEWEST = bump(INSTALLED, 2);
 const INSTALLER = Buffer.alloc(48 * 1024, 5);
 
-// 'offline' - the feed cannot be reached. 'newer' / 'same' - it answers.
+// 'offline' - the feed cannot be reached. 'newer' / 'newest' / 'same' - it answers.
 let mode = 'offline';
 let feedCalls = 0;
 global.fetch = async (url) => {
@@ -34,7 +38,7 @@ global.fetch = async (url) => {
   if (u.includes('api.github.com')) {
     feedCalls++;
     if (mode === 'offline') throw new TypeError('fetch failed');
-    const version = mode === 'newer' ? NEWER : INSTALLED;
+    const version = { newer: NEWER, newest: NEWEST }[mode] ?? INSTALLED;
     return new Response(JSON.stringify({
       tag_name: `v${version}`, body: 'Status pills on one line.', draft: false,
       html_url: `https://github.com/Yudhi69/gd-suits-studio/releases/tag/v${version}`,
@@ -68,6 +72,20 @@ app.whenReady().then(async () => {
   const win = BrowserWindow.getAllWindows()[0];
   const js = (c) => win.webContents.executeJavaScript(c);
   const relaunch = async () => { win.webContents.reload(); await wait(2600); };
+  const flag = () => js(`document.querySelector('.update-flag')?.textContent ?? ''`);
+  // Reads the "Check automatically on launch" switch the way he would find it,
+  // pressing it first if asked.
+  const autoSwitch = ({ click = false } = {}) => js(`(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    const pick = (sel, t) => [...document.querySelectorAll(sel)].find(b => b.textContent.includes(t));
+    pick('.nav-item', 'Orders').click(); await wait(300);
+    pick('.nav-item', 'Settings').click(); await wait(700);
+    pick('.step-tab', 'Updates').click(); await wait(400);
+    pick('.collapsible-head', 'Where updates come from').click(); await wait(300);
+    const sw = () => pick('.toggle-row', 'Check automatically on launch')?.querySelector('[role=switch]');
+    if (${click}) { sw()?.click(); await wait(400); }
+    return sw()?.getAttribute('aria-checked') ?? 'missing';
+  })()`);
   const prompt = () => js(`(() => {
     const m = [...document.querySelectorAll('.modal-backdrop')]
       .find(el => el.textContent.includes('A newer version is available'));
@@ -120,8 +138,29 @@ app.whenReady().then(async () => {
   feedCalls = 0;
   await relaunch();
   p = await prompt();
-  check(!p.shown, 'it does not ask again');
-  check(feedCalls === 0, 'or even look - after the first check it is his setting, and it is off');
+  check(feedCalls >= 1, 'it looks again - checking as it opens is on unless he turns it off', String(feedCalls));
+  check(!p.shown, 'but does not put the same version in front of him a second time');
+  check((await flag()).includes(NEWER), 'the flag in the corner still says it is there', await flag());
+  check(await autoSwitch() === 'true', 'and Settings shows the check as on, though he never turned it on');
+
+  log('\n=== a version he has not been shown ===');
+  mode = 'newest';
+  await relaunch();
+  p = await prompt();
+  check(p.shown && p.text.includes(`The current version is ${NEWEST}`), 'is put in front of him', p.text?.slice(0, 140));
+  await relaunch();
+  p = await prompt();
+  check(!p.shown, '  once');
+
+  log('\n=== turned off in Settings ===');
+  check(await autoSwitch({ click: true }) === 'false', 'the switch turns it off');
+  check(db.getSetting('autoCheckUpdates', null) === false, '  and that is saved');
+  feedCalls = 0;
+  await relaunch();
+  p = await prompt();
+  check(feedCalls === 0 && !p.shown, 'after which it does not look as it opens', String(feedCalls));
+  check(await autoSwitch() === 'false', '  and Settings still shows it off');
+  db.setSetting('autoCheckUpdates', null);
 
   log('\n=== first launch of a copy that is already current ===');
   db.setSetting('updatesLastChecked', null);
@@ -134,12 +173,21 @@ app.whenReady().then(async () => {
   log('\n=== a development build, or a test run ===');
   delete process.env.GD_TEST_FIRST_RUN;
   db.setSetting('updatesLastChecked', null);
+  db.setSetting('updatePrompted', null);
   mode = 'newer';
   feedCalls = 0;
   await relaunch();
   p = await prompt();
   check(feedCalls === 0, 'never goes out to GitHub on launch', String(feedCalls));
   check(!p.shown, 'and never puts a prompt over what it is doing');
+  db.setSetting('autoCheckUpdates', true);
+  await relaunch();
+  p = await prompt();
+  check(feedCalls >= 1 && !p.shown, 'turned on by hand, it looks - and still never prompts', String(feedCalls));
+
+  log('\n=== what a page cannot do ===');
+  const r = await js(`gd.settings.set({ key: 'updatePrompted', value: null }).then(JSON.stringify)`).then(JSON.parse);
+  check(!r.ok, 'it cannot make a version it has been shown come back as a prompt', JSON.stringify(r));
 
   fs.rmSync(DOWNLOADS, { recursive: true, force: true });
   log(`\n${fail === 0 ? 'ALL FIRST-RUN CHECKS PASSED' : 'FAILED'} — ${pass} passed, ${fail} failed`);

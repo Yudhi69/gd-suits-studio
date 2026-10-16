@@ -5,18 +5,19 @@ import { Banner, Modal, Spinner, useToast } from './ui.jsx';
 const megabytes = (bytes) => (Number(bytes || 0) / (1024 * 1024)).toFixed(1);
 
 /**
- * The first time an installed copy opens and finds it is not the newest.
+ * The first time the app opens and finds a newer version.
  *
- * A package sent out a few versions ago is what most first installs will be,
- * so the first launch says so plainly and offers the current one - rather than
- * a small flag in the corner that he may not notice for weeks.
+ * Said plainly, with the new version offered - rather than only a small flag
+ * in the corner that he may not notice for weeks. A package sent out a few
+ * versions ago gets this on its very first launch. Each version is put to
+ * him once; after Later, the flag is what stays.
  *
  * One of this app's own releases installs itself: Install, then Restart now
  * (or Later, and it goes in when he quits). Anything else - a custom update
  * address, a copy that cannot be replaced from where it is - is downloaded
  * for him to install by hand, and the prompt says exactly what that step is.
  */
-export default function FirstRunUpdate({ update, platform, onClose, onReady }) {
+export default function UpdatePrompt({ update, platform, onClose, onReady }) {
   const [downloading, setDownloading] = useState(false);
   const [progress, setProgress] = useState(null);
   const [saved, setSaved] = useState(null);

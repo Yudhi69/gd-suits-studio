@@ -130,6 +130,20 @@ function plistValue(app, key) {
 }
 
 /**
+ * The version of this app held at `app`, or null if what is there is not this
+ * app. Reads the bundle's own Info.plist and nothing else - no signature
+ * check - so it is cheap enough to run on every launch.
+ */
+function bundleVersion(app) {
+  try {
+    if (plistValue(app, 'CFBundleIdentifier') !== APP_ID) return null;
+    return plistValue(app, 'CFBundleShortVersionString') || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Whether `app` is this app, at exactly `version`, with its signature intact.
  * Synchronous, because it is also the last thing done as the app quits.
  */
@@ -153,6 +167,30 @@ function verifyBundle(app, version) {
 }
 
 /**
+ * Opens a disk image, trying again if macOS is briefly too busy to.
+ *
+ * Every image that reaches this has already matched the fingerprint GitHub
+ * gave for it, so a failure here is far more likely the disk-image service
+ * than the file - and seen to happen: one attach in about fifteen runs of the
+ * install suite failed on an image that opened at once the next time.
+ */
+async function attach(dmg, mount, { attempts = 3, pause = 1000 } = {}) {
+  for (let i = 1; ; i++) {
+    try {
+      return await run('/usr/bin/hdiutil', ['attach', '-nobrowse', '-readonly', '-noautoopen', '-mountpoint', mount, dmg]);
+    } catch (err) {
+      if (i >= attempts) throw err;
+      await new Promise((resolve) => setTimeout(resolve, pause * i));
+    }
+  }
+}
+
+/** The last thing a tool said on stderr - its error, without the warnings before it. */
+function lastLine(text) {
+  return String(text ?? '').trim().split('\n').pop().trim().slice(0, 300);
+}
+
+/**
  * Unpacks the app from a downloaded disk image into `dir` and checks it.
  *
  * The image is opened read-only, out of sight (no Finder window, nothing on
@@ -166,10 +204,12 @@ async function stageMac({ dmg, version, dir }) {
   fs.rmSync(path.dirname(staged), { recursive: true, force: true });
   fs.mkdirSync(path.dirname(staged), { recursive: true });
   try {
-    await run('/usr/bin/hdiutil', ['attach', '-nobrowse', '-readonly', '-noautoopen', '-mountpoint', mount, dmg]);
-  } catch {
+    await attach(dmg, mount);
+  } catch (err) {
     fs.rmSync(mount, { recursive: true, force: true });
-    throw new InstallError('The update could not be opened.', 'attach_failed');
+    throw Object.assign(new InstallError('The update could not be opened.', 'attach_failed'), {
+      detail: lastLine(err.stderr) || err.message,
+    });
   }
   try {
     const apps = fs.readdirSync(mount, { withFileTypes: true }).filter((e) => e.name.endsWith('.app'));
@@ -288,5 +328,5 @@ function settle({ record, current, result, now = Date.now(), compare }) {
 
 module.exports = {
   OFFICIAL_FEED, APP_ID, BUNDLE_NAME, MAC_HELPER,
-  officialRelease, installTarget, stageMac, verifyBundle, apply, settle, InstallError,
+  officialRelease, installTarget, stageMac, verifyBundle, bundleVersion, apply, settle, InstallError,
 };

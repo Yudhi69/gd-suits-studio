@@ -10,7 +10,7 @@ import Database from './screens/Database.jsx';
 import ProjectView from './screens/ProjectView.jsx';
 import ClientFile from './screens/ClientFile.jsx';
 import Settings from './screens/Settings.jsx';
-import FirstRunUpdate from './components/FirstRunUpdate.jsx';
+import UpdatePrompt from './components/UpdatePrompt.jsx';
 
 export default function App() {
   const [route, setRoute] = useState({ name: 'dashboard' });
@@ -21,9 +21,9 @@ export default function App() {
   const theme = useTheme();
   const catalog = useCatalog();
   const [updateReady, setUpdateReady] = useState(null);
-  // The newer version found on this install's first launch, shown as a prompt
-  // rather than only as the flag in the corner.
-  const [firstRunUpdate, setFirstRunUpdate] = useState(null);
+  // A newer version found as the app opened, the first time it was found:
+  // shown as a prompt rather than only as the flag in the corner.
+  const [launchUpdate, setLaunchUpdate] = useState(null);
   const [platform, setPlatform] = useState(null);
 
   useEffect(() => {
@@ -42,24 +42,22 @@ export default function App() {
         setKeyState({ present: false });
       }
 
-      // An installed copy looks once on its first launch, so a package sent
-      // out a few versions ago brings itself up to date; after that, only if
-      // the tailor asked. Nothing about him is sent either way - it is a plain
-      // GET for the latest published version number. With no signal the
-      // check simply fails, and the first launch that has one tries again.
+      // An installed copy looks for a newer version as it opens, unless the
+      // tailor has turned that off; main decides whether to look and whether
+      // this is the first time it has found this version, and so whether to
+      // say so with a prompt or only with the flag in the corner. Nothing
+      // about him is sent - it is a plain GET for the latest published
+      // version number. With no signal the check simply fails.
       const info = await api.app.info().catch(() => null);
       setPlatform(info?.platform ?? null);
-      const firstRun = !!info?.firstRunCheck;
-      if (firstRun || (await api.settings.get({ key: 'autoCheckUpdates', fallback: false }))) {
-        api.updates
-          .check()
-          .then((result) => {
-            if (!result.updateAvailable) return;
-            setUpdateReady(result);
-            if (firstRun) setFirstRunUpdate(result);
-          })
-          .catch(() => {});
-      }
+      api.updates
+        .launchCheck()
+        .then((result) => {
+          if (!result.updateAvailable) return;
+          setUpdateReady(result);
+          if (result.prompt) setLaunchUpdate(result);
+        })
+        .catch(() => {});
     })();
   }, []);
 
@@ -73,11 +71,11 @@ export default function App() {
 
   return (
     <ToastProvider>
-      {firstRunUpdate && (
-        <FirstRunUpdate
-          update={firstRunUpdate}
+      {launchUpdate && (
+        <UpdatePrompt
+          update={launchUpdate}
           platform={platform}
-          onClose={() => setFirstRunUpdate(null)}
+          onClose={() => setLaunchUpdate(null)}
           onReady={() => setUpdateReady((cur) => (cur ? { ...cur, ready: true } : cur))}
         />
       )}
