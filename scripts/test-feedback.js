@@ -158,10 +158,14 @@ app.whenReady().then(async () => {
   await js(`(async () => {
     const boxes = [...document.querySelectorAll('.order-suit')];
     const input = [...boxes[2].querySelectorAll('.field')].find(f => f.querySelector('label').textContent === 'Fabric colour').querySelector('input');
-    input.focus(); T.type(input, 'Ivory linen'); input.blur(); await T.wait(1200);
-    const first = [...document.querySelectorAll('.order-suit')][0];
-    const code = [...first.querySelectorAll('.field')].find(f => f.querySelector('label').textContent === 'Material code').querySelector('input');
-    code.focus(); T.type(code, 'NV-77'); code.blur(); await T.wait(1200);
+    T.type(input, 'Ivory linen');
+    const code = [...boxes[0].querySelectorAll('.field')].find(f => f.querySelector('label').textContent === 'Material code').querySelector('input');
+    T.type(code, 'NV-77');
+    await T.wait(200);
+    // Leave the page with both still typed: blur needs the window in front,
+    // which a test run cannot promise, and leaving is the case that matters.
+    [...document.querySelectorAll('.step-tab')].find(t => t.textContent.includes('Client')).click();
+    await T.wait(1500);
     return true;
   })()`);
   suits = db.listSuits(order);
