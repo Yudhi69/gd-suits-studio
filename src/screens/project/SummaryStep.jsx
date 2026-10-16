@@ -335,7 +335,7 @@ ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c"
             <SummaryLine label="Occasion" value={[eventLabel, prettyDate(project.event_date)].filter(Boolean).join(' · ')} />
             <SummaryLine label="Delivery" value={prettyDate(project.delivery_date)} />
             <SummaryLine label="Status" value={statusLabel(project.status)} />
-            {project.is_minor && project.secondary_name && (
+            {!!project.is_minor && !!project.secondary_name && (
               <SummaryLine
                 label="Approvals to"
                 value={`${project.secondary_name}${project.secondary_relationship ? ` (${project.secondary_relationship})` : ''}`}

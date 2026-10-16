@@ -78,7 +78,7 @@ export const WideLapel = () => <WidthLapel out={29} inner={44} />;
 export const ExtraWideLapel = () => <WidthLapel out={25} inner={43} />;
 
 /**
- * The hip pockets, drawn on the lower front of the jacket.
+ * The hip pockets, drawn on the front of the jacket.
  *
  * GD asked for a picture here for the same reason as the lapels: "flap",
  * "patch" and "slanted" are words the client has to be shown. A flap hangs
@@ -87,32 +87,28 @@ export const ExtraWideLapel = () => <WidthLapel out={25} inner={43} />;
  * toward the side seam and lower toward the front, the way a riding jacket's
  * is cut.
  */
-const LOWER_FRONT = (
-  <>
-    <path d="M 12 6 L 10 86 Q 28 94 44 88 Q 50 60 50 14" />
-    <path d="M 88 6 L 90 86 Q 72 94 56 88 Q 50 60 50 14" />
-    <circle cx="50" cy="22" r="2.3" fill="currentColor" stroke="none" />
-  </>
-);
-
 function Pockets({ pocket, welt }) {
+  // The whole front, lapels and all, so it reads as a jacket at a glance; the
+  // pockets sit at the hip, below the button.
   return (
     <svg viewBox="0 0 100 100" className="sketch" aria-hidden="true" focusable="false">
-      {LOWER_FRONT}
+      {BODY}
+      <Pair className="sketch-collar" d={COLLAR} />
+      <Pair d="M 50 64 L 45 31 L 31 35 Z" />
       {welt && <Pair d={welt} />}
       <Pair className="sketch-lapel" d={pocket} />
     </svg>
   );
 }
 
-export const FlapPocket = () => <Pockets welt="M 16 56 L 38 56" pocket="M 16 56 L 38 56 L 38 64 L 16 64 Z" />;
+export const FlapPocket = () => <Pockets welt="M 17 77 L 37 77" pocket="M 17 77 L 37 77 L 37 85 L 17 85 Z" />;
 export const PatchPocket = () => (
   <Pockets
-    welt="M 16 57 L 38 57"
-    pocket="M 16 51 L 38 51 L 38 70 Q 38 74 34 74 L 20 74 Q 16 74 16 70 Z"
+    welt="M 17 76 L 37 76"
+    pocket="M 17 72 L 37 72 L 37 89 Q 37 92 34 92 L 20 92 Q 17 92 17 89 Z"
   />
 );
-export const SlantedPocket = () => <Pockets pocket="M 16 53 L 38 61 L 37 68 L 15 60 Z" />;
+export const SlantedPocket = () => <Pockets pocket="M 17 74 L 37 81 L 36 88 L 16 81 Z" />;
 
 /**
  * Which drawing belongs to which option, as `field id:option key`.

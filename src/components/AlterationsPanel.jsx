@@ -3,7 +3,7 @@ import { api, messageFor } from '../lib/api.js';
 import { formatMoney } from '../lib/pricing.js';
 import { ALTERATION_STATUSES, MEASUREMENTS, measureRows, measuredGarments } from '../lib/catalog.js';
 import { suitName } from '../lib/quote.js';
-import { toDisplay, fromDisplay, unitShort, stepFor } from '../lib/units.js';
+import { toDisplay, fromDisplay, unitShort, unitLabel, stepFor } from '../lib/units.js';
 import { ConfirmButton, Empty, useToast } from './ui.jsx';
 
 /**
@@ -211,7 +211,7 @@ function AddAlteration({ project, unit, activeSuitId, onAdded }) {
               </div>
             );
           })}
-          <div className="hint">Minus takes in, plus lets out - in {unitShort(unit)}, as on the measurement page.</div>
+          <div className="hint">Minus takes in, plus lets out - in {unitLabel(unit)}, as on the measurement page.</div>
         </div>
       ) : (
         <p className="small faint" style={{ margin: '0 0 8px' }}>

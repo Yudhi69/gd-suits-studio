@@ -476,8 +476,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .photo-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); }
 
 .photo-slot {
+  /* The theme's own card, not a fixed off-white: in dark mode the fixed one
+     put light captions on a light strip, and "Front" all but disappeared. The
+     frame itself stays the neutral judging grey. */
   border: 1.5px dashed var(--line); border-radius: var(--radius);
-  background: #fbfaf8; overflow: hidden;
+  background: var(--card); overflow: hidden;
   display: flex; flex-direction: column;
   transition: border-color .12s;
 }
@@ -604,14 +607,16 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .db-sheet { max-height: calc(100vh - 240px); overflow: auto; }
 .db-table { font-size: 12.5px; }
 .db-table th { position: sticky; top: 0; background: var(--card); z-index: 1; white-space: nowrap; }
-.db-table td { vertical-align: top; padding: 5px 8px; }
+.db-table td { vertical-align: top; padding: 5px 8px; min-width: 110px; }
+.db-table td.tick, .db-table td.num { min-width: 0; }
+.db-table td.nowrap { white-space: nowrap; min-width: 0; }
 .db-table .num { text-align: right; white-space: nowrap; }
 .db-table .center-cell { text-align: center; }
-.db-table .wide-cell { min-width: 220px; max-width: 320px; }
+.db-table .wide-cell { min-width: 240px; max-width: 340px; }
 .db-cell {
   display: block; width: 100%; min-height: 24px; padding: 3px 5px; margin: -3px -5px;
   background: none; border: 1px solid transparent; border-radius: 6px;
-  color: inherit; font: inherit; text-align: left; cursor: text; white-space: pre-wrap; word-break: break-word;
+  color: inherit; font: inherit; text-align: left; cursor: text; white-space: pre-wrap; overflow-wrap: break-word;
 }
 .db-cell:hover { border-color: var(--line); background: var(--surface-2); }
 .db-cell.derived { color: var(--text-faint); font-style: italic; }
@@ -709,7 +714,7 @@ textarea.db-edit { min-height: 70px; }
 }
 .measure-row:last-child { border-bottom: 0; }
 /* Two figures for one measurement - left and right bicep - side by side. */
-.measure-row-pair { grid-template-columns: 1fr 250px; }
+.measure-row-pair { grid-template-columns: 1fr 340px; }
 .measure-pair { display: flex; gap: 10px; }
 .measure-pair > .measure-entry { flex: 1; min-width: 0; }
 .measure-side { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .05em; }

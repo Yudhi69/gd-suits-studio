@@ -214,7 +214,7 @@ export default function Database({ steps, overrides, onOpenProject, unit = 'cm' 
                 <tbody>
                   {shownOrders.slice(0, limit).map((o) => (
                     <tr key={o.id}>
-                      <td><button className="link mono tiny" onClick={() => onOpenProject(o.id)} title="Open the order">{o.order_ref || 'open'}</button></td>
+                      <td className="nowrap"><button className="link mono tiny" onClick={() => onOpenProject(o.id)} title="Open the order">{o.order_ref || 'open'}</button></td>
                       <td><Cell value={o.client} onSave={(v) => patchClient(o, splitName(v))} strong /></td>
                       <td><Cell value={o.event_date} type="date" onSave={(v) => patchProject(o, { event_date: v })} /></td>
                       <td><Cell value={o.fabric_name} onSave={(v) => patchProject(o, { fabric_name: v })} /></td>
@@ -226,8 +226,8 @@ export default function Database({ steps, overrides, onOpenProject, unit = 'cm' 
                       <td className="num mono" title={o.legacyBalance ? 'As written on the old sheet - not yet confirmed as a payment' : 'Quoted less paid'}>
                         {o.balance ? formatMoney(o.balance) : '-'}{o.legacyBalance && <span className="faint"> *</span>}
                       </td>
-                      <td><Check checked={!!o.measurement_form_received} label="Measurement form received" onChange={(v) => patchProject(o, { measurement_form_received: v })} /></td>
-                      <td><Check checked={!!o.form_printed} label="Form printed" onChange={(v) => patchProject(o, { form_printed: v })} /></td>
+                      <td className="tick"><Check checked={!!o.measurement_form_received} label="Measurement form received" onChange={(v) => patchProject(o, { measurement_form_received: v })} /></td>
+                      <td className="tick"><Check checked={!!o.form_printed} label="Form printed" onChange={(v) => patchProject(o, { form_printed: v })} /></td>
                       <td className="num mono">{o.quoted ? formatMoney(o.quoted) : '-'}</td>
                       <td><Cell value={o.contact} onSave={(v) => patchClient(o, { contact: v })} /></td>
                       <td><Cell value={o.email} onSave={(v) => patchClient(o, { email: v })} /></td>

@@ -261,6 +261,8 @@ app.whenReady().then(async () => {
   check(/Waist[\s\S]*(100|39\.37)/.test(groomCard) && /Waist[\s\S]*(80|31\.5)/.test(bestCard) && !/(80 cm|31\.5 in)/.test(groomCard),
     'and its own measurements, not the other man\'s', `${groomCard.slice(-80)} || ${bestCard.slice(-80)}`);
   check(/Wedding · 14 Nov 2026/.test(summary), 'the occasion reads as words', summary.slice(0, 200));
+  const orderCard = await js(`[...document.querySelectorAll('.card')].find(c => c.querySelector('h3')?.textContent === 'The order')?.innerText ?? ''`);
+  check(!/^0$/m.test(orderCard), 'and nothing stray - a client who is not a minor leaves no "0" behind', JSON.stringify(orderCard.slice(0, 160)));
   check(/Total\s*R10,550/.test(summary), 'and the quote is the whole order');
   // The formal quote fixes the price before it goes.
   const mailBefore = opened.length;
