@@ -167,6 +167,13 @@ const until = async (fn, ms = 20000) => {
   while (Date.now() < end) { const v = await fn(); if (v) return v; await wait(150); }
   return fn();
 };
+// Also run when the suite stops part-way, so a failing run leaves nothing in
+// the temp folder - including the folder it locks to test an unwritable one.
+function cleanUp() {
+  try { sh('/bin/chmod', ['-R', 'u+w', WORK]); } catch { /* already gone */ }
+  fs.rmSync(WORK, { recursive: true, force: true });
+  fs.rmSync(DOWNLOADS, { recursive: true, force: true });
+}
 const leftovers = (dir) => fs.readdirSync(dir).filter((f) => f.startsWith('.gd-suits-'));
 const mountedHere = () => sh('/usr/bin/hdiutil', ['info']).includes(WORK);
 
@@ -479,8 +486,7 @@ app.whenReady().then(async () => {
   db.setSetting('updateStaged', null);
   app.quit = realQuit;
 
-  fs.rmSync(WORK, { recursive: true, force: true });
-  fs.rmSync(DOWNLOADS, { recursive: true, force: true });
+  cleanUp();
   log(`\n${fail === 0 ? 'ALL INSTALL CHECKS PASSED' : 'FAILED'} — ${pass} passed, ${fail} failed`);
   app.exit(fail === 0 ? 0 : 1);
-}).catch((e) => { log('HARNESS FAIL', e.stack); app.exit(1); });
+}).catch((e) => { log('HARNESS FAIL', e.stack); cleanUp(); app.exit(1); });
