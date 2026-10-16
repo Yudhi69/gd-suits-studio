@@ -240,7 +240,7 @@ async function generateImage({ apiKey, model = DEFAULTS.imageModel, prompt, imag
 }
 
 /** Free-text or structured analysis over the client's photos. */
-async function analyse({ apiKey, model = DEFAULTS.visionModel, prompt, images = [], schema, timeoutMs = 60000 }) {
+async function analyse({ apiKey, model = DEFAULTS.visionModel, prompt, images = [], schema, timeoutMs = 90000 }) {
   const parts = [{ text: prompt }, ...images.map(imagePart)];
   const generationConfig = schema
     ? { responseMimeType: 'application/json', responseSchema: schema }

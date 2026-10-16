@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { isVisible, statusLabel, statusPill } from '../lib/catalog.js';
 import { useProject } from '../lib/useProject.js';
 import SuitStrip from '../components/SuitStrip.jsx';
-import { quoteFromSpec, isDraft } from '../lib/quote.js';
+import { quoteFromOrder, isDraft } from '../lib/quote.js';
 import { api } from '../lib/api.js';
 import PriceBar from '../components/PriceBar.jsx';
 import Stepper from '../components/Stepper.jsx';
@@ -10,13 +10,13 @@ import { Spinner, Banner } from '../components/ui.jsx';
 
 import ClientStep from './project/ClientStep.jsx';
 import OrderStep from './project/OrderStep.jsx';
-import CaptureStep from './project/CaptureStep.jsx';
-import FabricStep from './project/FabricStep.jsx';
+import PhotosStep from './project/PhotosStep.jsx';
 import BuilderStep from './project/BuilderStep.jsx';
 import MeasureStep from './project/MeasureStep.jsx';
 import PreviewStep from './project/PreviewStep.jsx';
 import FittingStep from './project/FittingStep.jsx';
 import SummaryStep from './project/SummaryStep.jsx';
+import { InformalQuoteModal } from '../components/InformalQuote.jsx';
 
 /**
  * The consultation flow.
@@ -28,6 +28,7 @@ import SummaryStep from './project/SummaryStep.jsx';
 export default function ProjectView({ projectId, onBack, overrides, business, hasKey, steps: catalogSteps, unit, onUnitChange, customOptions, onCatalogChanged }) {
   const ctx = useProject(projectId);
   const [stepKey, setStepKey] = useState('client');
+  const [informalOpen, setInformalOpen] = useState(false);
   const { project, loading, error } = ctx;
 
   const steps = useMemo(() => {
@@ -45,8 +46,13 @@ export default function ProjectView({ projectId, onBack, overrides, business, ha
         catalog: s,
         done: s.fields.filter((f) => f.required && isVisible(f, spec)).every((f) => spec[f.id] !== undefined),
       })),
-      { key: 'capture', title: 'Capture', done: project.photos.some((p) => ['front', 'side', 'back', 'face'].includes(p.slot)) },
-      { key: 'fabric', title: 'Cloth', done: project.photos.some((p) => p.slot === 'fabric') || !!project.analysis?.fabricColour },
+      // The photographs and the cloth are one page: both are the camera coming
+      // out, in the same few minutes, to feed the render.
+      {
+        key: 'capture',
+        title: 'Photos & Cloth',
+        done: project.photos.some((p) => ['front', 'side', 'back', 'face', 'fabric'].includes(p.slot)) || !!project.analysis?.fabricColour,
+      },
       { key: 'measurements', title: 'Measurements', done: project.measurements.some((m) => m.value !== null) },
       { key: 'preview', title: 'Preview', done: project.renders.length > 0 },
       { key: 'fitting', title: 'Fitting', done: project.fittings.length > 0 },
@@ -63,7 +69,9 @@ export default function ProjectView({ projectId, onBack, overrides, business, ha
     api.projects
       .setQuote({
         id: project.id,
-        quote: quoteFromSpec(ctx.spec ?? project.spec, overrides, catalogSteps, project.status),
+        // The whole order, every suit on it - not whichever suit happened to
+        // be on screen when the status moved.
+        quote: quoteFromOrder(project, overrides, catalogSteps, project.status),
       })
       .then(() => ctx.reload())
       .catch(() => {});
@@ -88,13 +96,32 @@ export default function ProjectView({ projectId, onBack, overrides, business, ha
     if (current.catalog) return <BuilderStep ctx={ctx} step={current.catalog} overrides={overrides} onCatalogChanged={onCatalogChanged} />;
     switch (current.key) {
       case 'client': return <ClientStep ctx={ctx} customOptions={customOptions} onCatalogChanged={onCatalogChanged} />;
-      case 'order': return <OrderStep ctx={ctx} business={business} />;
-      case 'capture': return <CaptureStep ctx={ctx} />;
-      case 'fabric': return <FabricStep ctx={ctx} />;
+      case 'order':
+        return (
+          <OrderStep
+            ctx={ctx}
+            business={business}
+            overrides={overrides}
+            steps={catalogSteps}
+            onInformal={() => setInformalOpen(true)}
+            onFormal={() => setStepKey('summary')}
+          />
+        );
+      case 'capture': return <PhotosStep ctx={ctx} />;
       case 'measurements': return <MeasureStep ctx={ctx} unit={unit} onUnitChange={onUnitChange} business={business} />;
       case 'preview': return <PreviewStep ctx={ctx} hasKey={hasKey} steps={catalogSteps} />;
-      case 'fitting': return <FittingStep ctx={ctx} />;
-      case 'summary': return <SummaryStep ctx={ctx} overrides={overrides} steps={catalogSteps} unit={unit} business={business} />;
+      case 'fitting': return <FittingStep ctx={ctx} unit={unit} />;
+      case 'summary':
+        return (
+          <SummaryStep
+            ctx={ctx}
+            overrides={overrides}
+            steps={catalogSteps}
+            unit={unit}
+            business={business}
+            customOptions={customOptions}
+          />
+        );
       default: return null;
     }
   }
@@ -136,14 +163,35 @@ export default function ProjectView({ projectId, onBack, overrides, business, ha
 
         {body()}
 
+        {informalOpen && (
+          <InformalQuoteModal
+            project={project}
+            overrides={overrides}
+            steps={catalogSteps}
+            business={business}
+            customOptions={customOptions}
+            onClose={() => setInformalOpen(false)}
+            onSent={() => ctx.reload()}
+          />
+        )}
+
         <div style={{ marginTop: 22 }}>
           <PriceBar
-            spec={ctx.spec ?? project.spec}
+            order={project}
+            activeSuitId={ctx.activeSuitId}
             overrides={overrides}
             steps={catalogSteps}
             quote={project.quote}
             right={
               <>
+                {/* From the base garment on, there is enough to send. */}
+                <button
+                  className="btn btn-sm"
+                  style={{ background: 'transparent', borderColor: 'var(--gold)', color: 'var(--gold)' }}
+                  onClick={() => setInformalOpen(true)}
+                >
+                  Informal quote
+                </button>
                 <button
                   className="btn btn-sm"
                   style={{ background: 'transparent', borderColor: 'var(--sidebar-line)', color: 'var(--sidebar-text)' }}

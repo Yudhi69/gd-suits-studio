@@ -1,16 +1,24 @@
 import React, { useState } from 'react';
-import { buildBreakdown, formatMoney } from '../lib/pricing.js';
-import { quoteDrift } from '../lib/quote.js';
+import { formatMoney } from '../lib/pricing.js';
+import { orderBreakdown, quoteDrift, suitsOf } from '../lib/quote.js';
 import { Modal } from './ui.jsx';
 
 /** Running total, always visible while the tailor builds - the brief's
- *  "all custom selections must dynamically add to the total price". */
-export default function PriceBar({ spec, overrides, right, steps, quote }) {
+ *  "all custom selections must dynamically add to the total price".
+ *
+ *  It is the whole order's total. On a wedding party the suit on screen is
+ *  shown beside it, so the figure that moves when a lapel is changed is the
+ *  one that changed. */
+export default function PriceBar({ order, activeSuitId, overrides, right, steps, quote }) {
   const [open, setOpen] = useState(false);
-  const live = buildBreakdown(spec, overrides, steps);
-  const drift = quoteDrift(quote, spec, overrides, steps);
+  const live = orderBreakdown(order, overrides, steps);
+  const drift = quoteDrift(quote, order, overrides, steps);
   // Once agreed, the agreed figure is the one on show.
   const { lines, total } = quote ?? live;
+  const suits = suitsOf(order);
+  const thisSuit = suits.length > 1 && !quote
+    ? live.lines.filter((l) => l.suitId === (activeSuitId ?? suits[0].id)).reduce((t, l) => t + l.amount, 0)
+    : null;
 
   const groups = lines.reduce((acc, line) => {
     (acc[line.group] ??= []).push(line);
@@ -25,6 +33,9 @@ export default function PriceBar({ spec, overrides, right, steps, quote }) {
             {quote ? 'Agreed quote' : 'Running total'}
           </div>
           <div className="price-total">{formatMoney(total)}</div>
+          {thisSuit !== null && (
+            <div className="tiny" style={{ color: 'var(--sidebar-soft)' }}>This suit {formatMoney(thisSuit)}</div>
+          )}
         </div>
         <button className="btn btn-sm" onClick={() => setOpen(true)} style={{ background: 'transparent', borderColor: 'var(--sidebar-line)', color: 'var(--sidebar-text)' }}>
           {lines.length} line{lines.length === 1 ? '' : 's'} - view breakdown
@@ -61,7 +72,8 @@ export default function PriceBar({ spec, overrides, right, steps, quote }) {
                 <span>{formatMoney(total)}</span>
               </div>
               <p className="tiny faint" style={{ marginTop: 14 }}>
-                Prices come from the list in Settings. Change them there and every quote follows.
+                Prices and option names come from Settings &rarr; Price list. Change them there and every
+                quote that is not yet agreed follows.
               </p>
             </>
           )}

@@ -102,14 +102,23 @@ export function priceCatalogEntries(steps = STEPS) {
   for (const field of allFieldsOf(steps)) {
     if (field.type === 'choice' || field.type === 'multi') {
       for (const opt of field.options ?? []) {
+        // An option taken off the list is not offered, so it is not priced
+        // here either; an order that already has it keeps its price.
+        if (opt.retired) continue;
         const base = typeof opt.basePrice === 'number' ? opt.basePrice : opt.price ?? 0;
         entries.push({
           key: priceKeyForOption(field.id, opt.key),
           label: `${field.label} - ${opt.label}`,
+          optionLabel: opt.label,
+          optionDesc: opt.desc ?? '',
+          renamed: !!opt.renamed,
           step: field.step,
           isBase: typeof opt.basePrice === 'number',
           defaultAmount: base,
           custom: !!field.custom,
+          // Your own options on a built-in selector are edited where they
+          // were added; renaming is for the built-in ones.
+          customOption: !!opt.custom,
           itemId: field.itemId,
         });
       }
@@ -117,6 +126,8 @@ export function priceCatalogEntries(steps = STEPS) {
       entries.push({
         key: priceKeyForField(field.id),
         label: field.label,
+        optionLabel: field.label,
+        renamed: !!field.renamed,
         step: field.step,
         isBase: false,
         defaultAmount: field.price,

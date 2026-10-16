@@ -258,7 +258,7 @@ app.whenReady().then(async () => {
     [...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('Orders')).click(); await wait(900);
     [...document.querySelectorAll('tbody tr')].find(r => r.textContent.includes('Brand Test')).click(); await wait(1000);
     const tab = (t) => [...document.querySelectorAll('.step-tab')].find(x => x.textContent.includes(t));
-    tab('Capture').click(); await wait(900);
+    tab('Photos & Cloth').click(); await wait(900);
     const slotDl = [...document.querySelectorAll('.photo-slot.filled .photo-actions button')].some(b => b.textContent.trim() === 'Download');
     tab('Preview').click(); await wait(1200);
     const stageImg = document.querySelector('.render-stage img')?.getAttribute('src') || '';

@@ -92,7 +92,7 @@ app.whenReady().then(async () => {
   const order = form.tabs;
   check(order[0] === 'Client' && order[1] === 'Order', 'client, then order');
   check(order[2] === 'Base Garment', 'then the garment, straight after the order it belongs to', order.join(' > '));
-  check(order.indexOf('Capture') > order.indexOf('Extras'), 'the photographs come after the suit is specified', order.join(' > '));
+  check(order.indexOf('Photos & Cloth') > order.indexOf('Extras'), 'the photographs come after the suit is specified', order.join(' > '));
   check(order.indexOf('Fitting') > order.indexOf('Preview'), 'and the fitting last but one');
 
   log('\n=== alterations moved, extras gone ===');

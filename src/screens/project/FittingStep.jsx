@@ -13,7 +13,7 @@ const ANGLES = ['front', 'side', 'back'];
  * said, and photos of every garment from three angles - the record that
  * justifies the measurement changes made afterwards.
  */
-export default function FittingStep({ ctx }) {
+export default function FittingStep({ ctx, unit = 'cm' }) {
   const { project, reload, savePhoto, deletePhoto } = ctx;
   const toast = useToast();
   const spec = project.spec ?? {};
@@ -81,7 +81,7 @@ export default function FittingStep({ ctx }) {
         ))
       )}
 
-      <AlterationsPanel project={project} reload={reload} />
+      <AlterationsPanel project={project} reload={reload} unit={unit} activeSuitId={ctx.activeSuitId} />
     </div>
   );
 }

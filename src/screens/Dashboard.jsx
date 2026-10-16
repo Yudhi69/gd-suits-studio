@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api.js';
 import { eventTypesWith, statusLabel, statusPill, PROJECT_STATUSES, isCompleted } from '../lib/catalog.js';
 import { formatMoney } from '../lib/pricing.js';
@@ -22,6 +22,15 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
 
   useEffect(() => { load(); }, []);
 
+  // Each order priced once per change of the list or the price list, not once
+  // per cell, per sort comparison and per total - a sorted list of eight
+  // hundred orders was pricing each of them dozens of times.
+  const totals = useMemo(
+    () => new Map(projects.map((p) => [p.id, quotedTotal(p, overrides, steps)])),
+    [projects, overrides, steps]
+  );
+  const valueOf = (p) => totals.get(p.id) ?? 0;
+
   const q = query.trim().toLowerCase();
   const found = q
     ? projects.filter((p) =>
@@ -40,7 +49,7 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
     event: (p) => (eventTypesWith(customOptions).find((e) => e.key === p.event_type)?.label ?? '').toLowerCase(),
     date: (p) => p.event_date || '',
     status: (p) => PROJECT_STATUSES.findIndex((s) => s.key === p.status),
-    value: (p) => quotedTotal(p, JSON.parse(p.spec_json || '{}'), overrides, steps),
+    value: valueOf,
     updated: (p) => p.updated_at || '',
   };
 
@@ -85,7 +94,7 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
           <StatCard label="Orders in progress" value={projects.filter((p) => !isCompleted(p.status)).length} />
           <StatCard
             label="Quoted value"
-            value={formatMoney(projects.reduce((sum, p) => sum + quotedTotal(p, JSON.parse(p.spec_json || '{}'), overrides, steps), 0))}
+            value={formatMoney(projects.reduce((sum, p) => sum + valueOf(p), 0))}
           />
         </div>
 
@@ -114,7 +123,6 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
               </thead>
               <tbody>
                 {shown.map((p) => {
-                  const spec = JSON.parse(p.spec_json || '{}');
                   return (
                     <tr key={p.id} className="clickable" onClick={() => onOpenProject(p.id)}>
                       <td className="mono tiny faint order-ref">{p.order_ref || '-'}</td>
@@ -123,7 +131,7 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
                       <td className="muted">{eventTypesWith(customOptions).find((e) => e.key === p.event_type)?.label ?? '-'}</td>
                       <td className="muted mono">{p.event_date || '-'}</td>
                       <td><span className={`pill ${statusPill(p.status)}`}>{statusLabel(p.status)}</span></td>
-                      <td className="mono" style={{ textAlign: 'right' }}>{formatMoney(quotedTotal(p, spec, overrides, steps))}</td>
+                      <td className="mono" style={{ textAlign: 'right' }}>{formatMoney(valueOf(p))}</td>
                       <td className="muted mono tiny">{(p.updated_at || '').slice(0, 10) || '-'}</td>
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
                         <button className="btn btn-sm btn-ghost" onClick={() => onOpenClient(p.client_id)}>Client file</button>

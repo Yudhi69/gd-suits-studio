@@ -93,11 +93,16 @@ export default function ClientStep({ ctx, customOptions = [], onCatalogChanged }
             </div>
             <div className="field" style={{ marginBottom: 0 }}>
               <label>Postal address</label>
+              {/* GD's own wording. A hint rather than a placeholder, because a
+                  placeholder disappears the moment an address is typed - and
+                  the service charge is the part that needs to stay said. */}
+              <div className="hint" style={{ marginTop: -2, marginBottom: 6 }}>
+                Where the suit must be delivered, if not collected. Please note, this comes with a service charge.
+              </div>
               <DebouncedInput
                 as="textarea"
                 className="textarea"
                 value={project.postal_address}
-                placeholder="Where the finished suit is sent, if it is not collected"
                 onCommit={(v) => saveClient({ postalAddress: v })}
               />
             </div>

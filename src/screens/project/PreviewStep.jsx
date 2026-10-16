@@ -106,9 +106,10 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
     const fabric = photoBySlot('fabric');
     if (fabric) out.push({ ...fabric, role: 'swatch', label: 'fabric', slot: 'fabric' });
     if (anchor && which !== 'front') out.push({ ...anchor, role: 'consistency', label: 'front view', slot: 'render' });
-    // Only while shoes are part of the order: untick them in Extras and the
-    // photograph stays on file but stops going into the picture.
-    const shoes = spec.shoes ? photoBySlot('shoes') : null;
+    // The client's own shoes, whenever there is a photograph of them. Shoes
+    // are not sold any more, so there is no Extras switch to read; taking the
+    // photo off the Photos page is what keeps them out of the picture.
+    const shoes = photoBySlot('shoes');
     if (shoes) out.push({ ...shoes, role: 'shoes', label: 'shoes', slot: 'shoes' });
     const lining = photoBySlot('lining');
     if (lining) out.push({ ...lining, role: 'swatch', label: 'lining', slot: 'lining' });
@@ -128,7 +129,7 @@ export default function PreviewStep({ ctx, hasKey, steps }) {
       }
     }
     return out.slice(0, MAX_REFS);
-  }, [selectedRefs, references, photoBySlot, project.client_id, spec.shoes]);
+  }, [selectedRefs, references, photoBySlot, project.client_id]);
 
   const promptForView = useCallback(
     (which, anchor = null) =>

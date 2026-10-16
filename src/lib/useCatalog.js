@@ -12,6 +12,8 @@ import { buildSteps } from './catalog.js';
  */
 export function useCatalog() {
   const [custom, setCustom] = useState({ categories: [], items: [], options: [] });
+  // GD's own wording for built-in options, set from Settings > Price list.
+  const [labels, setLabels] = useState({});
   const [loading, setLoading] = useState(true);
 
   const reload = useCallback(async () => {
@@ -19,6 +21,11 @@ export function useCatalog() {
       setCustom(await api.catalog.list());
     } catch {
       /* an unreadable custom catalog must not stop the built-in one working */
+    }
+    try {
+      setLabels((await api.settings.get({ key: 'labelOverrides', fallback: {} })) ?? {});
+    } catch {
+      /* nor can unreadable wording - the built-in labels stand */
     } finally {
       setLoading(false);
     }
@@ -27,8 +34,8 @@ export function useCatalog() {
   useEffect(() => { reload(); }, [reload]);
 
   const steps = useMemo(
-    () => buildSteps(custom.categories, custom.items, custom.options),
-    [custom.categories, custom.items, custom.options]
+    () => buildSteps(custom.categories, custom.items, custom.options, labels),
+    [custom.categories, custom.items, custom.options, labels]
   );
 
   return {
@@ -36,6 +43,7 @@ export function useCatalog() {
     categories: custom.categories,
     items: custom.items,
     options: custom.options ?? [],
+    labels,
     loading,
     reload,
   };

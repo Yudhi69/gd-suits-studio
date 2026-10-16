@@ -125,7 +125,13 @@ app.whenReady().then(async () => {
   // down here and read by someone, not slip in under a number.
   const DECLARED = [
     'ai', 'alterations', 'analytics', 'app', 'brandedRender', 'business', 'catalog',
-    'clientMeasurements', 'clients', 'clientMedia', 'connections', 'extras', 'fittings', 'forms', 'mail',
+    'clientMeasurements', 'clients', 'clientMedia', 'connections',
+    // The workbook view: reads the orders, writes a CSV only through a save dialog.
+    'database',
+    'extras', 'fittings', 'forms',
+    // The informal quote: the recipient comes from the order, never the window.
+    'informal',
+    'mail',
     'measurements', 'media', 'mediaUrl', 'members', 'notes', 'payments', 'photos',
     'projectMedia', 'project', 'projects', 'quote', 'references', 'renders',
     'secrets', 'settings', 'suits', 'updates',

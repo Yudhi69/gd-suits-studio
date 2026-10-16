@@ -12,7 +12,11 @@ export default function BuilderStep({ ctx, step, overrides, onCatalogChanged }) 
   // Image fields attach files to the order rather than setting a spec value,
   // so they get the media handlers instead of onChange.
   const media = {
-    photosFor: (slot) => project.photos.filter((p) => p.slot === slot && !p.fitting_id),
+    // The suit's own pictures. On a wedding party the groom's tie photo is not
+    // the best man's, so they are read for the suit being edited, the way the
+    // single photographs already were.
+    photosFor: (slot) => project.photos.filter((p) => p.slot === slot && !p.fitting_id
+      && (!ctx.activeSuitId || p.suit_id === ctx.activeSuitId)),
     // A single photograph, owned the way the render reads it: the shoes on the
     // best man's page are the best man's.
     photoFor: (slot) => photoBySlot?.(slot) ?? null,
@@ -34,16 +38,19 @@ export default function BuilderStep({ ctx, step, overrides, onCatalogChanged }) 
             </div>
           </div>
           <div className="card-pad">
+            {fields.length === 0 && step.empty && <p className="small muted" style={{ margin: 0 }}>{step.empty}</p>}
             {fields.map((field) => (
-              <Field
-                key={field.id}
-                field={field}
-                spec={spec}
-                overrides={overrides}
-                onChange={updateSpec}
-                onCatalogChanged={onCatalogChanged}
-                media={media}
-              />
+              <React.Fragment key={field.id}>
+                {field.section && <div className="price-group-title field-section">{field.section}</div>}
+                <Field
+                  field={field}
+                  spec={spec}
+                  overrides={overrides}
+                  onChange={updateSpec}
+                  onCatalogChanged={onCatalogChanged}
+                  media={media}
+                />
+              </React.Fragment>
             ))}
           </div>
         </div>

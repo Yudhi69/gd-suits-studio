@@ -1,6 +1,5 @@
 import React, { useRef, useState } from 'react';
 import { Switch, DebouncedInput } from './ui.jsx';
-import ColourPicker from './ColourPicker.jsx';
 import { AddOptionTile, OptionEditor } from './AddOption.jsx';
 import { fileToDataUrl } from '../lib/image.js';
 import { useToast, ConfirmButton } from './ui.jsx';
@@ -8,6 +7,15 @@ import DownloadButton from './DownloadButton.jsx';
 import PhotoSlot from './PhotoSlot.jsx';
 import { formatMoney } from '../lib/pricing.js';
 import { sketchFor } from './sketches.jsx';
+import { colourWords } from '../lib/catalog.js';
+
+/**
+ * The options a field offers. One GD has taken off the list is not offered
+ * again, but an order that already chose it still shows it, chosen - hiding it
+ * there would make the suit look unspecified when it is not.
+ */
+const offered = (options = [], value) =>
+  options.filter((o) => !o.retired || (Array.isArray(value) ? value.includes(o.key) : value === o.key));
 
 /**
  * Renders one catalog field. Every control in the builder comes through here,
@@ -29,7 +37,7 @@ export default function Field({ field, spec, overrides = {}, onChange, onCatalog
       <div className="field">
         <label>{field.label}</label>
         <div className="options">
-          {field.options.map((opt) => {
+          {offered(field.options, value).map((opt) => {
             const amount = priceFor(opt);
             const Sketch = sketchFor(field.id, opt.key);
             return (
@@ -41,7 +49,9 @@ export default function Field({ field, spec, overrides = {}, onChange, onCatalog
               >
                 {Sketch && <Sketch />}
                 <div className="option-label">{opt.label}</div>
-                {opt.desc && <div className="option-desc">{opt.desc}</div>}
+                {opt.retired
+                  ? <div className="option-desc">No longer offered</div>
+                  : opt.desc && <div className="option-desc">{opt.desc}</div>}
                 {amount > 0 && (
                   <div className="option-price">
                     {typeof opt.basePrice === 'number' ? '' : '+'}{formatMoney(amount)}
@@ -116,7 +126,7 @@ export default function Field({ field, spec, overrides = {}, onChange, onCatalog
             words - five widths in one row, and "Other" taller than the rest
             because it is the only one with a second line. */}
         <div className="options options-even" style={{ marginTop: 8 }}>
-          {field.options.map((opt) => (
+          {offered(field.options, chosen).map((opt) => (
             <button
               type="button"
               key={opt.key}
@@ -134,9 +144,13 @@ export default function Field({ field, spec, overrides = {}, onChange, onCatalog
     );
   }
 
-  // A short answer - a material code, a size. Distinct from longtext, which is
-  // a paragraph and gets a textarea.
+  // A short answer - a material code, a size, a colour in words. Distinct from
+  // longtext, which is a paragraph and gets a textarea.
   if (field.type === 'text') {
+    // A colour from an order taken while colours came off a wheel is a code
+    // like #7b1113; it is still the client's choice, so it is said in words
+    // beside the box rather than left as a code nobody can read.
+    const fromWheel = field.colourText && /^#[0-9a-f]{6}$/i.test(String(value ?? '').trim());
     return (
       <div className="field">
         <label>{field.label}</label>
@@ -147,6 +161,9 @@ export default function Field({ field, spec, overrides = {}, onChange, onCatalog
           value={value ?? ''}
           onCommit={(v) => onChange(field.id, v)}
         />
+        {fromWheel && (
+          <div className="hint">Picked on the old colour wheel: {colourWords(value)}. Type the colour in words to replace it.</div>
+        )}
       </div>
     );
   }
@@ -157,10 +174,6 @@ export default function Field({ field, spec, overrides = {}, onChange, onCatalog
 
   if (field.type === 'photo') {
     return <SinglePhotoField field={field} media={media} />;
-  }
-
-  if (field.type === 'colour') {
-    return <ColourField field={field} value={value} onChange={onChange} />;
   }
 
   if (field.type === 'number') {
@@ -209,32 +222,6 @@ export default function Field({ field, spec, overrides = {}, onChange, onCatalog
         value={value ?? ''}
         onCommit={(v) => onChange(field.id, v)}
       />
-    </div>
-  );
-}
-
-
-/**
- * A colour field opens the wheel in place rather than in a dialog - picking a
- * lining colour is a small decision and should not take over the screen.
- */
-function ColourField({ field, value, onChange }) {
-  const [open, setOpen] = useState(false);
-  const current = value ?? field.default ?? '#000000';
-
-  return (
-    <div className="field">
-      <label>{field.label}</label>
-      <button type="button" className="colour-trigger" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        <span className="swatch" style={{ background: current }} />
-        <span className="mono">{current}</span>
-        <span className="tiny faint" style={{ marginLeft: 'auto' }}>{open ? 'Done' : 'Change'}</span>
-      </button>
-      {open && (
-        <div className="colour-panel">
-          <ColourPicker label={field.id} value={current} onChange={(v) => onChange(field.id, v)} />
-        </div>
-      )}
     </div>
   );
 }

@@ -87,7 +87,37 @@ function describe(customBaseUrl) {
   }));
 }
 
+/**
+ * A model to read photographs and measurements with, from the models a key
+ * actually has.
+ *
+ * Used when the saved one is refused - retired by the provider, or never on
+ * this key. A read is a short job, so a fast "flash"-class model is preferred
+ * over a large one, a stable model over a preview, and the newest version
+ * over an older one. An alias that always points at the current release
+ * ("-latest") is preferred most of all: it is the one that will not be
+ * retired out from under the tailor again.
+ */
+function pickReadModel(list, avoid = '') {
+  const score = (name) => {
+    const n = name.toLowerCase();
+    if (/tts|audio|live|embed|image|imagen|veo|robotics|computer-use/.test(n)) return -Infinity;
+    let s = 0;
+    if (/flash|haiku|mini|sonnet/.test(n)) s += 4;
+    if (/lite|nano/.test(n)) s -= 1;
+    if (/preview|exp|experimental/.test(n)) s -= 3;
+    if (/latest/.test(n)) s += 2;
+    const version = parseFloat((/(\d+(?:\.\d+)?)/.exec(n) ?? [])[1] ?? '0');
+    return s * 100 + (Number.isFinite(version) ? version : 0);
+  };
+  const candidates = (list?.vision?.length ? list.vision : list?.all ?? [])
+    .map((m) => m.name)
+    .filter((name) => name && name !== avoid && score(name) > -Infinity);
+  candidates.sort((a, b) => score(b) - score(a));
+  return candidates[0] ?? null;
+}
+
 /** Secret names, one per provider, kept in step with the allowlist in main. */
 const SECRET_NAMES = ['gemini', 'openai', 'anthropic', 'custom'];
 
-module.exports = { all, get, describe, SECRET_NAMES, PROVIDER_IDS: SECRET_NAMES };
+module.exports = { all, get, describe, pickReadModel, SECRET_NAMES, PROVIDER_IDS: SECRET_NAMES };
