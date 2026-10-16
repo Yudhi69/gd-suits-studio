@@ -275,6 +275,9 @@ app.whenReady().then(async () => {
     `${fixed.status} ${fixed.quote?.total}`);
   const mail = opened.slice(mailBefore).find((u) => u.startsWith('mailto:'));
   check(!!mail && /R10%2C550|R10,550/.test(mail), 'and the email carries that figure - it went without one before', String(mail).slice(0, 90));
+  const body = mail ? decodeURIComponent(mail.split('body=')[1] ?? '') : '';
+  check(/Sipho Ndlovu - Groom:\n\s+3-Piece suit/.test(body) && /Thabo Mokoena - Best man:\n\s+2-Piece suit/.test(body),
+    'with each suit\'s lines under whose suit it is', body.slice(body.indexOf('Quote:'), body.indexOf('Quote:') + 160));
 
   log('\n=== the AI sanity check ===');
   secrets.set('gemini', 'TEST-KEY-FEEDBACK');

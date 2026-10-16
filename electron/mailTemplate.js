@@ -78,9 +78,20 @@ function buildValues(project, shop) {
         ? `Cloth: ${suits[0].fabric_name}${suits[0].fabric_code ? ` (${suits[0].fabric_code})` : ''}`
         : '');
 
+  // A party's quote is priced suit by suit, and its lines say so in their key
+  // ("12/lapel:peak"). Listed flat, "Lapel: Peak" appeared twice with nothing
+  // to say whose; grouped, each suit's lines sit under its name.
+  const perSuit = (quote?.lines ?? []).some((l) => /^\d+\//.test(l.key ?? ''));
+  const lineText = perSuit
+    ? quote.lines.flatMap((l, i, all) => [
+        ...(i === 0 || all[i - 1].group !== l.group ? [`  ${l.group}:`] : []),
+        `    ${l.label}  ${money(l.amount)}`,
+      ])
+    : (quote?.lines ?? []).map((l) => `  ${l.label}  ${money(l.amount)}`);
+
   const quoteBlock = quote?.lines?.length
     ? ['Quote:',
-       ...quote.lines.map((l) => `  ${l.label}  ${money(l.amount)}`),
+       ...lineText,
        '',
        `Total: ${money(quote.total)}`,
        `Deposit to start (${Math.round(shop.depositFraction * 100)}%): ${money((quote.total ?? 0) * shop.depositFraction)}`].join('\n')
