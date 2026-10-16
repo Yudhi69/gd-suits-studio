@@ -292,10 +292,11 @@ app.whenReady().then(async () => {
      GD's set came back with a gold check covering a twentieth of the
      trousers from three angles and a third of them from the fourth: four
      renders, each guessing at the cloth on its own. These drive the real
-     pages - the shoes go in through Extras, the cloth through the Cloth
-     page - and read what reaches the model off the wire.
+     pages - the shoes and the cloth both go in on the Photos & Cloth page,
+     since GD took shoes off the Extras page - and read what reaches the
+     model off the wire.
      --------------------------------------------------------------------- */
-  log('\n=== the shoes, from the Extras page ===');
+  log('\n=== the shoes, from the Photos & Cloth page ===');
   const shoeClient = db.upsertClient({ name: 'Shoe', surname: 'Cloth', contact: '', email: '' });
   const shoeProject = db.createProject({ clientId: shoeClient, title: 'Shoes and cloth' });
   db.updateProject(shoeProject, { spec: { suitType: 'two_piece', lapel: 'notch' } });
@@ -330,17 +331,19 @@ app.whenReady().then(async () => {
     [...document.querySelectorAll('tbody tr')].find(r => r.textContent.includes('Shoe Cloth')).click(); await wait(1000);
     return true;
   })()`);
+  // Shoes and socks are not sold, so they are not on the Extras page at all.
   await openStep('Extras');
+  const extrasToggles = await js(`JSON.stringify([...document.querySelectorAll('.toggle-row')]
+    .map(r => r.firstElementChild?.firstElementChild?.textContent.trim()))`).then(JSON.parse);
+  check(!extrasToggles.includes('Shoes') && !extrasToggles.includes('Socks'), 'shoes and socks are gone from Extras',
+    extrasToggles.join(' | '));
 
+  await openStep('Photos & Cloth');
   const shoesUi = JSON.parse(await js(`(async () => {
     const wait = ms => new Promise(r => setTimeout(r, ms));
     const card = () => [...document.querySelectorAll('.photo-slot')]
-      .find(s => s.querySelector('.photo-meta')?.textContent.includes('Photo of the shoes'));
-    const before = !!card();
-    const toggle = [...document.querySelectorAll('.toggle-row')]
-      .find(r => r.firstElementChild?.firstElementChild?.textContent.trim() === 'Shoes');
-    toggle?.querySelector('[role=switch]')?.click();
-    await wait(900);
+      .find(s => s.querySelector('.photo-meta')?.textContent.includes("Client's shoes"));
+    const before = true;
     const after = !!card();
     const upload = async (hex) => {
       const c = document.createElement('canvas'); c.width = 90; c.height = 60;
@@ -355,8 +358,7 @@ app.whenReady().then(async () => {
     const shown = card()?.querySelector('.photo-frame img')?.getAttribute('src') ?? '';
     return JSON.stringify({ before, after, shown });
   })()`));
-  check(!shoesUi.before && shoesUi.after, 'a place for a photo of the shoes appears once Shoes is ticked, and not before',
-    JSON.stringify(shoesUi));
+  check(shoesUi.after, 'the photographs page has a place for the client\'s own shoes', JSON.stringify(shoesUi));
   const groomSuitId = db.primarySuitId(shoeProject);
   let shoePhotos = db.getProject(shoeProject).photos.filter((p) => p.slot === 'shoes');
   check(shoePhotos.length === 1 && shoePhotos[0].suit_id === groomSuitId,
@@ -367,8 +369,8 @@ app.whenReady().then(async () => {
     .then(r => JSON.stringify({ ok: r.ok, error: r.error?.message ?? '' }))`));
   check(tie.ok, 'a tie photo can be added - the Extras page always offered one, and saving it used to be refused', tie.error);
 
-  log('\n=== the cloth, measured on the Cloth page ===');
-  await openStep('Cloth');
+  log('\n=== the cloth, measured on the same page ===');
+  await openStep('Photos & Cloth');
   const measured = await js(`(async () => {
     const wait = ms => new Promise(r => setTimeout(r, ms));
     for (let i = 0; i < 20 && !document.querySelector('.measured-cloth'); i++) await wait(250);
@@ -493,12 +495,15 @@ app.whenReady().then(async () => {
   check(used['Ref A'] === 4 && used['Ref B'] === 4 && used['Ref C'] === 1 && !used['Ref D'],
     'the client’s style history counts only the references that were sent', JSON.stringify(used));
 
-  log('\n=== shoes no longer on the order ===');
-  await openStep('Extras');
+  log('\n=== shoes taken out of the picture ===');
+  // With no Extras switch, the photograph is what puts the shoes in the
+  // render - so clearing it is what takes them out.
+  await openStep('Photos & Cloth');
   await js(`(async () => {
     const wait = ms => new Promise(r => setTimeout(r, ms));
-    [...document.querySelectorAll('.toggle-row')].find(r => r.firstElementChild?.firstElementChild?.textContent.trim() === 'Shoes')
-      ?.querySelector('[role=switch]')?.click();
+    const card = [...document.querySelectorAll('.photo-slot')]
+      .find(s => s.querySelector('.photo-meta')?.textContent.includes("Client's shoes"));
+    [...(card?.querySelectorAll('.photo-actions button') ?? [])].find(b => b.textContent.trim() === 'Clear')?.click();
     await wait(900);
     return true;
   })()`);
@@ -511,12 +516,15 @@ app.whenReady().then(async () => {
     return text;
   })()`);
   check(untickedPrompt.includes('THE SHOT') && !/\(shoes\)/.test(untickedPrompt),
-    'untick Shoes and the photo stops going into the render');
-  check(db.getProject(shoeProject).photos.some((p) => p.slot === 'shoes'), 'though it stays on file, for when they are ticked again');
+    'clear the shoes photo and they stop going into the render');
+  check(!db.getProject(shoeProject).photos.some((p) => p.slot === 'shoes' && p.suit_id === groomSuitId),
+    'and the photo is gone from the order');
 
   log('\n=== a second person on the order ===');
   const bestMan2 = db.upsertClient({ name: 'Second', surname: 'Shoes', contact: '', email: '' });
   const suitB2 = db.addSuit({ projectId: shoeProject, clientId: bestMan2, label: 'Best man' });
+  // The groom's pair went above; he brings them back in.
+  await js(`window.gd.photos.add({ projectId: ${shoeProject}, suitId: ${groomSuitId}, clientId: ${shoeClient}, slot: 'shoes', dataUrl: '${png}' })`);
   await js(`window.gd.photos.add({ projectId: ${shoeProject}, suitId: ${suitB2}, clientId: ${bestMan2}, slot: 'shoes', dataUrl: '${png}' })`);
   const bySuit = db.getProject(shoeProject).photos.filter((p) => p.slot === 'shoes');
   check(bySuit.filter((p) => p.suit_id === groomSuitId).length === 1 && bySuit.filter((p) => p.suit_id === suitB2).length === 1,

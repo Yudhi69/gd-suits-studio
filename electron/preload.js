@@ -9,7 +9,7 @@ const media = require('./mediaUrl');
  * Error carrying the message the main process prepared for the tailor.
  */
 const CHANNELS = [
-  'clients:list', 'clients:get', 'clients:save', 'clients:delete',
+  'clients:list', 'clients:get', 'clients:save', 'clients:patch', 'clients:delete',
   'projects:list', 'projects:get', 'projects:create', 'projects:update', 'projects:delete', 'projects:setQuote',
   'photos:add', 'photos:delete', 'photos:meta',
   'references:add', 'references:list', 'references:update', 'references:delete', 'references:history',
@@ -20,6 +20,8 @@ const CHANNELS = [
   'analytics:get',
   'media:download',
   'quote:email', 'quote:template', 'quote:preview',
+  'informal:recipient', 'informal:send', 'informal:copy', 'informal:mark',
+  'database:sheet', 'database:export',
   'connections:get', 'connections:set', 'connections:test',
   'mail:rules', 'mail:saveRule', 'mail:deleteRule', 'mail:due', 'mail:send', 'mail:preview',
   'business:get',

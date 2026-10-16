@@ -72,6 +72,54 @@ function BusinessDetails() {
           <div className="hint">The Business page flags any order cut before this much is paid.</div>
         </div>
 
+        <div className="price-group-title field-section">Informal quote</div>
+        <div className="field">
+          <label>Quote page address</label>
+          <DebouncedInput
+            className="input mono"
+            placeholder="https://gdsuits.co.za/quote/"
+            value={shop.quotePageUrl ?? ''}
+            onCommit={async (v) => {
+              await save({ quotePageUrl: v });
+              // The address is checked as it is stored - only https is kept -
+              // so what shows is read back rather than assumed.
+              const stored = await api.business.get();
+              setShop(stored);
+              if (v.trim() && !stored.quotePageUrl) toast('The quote page needs an https:// address.', 'err');
+            }}
+          />
+          <div className="hint">
+            Where the quote page is published. With it, an informal quote is sent as a short message and a link to
+            the summary laid out properly; without it, the summary goes in the message itself. The summary travels
+            inside the link, so nothing about the order is stored on the page.
+          </div>
+        </div>
+        <div className="grid grid-2">
+          <div className="field">
+            <label>WhatsApp country code</label>
+            <DebouncedInput
+              className="input measure-input"
+              value={shop.whatsappCountryCode ?? '27'}
+              onCommit={async (v) => { await save({ whatsappCountryCode: v.replace(/\D/g, '') }); setShop(await api.business.get()); }}
+            />
+            <div className="hint">Put in front of a number written as 082..., so WhatsApp finds the client.</div>
+          </div>
+          <div className="field">
+            <label>Informal quote is valid for</label>
+            <div className="inline">
+              <DebouncedInput
+                className="input measure-input"
+                type="number"
+                min="1"
+                max="365"
+                value={shop.informalValidDays ?? 14}
+                onCommit={async (v) => { await save({ informalValidDays: Number(v) }); setShop(await api.business.get()); }}
+              />
+              <span className="muted">days</span>
+            </div>
+          </div>
+        </div>
+
         <div className="field" style={{ marginBottom: 0 }}>
           <label>Terms and conditions</label>
           <DebouncedInput
@@ -779,6 +827,7 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
   const [tokenState, setTokenState] = useState(null);
   const [tokenInput, setTokenInput] = useState('');
   const [editing, setEditing] = useState(null);
+  const [renaming, setRenaming] = useState(null);
   const [addingCategory, setAddingCategory] = useState(false);
   const [tab, setTab] = useState('ai');
   const toast = useToast();
@@ -1018,9 +1067,11 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
             </div>
             <div className="card-pad">
               <p className="small muted" style={{ marginTop: 0 }}>
-                Every quote in the app is built from these numbers. Change one and every order recalculates.
-                Anything you add here appears in the consultation flow, on the quote and on the spec sheet
-                alongside the built-in options.
+                Every quote in the app is built from these numbers. Change one and every order that is not yet
+                agreed recalculates; an agreed quote holds until you re-quote it. <strong>Rename</strong> changes
+                the words shown for an option - in the consultation, on quotes and on the order form - without
+                touching any order that already chose it. Anything you add here appears in the consultation flow,
+                on the quote and on the spec sheet alongside the built-in options.
               </p>
 
               {catalog.steps.map((step) => {
@@ -1050,7 +1101,15 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
                           </div>
                           <div className="tiny faint">
                             {entry.isBase ? 'Base garment price' : 'Added when selected'} · default {formatMoney(entry.defaultAmount)}
+                            {entry.renamed && ' · renamed'}
                           </div>
+                          {renaming === entry.key && (
+                            <RenameOption
+                              entry={entry}
+                              labels={catalog.labels ?? {}}
+                              onDone={async (message) => { setRenaming(null); await catalog.reload(); if (message) toast(message, 'ok'); }}
+                            />
+                          )}
                         </div>
                         <div className="inline" style={{ justifyContent: 'flex-end', gap: 6 }}>
                           {entry.custom && (
@@ -1059,6 +1118,15 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
                               onClick={() => setEditing({ mode: 'edit', item: customItemsById.get(entry.itemId) })}
                             >
                               Edit
+                            </button>
+                          )}
+                          {!entry.custom && !entry.customOption && (
+                            <button
+                              className="btn btn-sm btn-ghost"
+                              aria-expanded={renaming === entry.key}
+                              onClick={() => setRenaming(renaming === entry.key ? null : entry.key)}
+                            >
+                              Rename
                             </button>
                           )}
                           <DebouncedInput
@@ -1385,6 +1453,58 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
  * not offered - Claude reads photographs but cannot draw a suit, so it is
  * absent from the image list rather than present and failing.
  */
+/**
+ * GD's own words for a built-in option.
+ *
+ * Stored apart from the option, keyed as its price is, so the order that chose
+ * "Medium" still chose the same thing after it is called "Regular" - only the
+ * words on the screen and the paper change. Clearing the name puts the
+ * built-in one back.
+ */
+function RenameOption({ entry, labels, onDone }) {
+  const own = labels[entry.key] ?? {};
+  const [label, setLabel] = useState(entry.optionLabel ?? '');
+  const [desc, setDesc] = useState(entry.optionDesc ?? '');
+  const toast = useToast();
+  const isOption = entry.key.includes(':');
+
+  async function store(next, message) {
+    try {
+      await api.settings.set({ key: 'labelOverrides', value: next });
+      await onDone(message);
+    } catch (err) {
+      toast(messageFor(err), 'err');
+    }
+  }
+
+  const save = () => {
+    const next = { ...labels };
+    if (!label.trim()) delete next[entry.key];
+    else next[entry.key] = isOption ? { label: label.trim(), desc: desc.trim() } : { label: label.trim() };
+    return store(next, label.trim() ? `Renamed to "${label.trim()}"` : 'Built-in name put back');
+  };
+  const reset = () => {
+    const next = { ...labels };
+    delete next[entry.key];
+    return store(next, 'Built-in name put back');
+  };
+
+  return (
+    <div className="rename-option">
+      <div className="inline" style={{ flexWrap: 'wrap' }}>
+        <input className="input" style={{ maxWidth: 220 }} aria-label="Option name" value={label}
+          onChange={(e) => setLabel(e.target.value)} placeholder="Name shown" maxLength={120} />
+        {isOption && (
+          <input className="input" style={{ maxWidth: 240 }} aria-label="Option note" value={desc}
+            onChange={(e) => setDesc(e.target.value)} placeholder="Small note under it (optional)" maxLength={200} />
+        )}
+        <button className="btn btn-sm btn-primary" onClick={save}>Save</button>
+        {(own.label || own.desc !== undefined) && <button className="btn btn-sm btn-ghost" onClick={reset}>Use the built-in name</button>}
+      </div>
+    </div>
+  );
+}
+
 function JobPicker({ title, job, config, providers, models, onChange }) {
   const usable = providers.filter((p) => (job === 'image' ? p.supportsImage : p.supportsVision));
   const chosen = config[job];

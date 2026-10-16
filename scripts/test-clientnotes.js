@@ -60,14 +60,14 @@ app.whenReady().then(async () => {
     tab('Extras').click(); await wait(700);
     const extras = { labels: labels() };
 
-    tab('Detail').click(); await wait(700);
-    const details = { labels: labels(), options: options(), fileInputs: document.querySelectorAll('input[type=file]').length };
+    // GD took the detail customisation page out of the flow.
+    const tabs = [...document.querySelectorAll('.step-tab')].map(t => t.textContent.replace(/^[\d✓]+/, '').trim());
 
     tab('Lining').click(); await wait(700);
     const lining = { labels: labels(), options: options(), fileInputs: document.querySelectorAll('input[type=file]').length };
 
     const status = document.querySelector('.topbar .pill')?.textContent;
-    return JSON.stringify({ jacket, pants, extras, details, lining, status });
+    return JSON.stringify({ jacket, pants, extras, tabs, lining, status });
   })()`));
 
   check(ui.jacket.labels.includes('Button Finish'), 'the jacket has a button finish choice', ui.jacket.labels.join(' | '));
@@ -78,9 +78,7 @@ app.whenReady().then(async () => {
   check(['Slim Fit (Tapered)','Straight Cut','Boot Leg','Wide Leg'].every(o => ui.pants.options.some(t => t.includes(o))),
     'with the bottom fits GD listed', ui.pants.options.join(' | '));
   check(!ui.extras.labels.some(l => l === 'Button Colour'), 'the shirt button colour is gone', ui.extras.labels.join(' | '));
-  check(ui.details.labels.some(l => l.includes('Embroidery Monogram')), 'the monogram is one field with places to choose',
-    ui.details.labels.join(' | '));
-  check(ui.details.options.some(o => o.includes('Jacket collar')), 'and the jacket collar is one of them', ui.details.options.join(' | '));
+  check(!ui.tabs.some((t) => /Detail/.test(t)), 'the detail customisation page is gone, as GD asked', ui.tabs.join(' > '));
   check(ui.lining.labels.some(l => l.includes('collage')), 'the lining collage upload sits with the lining',
     ui.lining.labels.join(' | '));
   check(ui.lining.fileInputs > 0, 'and it offers a file picker');

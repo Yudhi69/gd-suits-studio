@@ -6,12 +6,14 @@ import { ConfirmButton, useToast } from './ui.jsx';
  * maker's own comments to be stored alongside the spec at each stage, so this
  * panel is mounted on every screen and always writes against the current step.
  */
-export default function NotesPanel({ step, notes = [], onAdd, onDelete, compact }) {
+export default function NotesPanel({ step, notes = [], onAdd, onDelete, compact, alsoShow = [] }) {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const toast = useToast();
 
-  const forStep = notes.filter((n) => n.step === step);
+  // `alsoShow` is for a page that took over another's job - the photographs
+  // and the cloth became one page, and the cloth's notes came with it.
+  const forStep = notes.filter((n) => n.step === step || alsoShow.includes(n.step));
 
   async function submit() {
     const body = draft.trim();

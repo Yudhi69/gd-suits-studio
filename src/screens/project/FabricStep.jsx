@@ -16,7 +16,8 @@ const SWATCH_SLOTS = PHOTO_SLOTS.filter((s) => s.role === 'swatch');
  * reference, with the colours measured from it and the share of each, and the
  * sampled colour stands in for the measured one it matches.
  */
-export default function FabricStep({ ctx }) {
+/** `bare` leaves out the notes, for the page that shows this beside the photographs. */
+export default function FabricStep({ ctx, bare = false }) {
   const { project, savePhoto, deletePhoto, addNote, deleteNote, updateAnalysis, photoBySlot } = ctx;
   const [sampling, setSampling] = useState(null);
   const toast = useToast();
@@ -33,7 +34,7 @@ export default function FabricStep({ ctx }) {
       </Banner>
 
       <div className="row" style={{ alignItems: 'flex-start' }}>
-        <div style={{ flex: 2, minWidth: 420 }}>
+        <div style={{ flex: 2, minWidth: bare ? 0 : 420 }}>
           <div className="card">
             <div className="card-head"><h3>Cloth &amp; lining</h3></div>
             <div className="card-pad">
@@ -114,9 +115,11 @@ export default function FabricStep({ ctx }) {
           </div>
         </div>
 
-        <div style={{ flex: 1, minWidth: 300 }}>
-          <NotesPanel step="fabric" notes={project.notes} onAdd={(b) => addNote('fabric', b)} onDelete={deleteNote} />
-        </div>
+        {!bare && (
+          <div style={{ flex: 1, minWidth: 300 }}>
+            <NotesPanel step="fabric" notes={project.notes} onAdd={(b) => addNote('fabric', b)} onDelete={deleteNote} />
+          </div>
+        )}
       </div>
 
       {sampling?.photo && (

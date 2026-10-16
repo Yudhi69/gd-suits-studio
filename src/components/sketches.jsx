@@ -1,7 +1,7 @@
 import React from 'react';
 
 /**
- * Line drawings of the choices that are hard to name.
+ * Line drawings of the choices that are hard to name - lapels and pockets.
  *
  * "Notch", "peak" and "shawl" are the trade's words, and a client who has
  * never had a suit made does not know them - which is the moment the choice
@@ -78,6 +78,43 @@ export const WideLapel = () => <WidthLapel out={29} inner={44} />;
 export const ExtraWideLapel = () => <WidthLapel out={25} inner={43} />;
 
 /**
+ * The hip pockets, drawn on the lower front of the jacket.
+ *
+ * GD asked for a picture here for the same reason as the lapels: "flap",
+ * "patch" and "slanted" are words the client has to be shown. A flap hangs
+ * from a welt; a patch is a pocket sewn on top of the cloth, so it has a
+ * bottom and corners; a slanted pocket is a flap set at an angle, higher
+ * toward the side seam and lower toward the front, the way a riding jacket's
+ * is cut.
+ */
+const LOWER_FRONT = (
+  <>
+    <path d="M 12 6 L 10 86 Q 28 94 44 88 Q 50 60 50 14" />
+    <path d="M 88 6 L 90 86 Q 72 94 56 88 Q 50 60 50 14" />
+    <circle cx="50" cy="22" r="2.3" fill="currentColor" stroke="none" />
+  </>
+);
+
+function Pockets({ pocket, welt }) {
+  return (
+    <svg viewBox="0 0 100 100" className="sketch" aria-hidden="true" focusable="false">
+      {LOWER_FRONT}
+      {welt && <Pair d={welt} />}
+      <Pair className="sketch-lapel" d={pocket} />
+    </svg>
+  );
+}
+
+export const FlapPocket = () => <Pockets welt="M 16 56 L 38 56" pocket="M 16 56 L 38 56 L 38 64 L 16 64 Z" />;
+export const PatchPocket = () => (
+  <Pockets
+    welt="M 16 57 L 38 57"
+    pocket="M 16 51 L 38 51 L 38 70 Q 38 74 34 74 L 20 74 Q 16 74 16 70 Z"
+  />
+);
+export const SlantedPocket = () => <Pockets pocket="M 16 53 L 38 61 L 37 68 L 15 60 Z" />;
+
+/**
  * Which drawing belongs to which option, as `field id:option key`.
  *
  * A lookup rather than a property on the option, because an option GD adds
@@ -91,6 +128,9 @@ export const SKETCHES = {
   'lapelWidth:standard': StandardLapel,
   'lapelWidth:wide': WideLapel,
   'lapelWidth:extra_wide': ExtraWideLapel,
+  'pockets:flap': FlapPocket,
+  'pockets:patch': PatchPocket,
+  'pockets:slanted': SlantedPocket,
 };
 
 export const sketchFor = (fieldId, optionKey) => SKETCHES[`${fieldId}:${optionKey}`] ?? null;

@@ -4,6 +4,8 @@ import { formatMoney } from '../../lib/pricing.js';
 import { PAYMENT_KINDS } from '../../lib/catalog.js';
 import { ConfirmButton, DebouncedInput, Empty, Switch, useToast } from '../../components/ui.jsx';
 import PartyPanel from '../../components/PartyPanel.jsx';
+import { InformalQuoteCard } from '../../components/InformalQuote.jsx';
+import { suitName } from '../../lib/quote.js';
 
 /**
  * The order as a job rather than a design: the cloth it is cut from, how many,
@@ -14,9 +16,10 @@ import PartyPanel from '../../components/PartyPanel.jsx';
  * them on the order means the money and the work can never drift apart from
  * the suit they belong to.
  */
-export default function OrderStep({ ctx, business }) {
+export default function OrderStep({ ctx, business, overrides, steps, onInformal, onFormal }) {
   const { project, updateProject, reload } = ctx;
   const toast = useToast();
+  const suits = project.suits ?? [];
 
   const quoted = project.quote?.total ?? 0;
   const paid = (project.payments ?? []).reduce(
@@ -40,41 +43,63 @@ export default function OrderStep({ ctx, business }) {
         {/* ---------------------------------------------------- the job --- */}
         <div style={{ flex: 2, minWidth: 440 }}>
           <div className="card">
-            <div className="card-head"><h3>Order details</h3></div>
+            <div className="card-head">
+              <h3>Order details</h3>
+              <div className="spacer" />
+              <span className="tiny faint">{suits.length === 1 ? 'One suit' : `${suits.length} suits`} on this order</span>
+            </div>
             <div className="card-pad">
-              <div className="field" style={{ maxWidth: 160 }}>
-                <label>Number of suits</label>
-                <DebouncedInput type="number" min="1" className="input" value={project.quantity ?? 1}
-                  onCommit={(v) => updateProject({ quantity: Number(v) || 1 })} />
-              </div>
-              {/* The three things that identify the cloth, read together. */}
-              <div className="grid grid-3">
-                <div className="field">
-                  <label>Fabric colour</label>
-                  <DebouncedInput className="input" placeholder="Midnight blue"
-                    value={project.fabric_name} onCommit={(v) => updateProject({ fabric_name: v })} />
+              {/* One set of cloth details per suit. The order used to carry a
+                  "number of suits" and one cloth, so a second suit had nowhere
+                  to say what it was cut from. The first suit's cloth is still
+                  the order's, for the order list and the database sheet. */}
+              {suits.map((suit, i) => (
+                <div key={suit.id} className="order-suit">
+                  {suits.length > 1 && (
+                    <div className="order-suit-head">
+                      <span className="order-suit-num">{i + 1}</span>
+                      <span className="small" style={{ fontWeight: 600 }}>{suitName(suit, i, suits)}</span>
+                      <span className="spacer" />
+                      <ConfirmButton
+                        className="btn btn-sm btn-ghost btn-danger"
+                        confirmLabel="Remove this suit?"
+                        onConfirm={() => run(() => api.suits.remove({ id: suit.id }), 'Suit removed')}
+                      >
+                        Remove
+                      </ConfirmButton>
+                    </div>
+                  )}
+                  <div className="grid grid-3">
+                    <div className="field">
+                      <label>Fabric colour</label>
+                      <DebouncedInput className="input" placeholder="Midnight blue" value={suit.fabric_name}
+                        onCommit={(v) => run(() => api.suits.update({ id: suit.id, patch: { fabric_name: v } }))} />
+                    </div>
+                    <div className="field">
+                      <label>Material code</label>
+                      <DebouncedInput className="input mono" placeholder="e.g. B-2241" value={suit.fabric_code}
+                        onCommit={(v) => run(() => api.suits.update({ id: suit.id, patch: { fabric_code: v } }))} />
+                    </div>
+                    <div className="field">
+                      <label>Supplier</label>
+                      <DebouncedInput className="input" value={suit.supplier}
+                        onCommit={(v) => run(() => api.suits.update({ id: suit.id, patch: { supplier: v } }))} />
+                    </div>
+                  </div>
                 </div>
-                <div className="field">
-                  <label>Material code</label>
-                  <DebouncedInput className="input mono" placeholder="e.g. B-2241"
-                    value={project.fabric_code} onCommit={(v) => updateProject({ fabric_code: v })} />
-                </div>
-                <div className="field">
-                  <label>Supplier</label>
-                  <DebouncedInput className="input" value={project.supplier}
-                    onCommit={(v) => updateProject({ supplier: v })} />
-                </div>
+              ))}
+              <button
+                className="btn btn-sm"
+                onClick={() => run(() => api.suits.add({ projectId: project.id, clientId: project.client_id }), 'Another suit added')}
+              >
+                + Add another suit for {project.name || 'this client'}
+              </button>
+              <div className="hint" style={{ marginTop: 6 }}>
+                Each suit is specified on its own on the garment pages - pick it from the strip at the top. A suit for
+                someone else goes on with them, under People &amp; suits.
               </div>
 
               <hr className="divider" />
-
-              <div className="row">
-                <div className="field">
-                  <label>First appointment</label>
-                  <DebouncedInput className="input" type="date" value={project.first_appointment}
-                    onCommit={(v) => updateProject({ first_appointment: v })} />
-                </div>
-              </div>
 
               <div className="field">
                 <label>Appointment notes</label>
@@ -92,7 +117,15 @@ export default function OrderStep({ ctx, business }) {
         </div>
 
         {/* --------------------------------------------------- the money --- */}
-        <div style={{ flex: 1, minWidth: 320 }}>
+        <div className="stack" style={{ flex: 1, minWidth: 320 }}>
+          <InformalQuoteCard
+            project={project}
+            overrides={overrides}
+            steps={steps}
+            onOpen={onInformal}
+            onFormal={onFormal}
+            reload={reload}
+          />
           <div className="card">
             <div className="card-head">
               <h3>Money</h3>

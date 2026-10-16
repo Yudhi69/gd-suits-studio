@@ -122,6 +122,29 @@ function jsonBlob(value, field, maxBytes = 256 * 1024) {
   return value;
 }
 
+/**
+ * GD's own wording for built-in options: `{ "jacketFit:medium": { label, desc } }`.
+ *
+ * Rebuilt rather than passed through, so only short strings under keys of the
+ * catalogue's own shape are ever stored - the labels are shown on every page
+ * and printed on what goes to clients.
+ */
+const LABEL_KEY = /^[A-Za-z][A-Za-z0-9_]{0,60}(:[A-Za-z0-9_-]{1,60})?$/;
+
+function labelOverrides(value) {
+  jsonBlob(value, 'wording', 64 * 1024);
+  const out = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (!LABEL_KEY.test(key)) fail('wording is keyed to an option that does not exist');
+    if (!entry || typeof entry !== 'object') continue;
+    const label = str(entry.label, 'option name', 120).trim();
+    const desc = entry.desc === undefined ? undefined : str(entry.desc, 'option note', 200).trim();
+    if (!label && desc === undefined) continue;
+    out[key] = desc === undefined ? { label } : { label, desc };
+  }
+  return out;
+}
+
 /** A Gemini model name, which becomes part of a request URL. */
 function modelName(value, field = 'model') {
   const v = str(value, field, 120);
@@ -129,7 +152,8 @@ function modelName(value, field = 'model') {
   return v;
 }
 
-const PHOTO_SLOTS = ['front', 'side', 'back', 'face', 'fabric', 'lining', 'lining_collage', 'tie_reference', 'shoes', 'inspiration', 'fitting'];
+const PHOTO_SLOTS = ['front', 'side', 'back', 'face', 'fabric', 'lining', 'lining_collage', 'tie_reference',
+  'pocket_square_reference', 'shoes', 'inspiration', 'fitting'];
 const GARMENTS = ['jacket', 'waistcoat', 'pants', 'shirt', ''];
 const REFERENCE_KINDS = ['style', 'fabric', 'lining', 'fit'];
 const PROJECT_STATUSES = [
@@ -142,7 +166,7 @@ const FITTING_KINDS = ['first', 'final', 'extra'];
 module.exports = {
   ValidationError,
   id, optionalId, str, oneOf, num,
-  filename, scope, dataUrl, jsonBlob, modelName, batchId,
+  filename, scope, dataUrl, jsonBlob, modelName, batchId, labelOverrides,
   PHOTO_SLOTS, GARMENTS, REFERENCE_KINDS, PROJECT_STATUSES, FITTING_KINDS,
   PAYMENT_KINDS, ALTERATION_STATUSES, EXTRA_STATUSES,
   MAX_IMAGE_BYTES,

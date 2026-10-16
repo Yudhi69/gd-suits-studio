@@ -12,6 +12,17 @@ import { nameColour } from './colour.js';
 
 export const CURRENCY = 'R';
 
+/**
+ * A colour as it is typed - "burgundy" - and, on an order taken while colours
+ * were still picked off a wheel, the stored code read out as words with the
+ * code beside it, so an old order still says something a person understands.
+ */
+export function colourWords(value) {
+  const text = String(value ?? '').trim();
+  if (/^#[0-9a-f]{6}$/i.test(text)) return `${nameColour(text)} (${text})`;
+  return text;
+}
+
 export const EVENT_TYPES = [
   { key: 'wedding', label: 'Wedding' },
   { key: 'matric', label: 'Matric Ball' },
@@ -56,6 +67,10 @@ export const PHOTO_SLOTS = [
   { key: 'side', label: 'Side', role: 'subject', hint: 'Profile view - shows posture, stomach and seat.' },
   { key: 'back', label: 'Back', role: 'subject', hint: 'Shows shoulder slope, blades and seat.' },
   { key: 'face', label: 'Face', role: 'subject', hint: 'Head and shoulders in even light - used for skin tone.' },
+  // The pair the client will wear, so the render shows their shoes. Not sold
+  // by GD, so not on the bill - it was on the Extras page until shoes and
+  // socks came off it, and is a photograph like the others.
+  { key: 'shoes', label: "Client's shoes", role: 'shoes', hint: 'Optional. The pair they will wear - it goes into the render.' },
   { key: 'fabric', label: 'Fabric', role: 'swatch', hint: 'Fill the frame with the cloth, flat and in daylight.' },
   { key: 'lining', label: 'Lining', role: 'swatch', hint: 'The lining cloth or pattern.' },
   { key: 'inspiration', label: 'Reference', role: 'reference', hint: 'Any photo the client brought in as a reference.' },
@@ -64,17 +79,22 @@ export const PHOTO_SLOTS = [
 /**
  * The builder flow. Each step is a screen; each field renders a control.
  *
- * field.type   choice | toggle | text | longtext | number | colour | measure
+ * field.type   choice | multi | toggle | text | longtext | number | images | photo
  * field.price  flat delta added when the field is truthy (toggle/text fields)
  * option.price delta added when that option is chosen
  * field.showIf predicate over the working spec - hides dependent fields
+ * field.section a small heading drawn above the field, to group a long page
+ * field.colourText a colour typed as words; an old stored hex is read out too
+ * option.retired no longer offered, but still read, priced and printed on the
+ *              orders that already chose it, so removing an option from GD's
+ *              list never rewrites a suit that has been sold
  * field.prompt how the value is phrased for the AI render prompt
  */
 export const STEPS = [
   {
     key: 'base',
     title: 'Base Garment',
-    blurb: 'Everything else branches off this choice.',
+    blurb: 'What the client is ordering. This page alone is enough for an informal quote.',
     fields: [
       {
         id: 'suitType',
@@ -88,14 +108,47 @@ export const STEPS = [
           waistcoat_only: 'a single waistcoat, worn on its own',
           pants_only: 'a single pair of trousers, worn on their own',
         })[v] ?? 'a two-piece suit (jacket and trousers)',
+        // In the order GD lists them.
         options: [
+          { key: 'three_piece', label: '3-Piece', desc: 'Jacket, waistcoat and pants', price: 0, basePrice: BASE_PRICES.three_piece },
           { key: 'two_piece', label: '2-Piece', desc: 'Jacket and pants', price: 0, basePrice: BASE_PRICES.two_piece },
-          { key: 'three_piece', label: '3-Piece', desc: 'Adds a waistcoat', price: 0, basePrice: BASE_PRICES.three_piece },
           { key: 'blazer_only', label: 'Single Blazer', desc: 'Jacket alone', price: 0, basePrice: BASE_PRICES.blazer_only },
-          { key: 'waistcoat_only', label: 'Single Waistcoat', desc: 'Waistcoat alone', price: 0, basePrice: BASE_PRICES.waistcoat_only },
           { key: 'pants_only', label: 'Single Pants', desc: 'Trousers alone', price: 0, basePrice: BASE_PRICES.pants_only },
+          { key: 'waistcoat_only', label: 'Single Waistcoat', desc: 'Waistcoat alone', price: 0, basePrice: BASE_PRICES.waistcoat_only },
         ],
       },
+
+      // What goes with the suit. Chosen here, with its colour, so the base
+      // page alone prices the whole order; the Extras page only asks for the
+      // detail of what was ticked here.
+      { id: 'shirt', label: 'Shirt', type: 'toggle', price: 850, section: 'Add to the order',
+        prompt: (v) => (v ? 'a matching dress shirt' : null) },
+      { id: 'shirtColour', label: 'Shirt colour', type: 'text', colourText: true, showIf: (s) => s.shirt,
+        placeholder: 'White, light blue, ivory...', prompt: (v) => `the shirt in ${colourWords(v)}` },
+
+      { id: 'neckwear', label: 'Tie / Bow Tie', type: 'toggle',
+        prompt: (v, s) => (v ? `a ${s.neckwearType === 'bow' ? 'bow tie' : 'tie'}` : null) },
+      {
+        id: 'neckwearType',
+        label: 'Tie or bow tie',
+        type: 'choice',
+        showIf: (s) => s.neckwear,
+        prompt: () => null, // the neckwear toggle already names it
+        options: [
+          { key: 'tie', label: 'Tie', price: 350 },
+          { key: 'bow', label: 'Bow Tie', price: 300 },
+        ],
+      },
+      { id: 'neckwearColour', label: 'Tie / bow tie colour', type: 'text', colourText: true, showIf: (s) => s.neckwear,
+        placeholder: 'Burgundy, silver paisley...',
+        prompt: (v, s) => `the ${s.neckwearType === 'bow' ? 'bow tie' : 'tie'} in ${colourWords(v)}` },
+
+      { id: 'lapelChain', label: 'Lapel Chain', type: 'toggle', price: 180, prompt: (v) => (v ? 'a lapel chain' : null) },
+      { id: 'lapelPin', label: 'Lapel Pin', type: 'toggle', price: 250, prompt: (v) => (v ? 'a lapel pin' : null) },
+      // Starting figures, like every other price here - set the shop's own in
+      // Settings > Price list.
+      { id: 'tiePin', label: 'Tie Pin', type: 'toggle', price: 180, prompt: (v) => (v ? 'a tie pin' : null) },
+      { id: 'cufflinks', label: 'Cuff Links', type: 'toggle', price: 250, prompt: (v) => (v ? 'cufflinks' : null) },
     ],
   },
 
@@ -109,18 +162,36 @@ export const STEPS = [
         label: 'Lining',
         type: 'choice',
         prompt: () => null, // described in its own paragraph of the render prompt
+        // The keys are from when these read "choose a colour" and "upload a
+        // pattern". Kept, so the orders already filed under them keep their
+        // choice and their price.
         options: [
-          { key: 'colour', label: 'Choose Colour', price: 0 },
-          { key: 'pattern', label: 'Upload Pattern', desc: 'Custom cloth', price: 450 },
+          { key: 'colour', label: 'Standard', desc: 'From the lining range', price: 0 },
+          { key: 'pattern', label: 'Custom', desc: 'Printed from artwork', price: 450 },
         ],
       },
-      { id: 'liningColour', label: 'Lining Colour & Pattern', type: 'colour', showIf: (s) => s.liningMode === 'colour',
-        default: '#1b2a4a', prompt: () => null },
+      // Typed, not picked off a colour wheel: a lining is matched from stock
+      // by eye and code, and a wheel promised a shade nobody could guarantee.
+      { id: 'liningColour', label: 'Lining colour', type: 'text', colourText: true,
+        placeholder: 'Burgundy, navy paisley...', prompt: () => null },
       { id: 'liningCode', label: 'Lining Material Code', type: 'text', mono: true, placeholder: 'e.g. LN 1116', prompt: () => null },
       { id: 'liningCollage', label: 'Custom lining - upload collage', type: 'images', slot: 'lining_collage',
         showIf: (s) => s.liningMode === 'pattern',
         hint: 'The artwork the lining is printed from. Several images can be added.',
         prompt: () => null },
+      {
+        // Was on the detail page, beside a second "custom lining" switch that
+        // charged for the same thing twice.
+        id: 'customLiningScope',
+        label: 'Custom lining goes in',
+        type: 'choice',
+        showIf: (s) => s.liningMode === 'pattern' && includesPart(s.suitType ?? 'two_piece', 'waistcoat'),
+        prompt: (v) => (v === 'jacket_waistcoat' ? 'custom lining in the jacket and the waistcoat' : 'custom lining in the jacket only'),
+        options: [
+          { key: 'jacket', label: 'Jacket only', price: 0 },
+          { key: 'jacket_waistcoat', label: 'Jacket and waistcoat', price: 250 },
+        ],
+      },
       {
         id: 'stitching',
         label: 'Stitching & Piping',
@@ -149,10 +220,11 @@ export const STEPS = [
         prompt: (v) => `a ${v} fit through the body`,
         options: [
           { key: 'slim', label: 'Slim', desc: 'Close to the body', price: 0 },
-          { key: 'medium', label: 'Standard', desc: 'In between', price: 0 },
+          { key: 'medium', label: 'Medium', desc: 'In between', price: 0 },
+          { key: 'comfortable', label: 'Comfortable', desc: 'A little room', price: 0 },
           { key: 'loose', label: 'Loose', desc: 'Relaxed drape', price: 0 },
           { key: 'oversized', label: 'Oversized', desc: 'Deliberately large', price: 0 },
-          { key: 'other', label: 'Other', desc: 'Describe below', price: 0 },
+          { key: 'other', label: 'Other', desc: 'Describe below', price: 0, retired: true },
         ],
       },
       {
@@ -207,7 +279,7 @@ export const STEPS = [
         required: true,
         prompt: (v, spec) =>
           v === 'satin'
-            ? `satin-faced tuxedo lapels and satin buttons${spec.tuxedoColour ? ` in ${spec.tuxedoColour}` : ''}`
+            ? `satin-faced tuxedo lapels and satin buttons${spec.tuxedoColour ? ` in ${colourWords(spec.tuxedoColour)}` : ''}`
             : 'a plain self-faced lapel, no satin',
         options: [
           { key: 'plain', label: 'No', desc: 'Self-faced lapel', price: 0 },
@@ -217,9 +289,10 @@ export const STEPS = [
       {
         id: 'tuxedoColour',
         label: 'Tuxedo Finish Colour',
-        type: 'colour',
+        type: 'text',
+        colourText: true,
         showIf: (s) => s.tuxedoFinish === 'satin',
-        default: '#111111',
+        placeholder: 'Black, midnight blue...',
         prompt: () => null, // named in the tuxedo clause above
       },
       {
@@ -267,21 +340,22 @@ export const STEPS = [
         required: true,
         prompt: (v, spec) =>
           v === 'custom'
-            ? `buttons in ${nameColour(spec.buttonColourCustom || '#c9a227')}`
+            ? (spec.buttonColourCustom ? `buttons in ${colourWords(spec.buttonColourCustom)}` : 'buttons in a contrasting colour')
             : `${v} buttons`,
         options: [
           { key: 'neutral', label: 'Neutral', desc: 'Matched to the cloth', price: 0 },
           { key: 'gold', label: 'Gold', price: 180 },
           { key: 'silver', label: 'Silver', price: 180 },
-          { key: 'custom', label: 'Other Colour', desc: 'Pick below', price: 240 },
+          { key: 'custom', label: 'Other Colour', desc: 'Describe below', price: 240 },
         ],
       },
       {
         id: 'buttonColourCustom',
         label: 'Button Colour',
-        type: 'colour',
+        type: 'text',
+        colourText: true,
         showIf: (s) => s.buttonColour === 'custom',
-        default: '#c9a227',
+        placeholder: 'Horn brown, mother of pearl...',
         prompt: () => null, // already named by the finish clause above
       },
       {
@@ -527,50 +601,76 @@ export const STEPS = [
   },
 
   {
+    // The detail of what was ticked on the base garment page. Shoes and socks
+    // are gone - GD does not sell them. The photo of the client's own shoes,
+    // which is for the render rather than the bill, moved to the photographs.
     key: 'extras',
     title: 'Extras',
-    blurb: 'Shirt, neckwear, pins, shoes - each one adds to the total.',
+    blurb: 'The detail of the shirt, tie and pins chosen on the base garment page.',
+    empty: 'Nothing to detail yet - tick a shirt, a tie or a lapel pin on the Base Garment page.',
     fields: [
-      { id: 'shirt', label: 'Shirt', type: 'toggle', price: 850, prompt: (v) => (v ? 'a matching dress shirt' : null) },
-      { id: 'shirtColour', label: 'Shirt Colour', type: 'colour', showIf: (s) => s.shirt, default: '#ffffff',
-        prompt: (v) => `the shirt in ${nameColour(v)} (${v})` },
       { id: 'shirtCode', label: 'Shirt Material Code', type: 'text', mono: true, showIf: (s) => s.shirt,
-        placeholder: 'e.g. MPT 1747', prompt: () => null },
+        section: 'Shirt', placeholder: 'e.g. MPT 1747', prompt: () => null },
       {
         id: 'shirtCollar',
         label: 'Collar Type',
         type: 'choice',
         showIf: (s) => s.shirt,
-        prompt: (v) => `a ${({ standard: 'standard', cutaway: 'cutaway', wing: 'winged' })[v] ?? v} shirt collar`,
+        prompt: (v, s) => (v === 'custom'
+          ? (s.shirtCollarCustom ? `a shirt collar: ${s.shirtCollarCustom}` : null)
+          : `a ${({
+            standard: 'standard', cutaway: 'cutaway', pointed: 'pointed', button_down: 'button-down',
+            wing: 'wing-tip', chinese: 'mandarin (Chinese)',
+          })[v] ?? v} shirt collar`),
         options: [
           { key: 'standard', label: 'Standard', price: 0 },
           { key: 'cutaway', label: 'Cutaway', price: 60 },
-          { key: 'wing', label: 'Winged', desc: 'Black tie', price: 90 },
+          { key: 'pointed', label: 'Pointed', price: 0 },
+          { key: 'button_down', label: 'Button Down', price: 0 },
+          { key: 'wing', label: 'Wing Tip', desc: 'Black tie', price: 90 },
+          { key: 'chinese', label: 'Chinese', desc: 'Mandarin, no points', price: 0 },
+          { key: 'custom', label: 'Custom', desc: 'Explain below', price: 0 },
         ],
       },
+      { id: 'shirtCollarCustom', label: 'Describe the collar', type: 'text', showIf: (s) => s.shirt && s.shirtCollar === 'custom',
+        prompt: () => null }, // carried by the collar clause
       {
         id: 'shirtCuff',
-        label: 'Cuff Style',
+        label: 'Cuff Type',
         type: 'choice',
         showIf: (s) => s.shirt,
-        prompt: (v) => (v === 'french' ? 'double (french) cuffs with cufflinks' : 'single cuffs'),
+        prompt: (v) => ({
+          hybrid: 'single convertible cuffs that take a button or a cufflink',
+          french: 'double (french) cuffs with cufflinks',
+          barrel: 'single cuffs',
+        })[v] ?? null,
         options: [
-          { key: 'barrel', label: 'Single Cuff', price: 0 },
+          { key: 'hybrid', label: 'Single Hybrid', desc: 'Button and cuff', price: 0 },
           { key: 'french', label: 'Double Cuff (French)', desc: 'Cufflinks', price: 180 },
+          { key: 'barrel', label: 'Single Cuff', price: 0, retired: true },
         ],
       },
       {
         id: 'shirtButtonColour',
-        label: 'Shirt Button Colour',
+        label: 'Shirt Button',
         type: 'choice',
         showIf: (s) => s.shirt,
-        prompt: (v) => (v === 'neutral' ? null : `${v.replace('_', ' ')} shirt buttons`),
+        prompt: (v) => ({
+          white: 'white shirt buttons',
+          black: 'black shirt buttons',
+          metallic: 'metallic shirt buttons',
+          covered: 'shirt buttons covered in the shirt cloth',
+          metallic_silver: 'metallic silver shirt buttons',
+          metallic_gold: 'metallic gold shirt buttons',
+        })[v] ?? null,
         options: [
-          { key: 'neutral', label: 'Neutral', desc: 'Matching the shirt', price: 0 },
           { key: 'white', label: 'White', price: 0 },
           { key: 'black', label: 'Black', price: 0 },
-          { key: 'metallic_silver', label: 'Metallic Silver', price: 120 },
-          { key: 'metallic_gold', label: 'Metallic Gold', price: 120 },
+          { key: 'metallic', label: 'Metallic', price: 120 },
+          { key: 'covered', label: 'Material Covered', price: 120 },
+          { key: 'neutral', label: 'Neutral', desc: 'Matching the shirt', price: 0, retired: true },
+          { key: 'metallic_silver', label: 'Metallic Silver', price: 120, retired: true },
+          { key: 'metallic_gold', label: 'Metallic Gold', price: 120, retired: true },
         ],
       },
       {
@@ -580,27 +680,17 @@ export const STEPS = [
         showIf: (s) => s.shirt,
         prompt: (v) => (v === 'pleated' ? 'a pleated shirt front' : null),
         options: [
-          { key: 'normal', label: 'Normal', price: 0 },
+          { key: 'normal', label: 'Plain', price: 0 },
           { key: 'pleated', label: 'Pleated', desc: 'Black tie', price: 220 },
         ],
       },
       { id: 'shirtFinishes', label: 'Custom shirt finishes', type: 'longtext', showIf: (s) => s.shirt,
         placeholder: 'Contrast collar, placket detail, hidden buttons...', prompt: (v) => `shirt detail: ${v}` },
 
-      { id: 'neckwear', label: 'Tie / Bow Tie', type: 'toggle', prompt: (v, s) => (v ? `a ${s.neckwearType === 'bow' ? 'bow tie' : 'tie'}` : null) },
-      {
-        id: 'neckwearType',
-        label: 'Type',
-        type: 'choice',
-        showIf: (s) => s.neckwear,
-        prompt: () => null, // the neckwear toggle already names it
-        options: [
-          { key: 'tie', label: 'Tie', price: 350 },
-          { key: 'bow', label: 'Bow Tie', price: 300 },
-        ],
-      },
-      { id: 'neckwearColour', label: 'Tie Colour', type: 'colour', showIf: (s) => s.neckwear, default: '#7b1113',
-        prompt: (v, s) => `the ${s.neckwearType === 'bow' ? 'bow tie' : 'tie'} in ${nameColour(v)} (${v})` },
+      { id: 'tieReference', label: 'Tie photo', type: 'images', slot: 'tie_reference',
+        showIf: (s) => s.neckwear, section: 'Tie',
+        hint: 'A picture of the tie, or the cloth it is made from. The colour is typed on the Base Garment page.',
+        prompt: () => null },
       {
         id: 'pocketSquare',
         label: 'Pocket Square',
@@ -608,7 +698,7 @@ export const STEPS = [
         showIf: (s) => s.neckwear,
         prompt: (v, s) =>
           v === 'same' ? 'a pocket square in the same cloth as the tie'
-            : v === 'different' ? `a pocket square in ${nameColour(s.pocketSquareColour ?? '#ffffff')}`
+            : v === 'different' ? (s.pocketSquareColour ? `a pocket square in ${colourWords(s.pocketSquareColour)}` : 'a pocket square')
             : null,
         options: [
           { key: 'none', label: 'None', price: 0 },
@@ -616,77 +706,15 @@ export const STEPS = [
           { key: 'different', label: 'Different colour', price: 150 },
         ],
       },
-      { id: 'pocketSquareColour', label: 'Pocket Square Colour', type: 'colour',
-        showIf: (s) => s.pocketSquare === 'different', default: '#ffffff', prompt: () => null },
-      { id: 'tieReference', label: 'Tie reference photo', type: 'images', slot: 'tie_reference',
-        showIf: (s) => s.neckwear,
-        hint: 'A picture of the tie or the cloth it is made from.',
+      { id: 'pocketSquareColour', label: 'Pocket Square Colour', type: 'text', colourText: true,
+        showIf: (s) => s.neckwear && s.pocketSquare === 'different', placeholder: 'White, gold paisley...', prompt: () => null },
+      { id: 'pocketSquareReference', label: 'Pocket square photo', type: 'images', slot: 'pocket_square_reference',
+        showIf: (s) => s.neckwear && (s.pocketSquare === 'same' || s.pocketSquare === 'different'),
+        hint: 'A picture of the pocket square, or its cloth.',
         prompt: () => null },
 
-      { id: 'lapelChain', label: 'Lapel Chain', type: 'toggle', price: 180, prompt: (v) => (v ? 'a lapel chain' : null) },
-      { id: 'lapelPin', label: 'Lapel Pin', type: 'toggle', price: 250, prompt: (v) => (v ? 'a lapel pin' : null) },
-      { id: 'lapelPinNote', label: 'Pin option', type: 'text', showIf: (s) => s.lapelPin, placeholder: 'Gold rose, feather, crest...',
-        prompt: (v) => `the lapel pin is ${v}` },
-
-      { id: 'shoes', label: 'Shoes', type: 'toggle', prompt: (v, s) => (v ? `dress shoes${s.shoesNote ? ` - ${s.shoesNote}` : ''}` : null) },
-      { id: 'shoesNote', label: 'Shoe detail', type: 'text', showIf: (s) => s.shoes, placeholder: 'Black oxford, size 9...', prompt: () => null },
-      { id: 'shoesPhoto', label: 'Photo of the shoes', type: 'photo', slot: 'shoes', showIf: (s) => s.shoes,
-        hint: 'The pair the client will wear. It goes into the render, so the shoes in the picture are theirs.',
-        prompt: () => null },
-      { id: 'socks', label: 'Socks', type: 'toggle', prompt: (v, s) => (v ? `socks${s.socksNote ? ` - ${s.socksNote}` : ''}` : null) },
-      { id: 'socksNote', label: 'Sock detail', type: 'text', showIf: (s) => s.socks, placeholder: 'Burgundy, mid-calf...', prompt: () => null },
-    ],
-  },
-
-  {
-    key: 'details',
-    title: 'Detail Customisation',
-    blurb: 'Custom lining, monogram and anything else the client asked for.',
-    fields: [
-      { id: 'customLining', label: 'Custom Lining', type: 'toggle', price: 450,
-        prompt: (v) => (v ? null : null) },
-      {
-        id: 'customLiningScope',
-        label: 'Custom lining goes in',
-        type: 'choice',
-        showIf: (s) => s.customLining,
-        prompt: (v) => (v === 'jacket_waistcoat' ? 'custom lining in the jacket and the waistcoat' : 'custom lining in the jacket only'),
-        options: [
-          { key: 'jacket', label: 'Jacket only', price: 0 },
-          { key: 'jacket_waistcoat', label: 'Jacket and waistcoat', price: 250 },
-        ],
-      },
-      {
-        id: 'monogramLocations',
-        label: 'Embroidery Monogram',
-        type: 'multi',
-        hint: 'Where the monogram is embroidered. Choose as many as apply.',
-        prompt: (v, spec) => {
-          if (!Array.isArray(v) || !v.length || !spec.monogramText) return null;
-          // Only the places actually visible on a worn suit reach the render;
-          // the rest are for the spec sheet and the bench.
-          const visible = { jacket_collar: 'under the jacket collar', shirt_cuff: 'on the shirt cuff', shirt_collar: 'on the shirt collar' };
-          const shown = v.map((k) => visible[k]).filter(Boolean);
-          return shown.length ? `a monogram reading "${spec.monogramText}" ${shown.join(' and ')}` : null;
-        },
-        options: [
-          { key: 'jacket_collar', label: 'Jacket collar', price: 200 },
-          { key: 'jacket_pocket', label: 'Inside jacket pocket', price: 200 },
-          { key: 'jacket_lining', label: 'Inside jacket lining', price: 200 },
-          { key: 'shirt_cuff', label: 'Shirt cuff', price: 200 },
-          { key: 'shirt_collar', label: 'Shirt collar', price: 200 },
-          { key: 'other', label: 'Other', desc: 'Specify below', price: 200 },
-        ],
-      },
-      { id: 'monogramText', label: 'Monogram text', type: 'text', maxLength: 40, placeholder: 'e.g. G.D.',
-        showIf: (s) => Array.isArray(s.monogramLocations) && s.monogramLocations.length > 0,
-        prompt: () => null },
-      { id: 'monogramOtherPlace', label: 'Where else', type: 'text', maxLength: 60,
-        showIf: (s) => Array.isArray(s.monogramLocations) && s.monogramLocations.includes('other'),
-        prompt: () => null },
-      { id: 'designRequests', label: 'Any other customisation', type: 'longtext',
-        placeholder: 'Anything the client asked for that is not covered above...',
-        prompt: (v) => v },
+      { id: 'lapelPinNote', label: 'Pin option', type: 'text', showIf: (s) => s.lapelPin, section: 'Lapel pin',
+        placeholder: 'Gold rose, feather, crest...', prompt: (v) => `the lapel pin is ${v}` },
     ],
   },
 ];
@@ -703,8 +731,11 @@ export const MEASUREMENTS = {
       { id: 'jacketLength', label: 'Length (blazer front)', hint: 'Base of the collar to the desired hem.' },
       { id: 'shoulder', label: 'Shoulders (shoulder to shoulder)', hint: 'Seam point to seam point across the back.' },
       { id: 'sleeve', label: 'Sleeve length', hint: 'Shoulder point to the wrist bone, arm slightly bent.' },
-      { id: 'sleeveOpening', label: 'Sleeve opening', hint: 'Around the cuff opening.' },
-      { id: 'bicep', label: 'Bicep (flex)', hint: 'Around the fullest part of the upper arm, flexed.' },
+      // Two arms are rarely the same, so both are taken, side by side. The
+      // left keeps the old single "bicep" id, so a figure already on file is
+      // not lost - it simply reads as the left.
+      { id: 'bicep', label: 'Bicep (flex)', hint: 'Around the fullest part of the upper arm, flexed.',
+        pair: { id: 'bicepRight', sides: ['Left', 'Right'] } },
       { id: 'neck', label: 'Neck', hint: 'Around the base of the neck, one finger of ease.' },
       { id: 'chest', label: 'Chest / bust', hint: 'Around the fullest part, tape level under the arms.' },
       { id: 'waist', label: 'Waist (over the belly button)', hint: 'Around the waist, level with the navel.' },
@@ -724,16 +755,39 @@ export const MEASUREMENTS = {
   pants: {
     label: 'Trousers',
     fields: [
-      { id: 'outseam', label: 'Length (outside leg)', hint: 'Waistband to the desired break at the shoe.' },
+      { id: 'outseam', label: 'Length (outside leg)', hint: 'From the waistband to the ground.' },
       { id: 'pantWaist', label: 'Waist', hint: 'Where the trouser is intended to sit.' },
       { id: 'pantSeat', label: 'Hip loop (over groin area)', hint: 'Fullest part, feet together.' },
-      { id: 'thigh', label: 'Thigh loop', hint: 'Around the fullest part, 2cm below the crotch.' },
+      { id: 'thigh', label: 'Thigh loop', hint: 'Around the thigh.' },
+      { id: 'knee', label: 'Knee loop', hint: 'Around the knee.' },
       { id: 'ankleLoop', label: 'Bottom', hint: 'Around the ankle opening.' },
       { id: 'rise', label: 'Crotch', hint: 'Crotch seam up to the top of the waistband.' },
-      { id: 'knee', label: 'Knee', hint: 'Around the knee cap. Not on the order form - useful for a close cut.' },
     ],
   },
 };
+
+/**
+ * Every single figure a garment takes, one row each, with a pair split into
+ * its two sides. What the measurement form, the summary, the sanity check and
+ * the alterations log all list, so a field added above reaches every one.
+ */
+export function measureRows(garment) {
+  const group = MEASUREMENTS[garment];
+  if (!group) return [];
+  return group.fields.flatMap((f) => (f.pair
+    ? [
+        { id: f.id, label: `${f.label} - ${f.pair.sides[0].toLowerCase()}`, hint: f.hint },
+        { id: f.pair.id, label: `${f.label} - ${f.pair.sides[1].toLowerCase()}`, hint: f.hint },
+      ]
+    : [{ id: f.id, label: f.label, hint: f.hint }]));
+}
+
+/** The garments an order is measured for, by what its base garment includes. */
+export function measuredGarments(suitType) {
+  // The jacket and trouser figures are the body record and are always taken;
+  // the waistcoat's only when one is being made.
+  return Object.keys(MEASUREMENTS).filter((g) => g !== 'waistcoat' || includesPart(suitType ?? 'two_piece', 'waistcoat'));
+}
 
 /**
  * The order pipeline.
@@ -950,10 +1004,35 @@ export function eventTypesWith(customOptions = []) {
   return [...EVENT_TYPES, ...mine];
 }
 
-export function buildSteps(customCategories = [], customItems = [], customOptions = []) {
+/**
+ * GD's own wording over a built-in field or option.
+ *
+ * Keyed exactly as the price list is - `jacketFit:medium` for an option,
+ * `shirt` for a field - so a row in Settings renames and reprices the same
+ * thing. Only the words change: the option's key, and so every order that
+ * already chose it, stays exactly as it was.
+ */
+export function withLabels(field, labels = {}) {
+  const own = labels[field.id];
+  const named = own?.label ? { ...field, label: own.label, renamed: true } : field;
+  if (!Array.isArray(named.options)) return named;
+  return {
+    ...named,
+    options: named.options.map((o) => {
+      const l = labels[`${field.id}:${o.key}`];
+      if (!l) return o;
+      return { ...o, label: l.label || o.label, desc: l.desc !== undefined ? l.desc : o.desc, renamed: true };
+    }),
+  };
+}
+
+export function buildSteps(customCategories = [], customItems = [], customOptions = [], labels = {}) {
   const active = customItems.filter((i) => i.active !== 0);
+  // An item filed under a page that no longer exists - the detail page went in
+  // October - is shown on Extras rather than silently dropped from the flow.
+  const known = new Set([...STEPS.map((s) => s.key), ...customCategories.map((c) => c.key)]);
   const byCategory = active.reduce((acc, item) => {
-    (acc[item.category] ??= []).push(item);
+    (acc[known.has(item.category) ? item.category : 'extras'] ??= []).push(item);
     return acc;
   }, {});
 
@@ -961,7 +1040,10 @@ export function buildSteps(customCategories = [], customItems = [], customOption
 
   const builtIn = STEPS.map((step) => {
     const extra = byCategory[step.key] ?? [];
-    return { ...step, fields: decorate([...step.fields, ...extra.map(customItemToField)]) };
+    return {
+      ...step,
+      fields: decorate([...step.fields.map((f) => withLabels(f, labels)), ...extra.map(customItemToField)]),
+    };
   });
 
   const added = customCategories.map((category) => ({

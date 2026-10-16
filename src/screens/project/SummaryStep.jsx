@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
 import { api, projectMedia, messageFor } from '../../lib/api.js';
 import { buildSpecSheet } from '../../lib/promptBuilder.js';
-import { buildBreakdown, formatMoney } from '../../lib/pricing.js';
-import { quoteFromSpec, quoteDrift, isDraft } from '../../lib/quote.js';
+import { formatMoney } from '../../lib/pricing.js';
+import { orderBreakdown, quoteFromOrder, quoteDrift, isDraft, suitsOf, suitName } from '../../lib/quote.js';
+import { prettyDate } from '../../lib/informalQuote.js';
 import { ConfirmButton } from '../../components/ui.jsx';
-import { EVENT_TYPES, MEASUREMENTS, statusLabel, PROCESS_DATES } from '../../lib/catalog.js';
+import {
+  eventTypesWith, MEASUREMENTS, measureRows, measuredGarments, statusLabel, PROCESS_DATES, STEPS,
+} from '../../lib/catalog.js';
 import { formatMeasure, unitLabel } from '../../lib/units.js';
 import { ORDER_TERMS, GD_CONTACT } from '../../lib/terms.js';
 import { useToast, Spinner, Banner, Modal } from '../../components/ui.jsx';
@@ -24,29 +27,98 @@ const esc = (value) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
+/** Notes are filed under the page they were written on; this is that page's name. */
+const PAGE_NAMES = {
+  client: 'Client', order: 'Order', capture: 'Photos & Cloth', fabric: 'Photos & Cloth',
+  measurements: 'Measurements', preview: 'Preview', fitting: 'Fitting', summary: 'Summary',
+  details: 'Detail Customisation',
+  ...Object.fromEntries(STEPS.map((s) => [s.key, s.title])),
+};
+
 /**
- * The client-facing summary: the full breakdown the brief asks the tailor to
- * be able to send over for approval, plus the export that writes the whole
- * client file out to a folder.
+ * The client-facing summary: the whole order as it will be made and charged -
+ * every suit on it, with its own cloth, design and measurements - plus the
+ * formal quote and the export that writes the client file out to a folder.
  */
-export default function SummaryStep({ ctx, overrides, steps, unit = 'cm', business }) {
+export default function SummaryStep({ ctx, overrides, steps, unit = 'cm', business, customOptions = [] }) {
   const { project } = ctx;
   const [exporting, setExporting] = useState(false);
   const [mailing, setMailing] = useState(false);
   const [confirmSend, setConfirmSend] = useState(null);
+  const [confirmFix, setConfirmFix] = useState(false);
   const toast = useToast();
 
   const megabytes = (bytes) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 
+  const suits = suitsOf(project);
+  const multi = suits.length > 1;
+  const analysis = project.analysis ?? {};
+  const live = orderBreakdown(project, overrides, steps);
+  // Once the order has left draft the agreed figure is the quote; the live one
+  // is only there to show whether the price list has moved since.
+  const { lines, total } = project.quote ?? live;
+  const drift = quoteDrift(project.quote, project, overrides, steps);
+  const approved = project.renders.filter((r) => r.approved);
+  const event = eventTypesWith(customOptions).find((e) => e.key === project.event_type);
+  const eventLabel = project.event_type === 'other' && project.event_other ? project.event_other : event?.label ?? '';
+  const paid = (project.payments ?? []).reduce((t, p) => t + (p.kind === 'refund' ? -p.amount : p.amount), 0);
+
+  /** Each suit: who it is for, what it is cut from, how it is made, what it measures. */
+  const perSuit = suits.map((suit, i) => {
+    const spec = suit.spec ?? {};
+    const measures = measuredGarments(spec.suitType).map((garment) => ({
+      garment,
+      label: MEASUREMENTS[garment].label,
+      rows: measureRows(garment)
+        .map((r) => ({
+          ...r,
+          value: project.measurements.find((m) => m.garment === garment && m.field_id === r.id && m.value !== null
+            && (suit.id ? m.suit_id === suit.id : true))?.value ?? null,
+        }))
+        .filter((r) => r.value !== null),
+    })).filter((g) => g.rows.length);
+    return {
+      id: suit.id ?? i,
+      title: suitName(suit, i, suits),
+      cloth: [suit.fabric_name, suit.fabric_code, suit.supplier].filter(Boolean),
+      sections: buildSpecSheet(spec, steps),
+      measures,
+    };
+  });
+
   /**
-   * Emails the quote, with the renders if the wording asks for them.
+   * Emails the formal quote, with the renders if the wording asks for them.
+   *
+   * The formal quote is the one with a fixed price, so an order still in
+   * draft is fixed first - with GD saying so. Before this, sending from a
+   * draft went out with no prices in it at all, because the email reads the
+   * agreed figures and a draft has none.
    *
    * Through Gmail the app sends it itself, so it is shown first - to whom,
    * what it says, what is attached - and sent only when GD says so. As a
-   * draft it opens in his own mail program, which is its own review, so it
-   * opens straight away as it always has.
+   * draft it opens in his own mail program, which is its own review.
    */
-  async function emailQuote() {
+  function emailQuote() {
+    if (!project.quote) setConfirmFix(true);
+    else previewAndSend();
+  }
+
+  async function fixAndEmail() {
+    setConfirmFix(false);
+    try {
+      await api.projects.setQuote({ id: project.id, quote: quoteFromOrder(project, overrides, steps, 'quoted') });
+      if (isDraft(project.status)) await api.projects.update({ id: project.id, patch: { status: 'quoted' } });
+      await ctx.reload();
+      toast(`Price fixed at ${formatMoney(live.total)}`, 'ok');
+    } catch (err) {
+      toast(messageFor(err), 'err');
+      return;
+    }
+    await previewAndSend();
+  }
+
+  // The send itself, once a fixed quote is on the order.
+  async function previewAndSend() {
     setMailing(true);
     try {
       const preview = await api.quote.preview({ projectId: project.id });
@@ -67,20 +139,10 @@ export default function SummaryStep({ ctx, overrides, steps, unit = 'cm', busine
     else toast(`Draft opened for ${r.to}`, 'ok');
   }
 
-  const spec = project.spec ?? {};
-  const analysis = project.analysis ?? {};
-  const sections = buildSpecSheet(spec, steps);
-  const live = buildBreakdown(spec, overrides, steps);
-  // Once the order has left draft the agreed figure is the quote; the live one
-  // is only there to show whether the price list has moved since.
-  const { lines, total } = project.quote ?? live;
-  const drift = quoteDrift(project.quote, spec, overrides, steps);
-  const approved = project.renders.filter((r) => r.approved);
-
   async function requote() {
     await api.projects.setQuote({
       id: project.id,
-      quote: quoteFromSpec(spec, overrides, steps, project.status),
+      quote: quoteFromOrder(project, overrides, steps, project.status),
     });
     await ctx.reload();
     toast('Re-quoted at today\'s prices', 'ok');
@@ -102,59 +164,45 @@ export default function SummaryStep({ ctx, overrides, steps, unit = 'cm', busine
   function specSheetHtml() {
     // From the one list the schedule page uses, so a date added there cannot
     // quietly go missing from the form the client signs.
-    const schedule = PROCESS_DATES.map(({ key, label }) => [key, label]).filter(([key]) => project[key]);
-    const paid = (project.payments ?? []).reduce((t, p) => t + (p.kind === 'refund' ? -p.amount : p.amount), 0);
-    const orderDetail = [
-      ['Number of suits', project.quantity ?? 1],
-      ['Fabric', project.fabric_name],
-      ['Code / colour', project.fabric_code],
+    const schedule = PROCESS_DATES.filter(({ key }) => project[key]);
+    const table = (rows) => `<table>${rows
+      .map(([label, value, num]) => `<tr><td class="k">${esc(label)}</td><td${num ? ' class="num"' : ''}>${esc(value)}</td></tr>`)
+      .join('')}</table>`;
+
+    const orderRows = [
+      ['Order number', project.order_ref],
+      ['Number of suits', suits.length],
+      ...(!multi ? [['Fabric', suits[0]?.fabric_name], ['Material code', suits[0]?.fabric_code]] : []),
       ['Paid to date', paid ? formatMoney(paid) : ''],
       ['Balance due', total ? formatMoney(Math.max(0, total - paid)) : ''],
     ].filter(([, value]) => value !== '' && value !== undefined && value !== null);
-    const orderRows = orderDetail.length
-      ? `<h3>Order</h3><table>${orderDetail
-          .map(([label, value]) => `<tr><td class="k">${esc(label)}</td><td class="num">${esc(value)}</td></tr>`)
-          .join('')}</table>`
-      : '';
 
     const scheduleRows = schedule.length
-      ? `<h3>Schedule</h3><table>${schedule
-          .map(([key, label]) => `<tr><td class="k">${esc(label)}</td><td class="num">${esc(project[key])}</td></tr>`)
-          .join('')}</table>`
+      ? `<h3>Schedule</h3>${table(schedule.map(({ key, label }) => [label, prettyDate(project[key]), true]))}`
       : '';
 
-    const rows = sections
-      .map(
-        (s) => `<h3>${esc(s.title)}</h3><table>${s.rows
-          .map((r) => `<tr><td class="k">${esc(r.label)}</td><td>${esc(r.value)}</td></tr>`)
-          .join('')}</table>`
-      )
-      .join('');
+    const suitBlocks = perSuit.map((s) => {
+      const head = multi ? `<h2>${esc(s.title)}</h2>` : '';
+      const cloth = multi && s.cloth.length ? `<p class="meta">Cloth: ${esc(s.cloth.join(' · '))}</p>` : '';
+      const spec = s.sections.map((sec) => `<h3>${esc(sec.title)}</h3>${table(sec.rows.map((r) => [r.label, r.value]))}`).join('');
+      const measures = s.measures
+        .map((g) => `<h3>${esc(g.label)} measurements (${esc(unitLabel(unit))})</h3>${table(g.rows.map((r) => [r.label, formatMeasure(r.value, unit), true]))}`)
+        .join('');
+      return `${head}${cloth}${spec}${measures}`;
+    }).join('');
 
     const priceRows = lines
-      .map((l) => `<tr><td class="k">${esc(l.label)}</td><td class="num">${esc(formatMoney(l.amount))}</td></tr>`)
-      .join('');
-
-    const measureRows = Object.entries(MEASUREMENTS)
-      .map(([key, group]) => {
-        const taken = group.fields
-          .map((f) => {
-            const m = project.measurements.find((x) => x.garment === key && x.field_id === f.id && x.value !== null);
-            return m ? `<tr><td class="k">${esc(f.label)}</td><td class="num">${esc(formatMeasure(m.value, unit))}</td></tr>` : '';
-          })
-          .join('');
-        return taken ? `<h3>${esc(group.label)} measurements (${esc(unitLabel(unit))})</h3><table>${taken}</table>` : '';
-      })
-      .join('');
+      .map((l) => [multi && l.group ? `${l.group} - ${l.label}` : l.label, formatMoney(l.amount), true]);
 
     const images = approved
       .map((r) => `<img src="images/${encodeURIComponent(r.filename)}" alt="Approved render" />`)
       .join('');
 
-    return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(project.name)} ${esc(project.surname)} - ${esc(project.title)}</title>
+    return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(project.name)} ${esc(project.surname)} - ${esc(project.order_ref || project.title)}</title>
 <style>
  body{font-family:Georgia,serif;max-width:820px;margin:40px auto;padding:0 24px;color:#14120f}
  h1{font-size:28px;margin:0 0 4px}
+ h2{font-size:19px;margin:34px 0 4px;padding-top:14px;border-top:1px solid #d9d3c5}
  .letterhead{width:260px;max-width:60%;display:block;margin:0 0 26px}
  h3{font-size:15px;margin:26px 0 6px;border-bottom:2px solid #c9a227;padding-bottom:4px;display:inline-block}
  table{width:100%;border-collapse:collapse;font-family:system-ui;font-size:13.5px}
@@ -168,23 +216,21 @@ export default function SummaryStep({ ctx, overrides, steps, unit = 'cm', busine
 </style></head><body>
 <img class="letterhead" src="images/gd-suits-logo.png" alt="GD Suits" onerror="this.style.display='none'">
 <h1>Order Form</h1>
-<p class="meta" style="margin-bottom:14px"><strong>${esc(project.name)} ${esc(project.surname)}</strong></p>
+<p class="meta" style="margin-bottom:14px"><strong>${esc(project.name)} ${esc(project.surname)}</strong>${project.order_ref ? ` &middot; ${esc(project.order_ref)}` : ''}</p>
 <div class="meta">
- <strong>${esc(project.title)}</strong><br>
- ${esc(EVENT_TYPES.find((e) => e.key === project.event_type)?.label ?? '')} ${project.event_date ? `&middot; ${esc(project.event_date)}` : ''}<br>
- ${project.delivery_date ? `Delivery: ${esc(project.delivery_date)}` : ''}
+ ${esc(eventLabel)}${project.event_date ? ` &middot; ${esc(prettyDate(project.event_date))}` : ''}<br>
+ ${project.delivery_date ? `Delivery: ${esc(prettyDate(project.delivery_date))}` : ''}
  ${project.is_minor && project.secondary_name
    ? `<br>Approvals to ${esc(project.secondary_name)}${project.secondary_relationship ? ` (${esc(project.secondary_relationship)})` : ''}${project.secondary_contact ? ` &middot; ${esc(project.secondary_contact)}` : ''}`
    : ''}
 </div>
 ${scheduleRows}
 ${images ? `<h3>Approved design</h3>${images}` : ''}
-${rows}
-${measureRows}
-${orderRows}
-<h3>Price breakdown</h3><table>${priceRows}</table>
+${suitBlocks}
+${orderRows.length ? `<h3>Order</h3>${table(orderRows.map(([k, v]) => [k, v, true]))}` : ''}
+<h3>Price breakdown</h3>${table(priceRows)}
 <div class="total"><span>Total</span><span>${esc(formatMoney(total))}</span></div>
-${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c">Quoted ${esc(String(project.quote.at ?? '').slice(0, 10))}. This price is held for this order.</p>` : ''}
+${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c">Quoted ${esc(prettyDate(project.quote.at))}. This price is held for this order.</p>` : ''}
 
 <h3>Terms and conditions</h3>
 <ol class="terms">${(business?.terms ?? ORDER_TERMS).map((t) => `<li>${esc(t)}</li>`).join('')}</ol>
@@ -199,8 +245,29 @@ ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c"
 </body></html>`;
   }
 
+  const groups = lines.reduce((acc, line) => {
+    const key = multi ? line.group : '';
+    (acc[key] ??= []).push(line);
+    return acc;
+  }, {});
+
   return (
     <>
+    {confirmFix && (
+      <Modal title="Send the formal quote" onClose={() => setConfirmFix(false)}>
+        <div className="stack">
+          <p style={{ margin: 0 }}>
+            The formal quote fixes the price at <strong>{formatMoney(live.total)}</strong> and moves the order to
+            <strong> Quoted</strong>. After this, a change to the price list will not change what this client pays
+            unless you re-quote.
+          </p>
+          <div className="inline">
+            <button className="btn btn-gold" onClick={fixAndEmail}>Fix the price and send</button>
+            <button className="btn btn-ghost" onClick={() => setConfirmFix(false)}>Cancel</button>
+          </div>
+        </div>
+      </Modal>
+    )}
     {confirmSend && (
       <Modal title="Send the quote" onClose={() => setConfirmSend(null)} wide>
         <div className="stack">
@@ -245,66 +312,106 @@ ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c"
       </Modal>
     )}
     <div className="row" style={{ alignItems: 'flex-start' }}>
-      <div style={{ flex: 2, minWidth: 440 }}>
+      <div className="stack" style={{ flex: 2, minWidth: 440 }}>
         <div className="card">
           <div className="card-head">
-            <h3>Specification</h3>
+            <h3>The order</h3>
             <div className="spacer" />
             <button
               className="btn btn-sm"
-              title={project.email ? `Email the quote to ${project.email}` : 'The client has no email address yet'}
+              title={project.email ? `Email the formal quote to ${project.email}` : 'The client has no email address yet'}
               disabled={!project.email || mailing}
               onClick={emailQuote}
             >
-              {mailing ? <><Spinner /> Preparing...</> : 'Email the quote'}
+              {mailing ? <><Spinner /> Preparing...</> : 'Email the formal quote'}
             </button>
             <button className="btn btn-sm btn-primary" onClick={exportFile} disabled={exporting}>
               {exporting ? <><Spinner /> Exporting...</> : 'Export client file'}
             </button>
           </div>
           <div className="card-pad">
-            {sections.length === 0 ? (
-              <p className="muted">Nothing specified yet.</p>
-            ) : (
-              sections.map((s) => (
-                <div key={s.title}>
-                  <div className="price-group-title">{s.title}</div>
-                  {s.rows.map((r) => (
-                    <div className="price-line" key={r.label}>
+            <SummaryLine label="Client" value={`${project.name} ${project.surname}`.trim()} />
+            <SummaryLine label="Order number" value={project.order_ref} mono />
+            <SummaryLine label="Occasion" value={[eventLabel, prettyDate(project.event_date)].filter(Boolean).join(' · ')} />
+            <SummaryLine label="Delivery" value={prettyDate(project.delivery_date)} />
+            <SummaryLine label="Status" value={statusLabel(project.status)} />
+            {project.is_minor && project.secondary_name && (
+              <SummaryLine
+                label="Approvals to"
+                value={`${project.secondary_name}${project.secondary_relationship ? ` (${project.secondary_relationship})` : ''}`}
+              />
+            )}
+            <SummaryLine label="Suits" value={multi ? `${suits.length} suits` : '1 suit'} />
+            {project.postal_address && <SummaryLine label="Deliver to" value={project.postal_address} />}
+          </div>
+        </div>
+
+        {perSuit.map((s) => (
+          <div className="card" key={s.id}>
+            <div className="card-head">
+              <h3>{multi ? s.title : 'Specification'}</h3>
+              <div className="spacer" />
+              {s.cloth.length > 0 && <span className="tiny faint">{s.cloth.join(' · ')}</span>}
+            </div>
+            <div className="card-pad">
+              {s.sections.length === 0 ? (
+                <p className="muted" style={{ margin: 0 }}>Nothing specified yet.</p>
+              ) : (
+                s.sections.map((sec) => (
+                  <div key={sec.title}>
+                    <div className="price-group-title">{sec.title}</div>
+                    {sec.rows.map((r) => (
+                      <div className="price-line" key={r.label}>
+                        <span className="muted">{r.label}</span>
+                        <span style={{ fontWeight: 600 }}>{r.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))
+              )}
+              {s.measures.map((g) => (
+                <div key={g.garment}>
+                  <div className="price-group-title">{g.label} measurements</div>
+                  {g.rows.map((r) => (
+                    <div className="price-line" key={r.id}>
                       <span className="muted">{r.label}</span>
-                      <span style={{ fontWeight: 600 }}>{r.value}</span>
+                      <span className="mono small">{formatMeasure(r.value, unit)}</span>
                     </div>
                   ))}
                 </div>
-              ))
-            )}
+              ))}
+            </div>
+          </div>
+        ))}
 
-            {analysis.skinTone && (
-              <>
-                <div className="price-group-title">Client</div>
+        {(analysis.skinTone || analysis.fabricColour) && (
+          <div className="card">
+            <div className="card-head"><h3>Measured colours</h3></div>
+            <div className="card-pad">
+              {analysis.skinTone && (
                 <div className="price-line">
-                  <span className="muted">Measured skin tone</span>
+                  <span className="muted">Skin tone</span>
                   <span className="inline" style={{ gap: 7 }}>
                     <span className="swatch" style={{ width: 18, height: 18, background: analysis.skinTone.hex }} />
                     <span style={{ fontWeight: 600 }}>{analysis.skinTone.label}</span>
                   </span>
                 </div>
-              </>
-            )}
-            {analysis.fabricColour && (
-              <div className="price-line">
-                <span className="muted">Cloth colour</span>
-                <span className="inline" style={{ gap: 7 }}>
-                  <span className="swatch" style={{ width: 18, height: 18, background: analysis.fabricColour.hex }} />
-                  <span style={{ fontWeight: 600, textTransform: 'capitalize' }}>{analysis.fabricColour.label}</span>
-                </span>
-              </div>
-            )}
+              )}
+              {analysis.fabricColour && (
+                <div className="price-line">
+                  <span className="muted">Cloth colour</span>
+                  <span className="inline" style={{ gap: 7 }}>
+                    <span className="swatch" style={{ width: 18, height: 18, background: analysis.fabricColour.hex }} />
+                    <span style={{ fontWeight: 600, textTransform: 'capitalize' }}>{analysis.fabricColour.label}</span>
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {approved.length > 0 && (
-          <div className="card" style={{ marginTop: 16 }}>
+          <div className="card">
             <div className="card-head"><h3>Approved renders</h3></div>
             <div className="card-pad">
               <div className="grid grid-3">
@@ -322,18 +429,16 @@ ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c"
         )}
       </div>
 
-      <div style={{ flex: 1, minWidth: 300 }}>
-        {/* The dates the order runs to, where the order is signed off - they
-            were only on the exported form before, which is no use to anyone
-            looking at the screen. */}
+      <div className="stack" style={{ flex: 1, minWidth: 300 }}>
+        {/* The dates the order runs to, where the order is signed off. */}
         {PROCESS_DATES.some(({ key }) => project[key]) && (
-          <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card">
             <div className="card-head"><h3>Schedule</h3></div>
             <div className="card-pad">
               {PROCESS_DATES.filter(({ key }) => project[key]).map(({ key, label }) => (
                 <div className="price-line" key={key}>
                   <span className="muted">{label}</span>
-                  <span className="mono small">{project[key]}</span>
+                  <span className="small">{prettyDate(project[key])}</span>
                 </div>
               ))}
             </div>
@@ -345,7 +450,7 @@ ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c"
             <h3>Quote</h3>
             <div className="spacer" />
             {project.quote
-              ? <span className="pill pill-ok">Agreed {String(project.quote.at ?? '').slice(0, 10)}</span>
+              ? <span className="pill pill-ok">Fixed {prettyDate(project.quote.at)}</span>
               : <span className="pill pill-quiet">Draft - still moving</span>}
           </div>
           <div className="card-pad">
@@ -367,15 +472,20 @@ ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c"
                 </div>
               </Banner>
             )}
-            {isDraft(project.status) && (
+            {!project.quote && (
               <p className="tiny faint" style={{ marginTop: 0 }}>
-                This total follows the price list until the order is approved, then it is fixed.
+                This total follows the price list until the formal quote is sent, then it is fixed.
               </p>
             )}
-            {lines.map((l, i) => (
-              <div className="price-line" key={`${l.key}-${i}`}>
-                <span className="small">{l.label}</span>
-                <span className="mono small">{formatMoney(l.amount)}</span>
+            {Object.entries(groups).map(([group, groupLines]) => (
+              <div key={group || 'all'}>
+                {group && <div className="price-group-title">{group}</div>}
+                {groupLines.map((l, i) => (
+                  <div className="price-line" key={`${l.key}-${i}`}>
+                    <span className="small">{l.label}</span>
+                    <span className="mono small">{formatMoney(l.amount)}</span>
+                  </div>
+                ))}
               </div>
             ))}
             <hr className="divider" />
@@ -383,10 +493,16 @@ ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c"
               <span>Total</span>
               <span>{formatMoney(total)}</span>
             </div>
+            {(paid > 0 || project.quote) && (
+              <>
+                <div className="price-line"><span className="muted small">Paid to date</span><span className="mono small">{formatMoney(paid)}</span></div>
+                <div className="price-line"><span className="small" style={{ fontWeight: 600 }}>Balance due</span><span className="mono small">{formatMoney(Math.max(0, total - paid))}</span></div>
+              </>
+            )}
           </div>
         </div>
 
-        <div className="card" style={{ marginTop: 16 }}>
+        <div className="card">
           <div className="card-head"><h3>All notes</h3></div>
           <div className="card-pad" style={{ maxHeight: 420, overflowY: 'auto' }}>
             {project.notes.length === 0 ? (
@@ -395,7 +511,7 @@ ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c"
               project.notes.map((n) => (
                 <div key={n.id} className="note">
                   <div className="note-head">
-                    <span className="pill pill-quiet">{n.step}</span>
+                    <span className="pill pill-quiet">{PAGE_NAMES[n.step] ?? n.step}</span>
                     <span className="tiny faint">{n.created_at}</span>
                   </div>
                   <div className="small" style={{ whiteSpace: 'pre-wrap' }}>{n.body}</div>
@@ -407,5 +523,15 @@ ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c"
       </div>
     </div>
     </>
+  );
+}
+
+function SummaryLine({ label, value, mono }) {
+  if (!value) return null;
+  return (
+    <div className="price-line">
+      <span className="muted">{label}</span>
+      <span className={mono ? 'mono small' : ''} style={{ fontWeight: 600, textAlign: 'right', whiteSpace: 'pre-wrap' }}>{value}</span>
+    </div>
   );
 }

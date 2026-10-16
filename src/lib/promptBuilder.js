@@ -1,4 +1,4 @@
-import { STEPS, SUIT_PARTS, isVisible, valueOf } from './catalog.js';
+import { STEPS, SUIT_PARTS, isVisible, valueOf, colourWords } from './catalog.js';
 import { clothDistance, hexToRgb, nameColour, rgbToLab } from './colour.js';
 
 export const VIEWS = [
@@ -63,8 +63,8 @@ export function describeGarment(spec = {}, steps = STEPS) {
         if (picked.length) clauses.push(`${field.label.toLowerCase()}: ${picked.map((o) => o.label.toLowerCase()).join(', ')}`);
       } else if (field.type === 'toggle') {
         clauses.push(field.label.toLowerCase());
-      } else if (field.type === 'colour') {
-        clauses.push(`${field.label.toLowerCase()} in ${value}`);
+      } else if (field.colourText) {
+        clauses.push(`${field.label.toLowerCase()}: ${colourWords(value)}`);
       } else if (String(value).trim()) {
         clauses.push(`${field.label.toLowerCase()}: ${String(value).trim()}`);
       }
@@ -216,14 +216,13 @@ export function buildRenderPrompt({ spec = {}, client = {}, analysis = {}, view 
 
   if (hasSwatch) parts.push(describeCloth({ spec, cloth }));
 
-  // Read through the catalogue rather than off the spec: a colour left at its
-  // default is still the colour on screen, and saying nothing about the lining
-  // was how a chosen lining never reached the render at all.
-  const liningField = steps.flatMap((s) => s.fields).find((f) => f.id === 'liningColour');
-  const lining = liningField ? valueOf(liningField, spec) : spec.liningColour;
-  if (spec.liningMode === 'colour' && lining) {
+  // The lining is described on its own, because it is only glimpsed. It is
+  // typed in words now; an order from the colour-wheel days still carries a
+  // code, which is read out as words with the code beside it.
+  const lining = String(spec.liningColour ?? '').trim();
+  if (lining) {
     parts.push(
-      `Lining colour is ${nameColour(lining)} (${lining}); show a glimpse of it only if the jacket naturally opens.`
+      `Lining colour is ${colourWords(lining)}; show a glimpse of it only if the jacket naturally opens.`
     );
   }
 
@@ -276,6 +275,7 @@ export function buildSpecSheet(spec = {}, steps = STEPS) {
         if (!picked.length) continue;
         display = picked.map((o) => o.label).join(', ');
       } else if (field.type === 'toggle') display = 'Yes';
+      else if (field.colourText) display = colourWords(value);
       else display = String(value);
       rows.push({ label: field.label, value: display });
     }

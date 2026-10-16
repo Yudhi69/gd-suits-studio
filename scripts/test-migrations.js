@@ -114,6 +114,29 @@ try {
 } catch (e) { worked = false; why = e.message; }
 check(worked, 'references, client measurements, custom catalog and quotes all work', why);
 
+// ---- v19: the first appointment is asked once ----
+log('\n=== v19 moves the order page\'s first appointment into the schedule ===');
+{
+  const vdir = path.join(root, 'v19-appointment');
+  const raw = makeDbAt(18, vdir);
+  seedV1(raw);
+  raw.prepare("INSERT INTO projects (client_id, title, first_appointment, consultation_date) VALUES (1,'Only the order page', '2026-02-03', '')").run();
+  raw.prepare("INSERT INTO projects (client_id, title, first_appointment, consultation_date) VALUES (1,'Both set', '2026-02-03', '2026-01-20')").run();
+  raw.close();
+  db.open(vdir);
+  const probe = new Database(path.join(vdir, 'data', 'gdsuits.db'));
+  const read = (title) => probe.prepare('SELECT consultation_date d FROM projects WHERE title = ?').get(title).d;
+  check(read('Only the order page') === '2026-02-03', 'a date only the order page held lands in the schedule', read('Only the order page'));
+  check(read('Both set') === '2026-01-20', 'a date the schedule already had is not overwritten', read('Both set'));
+  const cols = probe.prepare('PRAGMA table_info(alterations)').all().map((c) => c.name);
+  check(['suit_id', 'changes_json'].every((c) => cols.includes(c)),
+    'alterations can name the measurements they change', cols.join(','));
+  check(probe.prepare('PRAGMA table_info(projects)').all().some((c) => c.name === 'informal_quote_json'),
+    'and an order can record its informal quote');
+  probe.close();
+  db.open(dir);
+}
+
 // ---- re-opening is a no-op ----
 log('\n=== re-opening an up-to-date database changes nothing ===');
 const before = fs.statSync(path.join(dir, 'data', 'gdsuits.db')).size;

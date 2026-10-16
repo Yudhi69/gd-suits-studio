@@ -70,7 +70,7 @@ export default function ClientFile({ clientId, onBack, onOpenProject, steps, ove
                       <td className="muted mono">{p.event_date || '-'}</td>
                       <td><span className={`pill ${statusPill(p.status)}`}>{statusLabel(p.status)}</span></td>
                       <td className="mono" style={{ textAlign: 'right' }}>
-                        {formatMoney(quotedTotal(p, JSON.parse(p.spec_json || '{}'), overrides, steps))}
+                        {formatMoney(quotedTotal(p, overrides, steps))}
                       </td>
                     </tr>
                   ))}

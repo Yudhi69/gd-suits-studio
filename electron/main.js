@@ -3,7 +3,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
-const { app, BrowserWindow, protocol, ipcMain, dialog, shell, Menu, nativeTheme } = require('electron');
+const { app, BrowserWindow, protocol, ipcMain, dialog, shell, Menu, nativeTheme, clipboard } = require('electron');
 
 const db = require('./db');
 const storage = require('./storage');
@@ -18,6 +18,8 @@ const rules = require('./mailRules');
 const integrations = require('./integrations');
 const delivery = require('./mailDelivery');
 const business = require('./business');
+const informal = require('./informal');
+const csv = require('./csv');
 
 /** The shop's details as they are set today, never as they were compiled. */
 const shop = () => business.withDefaults(db.getSetting('business', null));
@@ -262,6 +264,14 @@ handle('clients:save', (c) => db.upsertClient({
   secondaryEmail: v.str(c.secondaryEmail, 'email', 200),
   profile: v.jsonBlob(c.profile, 'profile', 64 * 1024),
 }));
+handle('clients:patch', ({ id, patch = {} }) => {
+  const clean = {};
+  for (const key of ['name', 'surname', 'contact']) {
+    if (patch[key] !== undefined) clean[key] = v.str(patch[key], key, 160).trim();
+  }
+  if (patch.email !== undefined) clean.email = v.str(patch.email, 'email', 200).trim();
+  return db.patchClient(v.id(id), clean);
+});
 handle('clients:delete', ({ id }) => {
   const clientId = v.id(id);
   // Media is filed per project and per client, so both have to go for a
@@ -488,8 +498,35 @@ handle('payments:update', ({ id, ...r }) => db.updatePayment(v.id(id), {
 }));
 handle('payments:delete', ({ id }) => db.deletePayment(v.id(id)));
 
+/**
+ * The measurement changes an alteration carries. Each names a measurement by
+ * its id and says by how much, in centimetres; the figures before and after
+ * are read from the database, never taken from the window.
+ */
+function alterationChanges(raw, garment) {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw new v.ValidationError('changes must be a list');
+  if (raw.length > 40) throw new v.ValidationError('That is too many changes for one alteration');
+  const list = raw
+    .map((c) => ({
+      fieldId: v.str(c?.fieldId, 'measurement', 40),
+      label: v.str(c?.label, 'measurement name', 80),
+      change: v.num(c?.change, 'change', { min: -100, max: 100 }) ?? 0,
+    }))
+    .filter((c) => c.change !== 0);
+  for (const c of list) {
+    if (!/^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(c.fieldId)) throw new v.ValidationError('That is not a measurement');
+  }
+  if (list.length && !['jacket', 'waistcoat', 'pants'].includes(garment)) {
+    throw new v.ValidationError('Only a jacket, waistcoat or trousers carry measurements to change');
+  }
+  return list;
+}
+
 handle('alterations:add', (r) => db.addAlteration({
   project_id: v.id(r.projectId, 'projectId'),
+  suit_id: v.optionalId(r.suitId, 'suitId'),
+  changes: alterationChanges(r.changes, r.garment ?? ''),
   garment: v.oneOf(r.garment ?? '', v.GARMENTS, 'garment'),
   description: v.str(r.description, 'description', 500),
   kind: v.str(r.kind, 'alteration type', 80),
@@ -667,7 +704,7 @@ handle('catalog:deleteItem', ({ id }) => db.deleteCustomItem(v.id(id)));
 
 /* settings + secrets */
 const SETTING_KEYS = ['priceOverrides', 'imageModel', 'visionModel', 'theme', 'updateFeed', 'autoCheckUpdates', 'measureUnit', 'aiConfig',
-  'quoteEmailTemplate', 'quoteEmailSubject', 'business', 'integrations'];
+  'quoteEmailTemplate', 'quoteEmailSubject', 'business', 'integrations', 'labelOverrides'];
 handle('settings:get', ({ key, fallback }) => db.getSetting(v.oneOf(key, SETTING_KEYS, 'setting'), fallback ?? null));
 handle('settings:set', ({ key, value }) => {
   const name = v.oneOf(key, SETTING_KEYS, 'setting');
@@ -681,6 +718,7 @@ handle('settings:set', ({ key, value }) => {
   if (name === 'quoteEmailTemplate') return db.setSetting(name, v.str(value, 'message', 8 * 1024));
   if (name === 'quoteEmailSubject') return db.setSetting(name, v.str(value, 'subject', 300));
   if (name === 'business') return db.setSetting(name, business.withDefaults(v.jsonBlob(value, 'business details', 16 * 1024)));
+  if (name === 'labelOverrides') return db.setSetting(name, v.labelOverrides(value));
   return db.setSetting(name, v.jsonBlob(value, 'value', 128 * 1024));
 });
 const SECRET_NAMES = [...aiProviders.SECRET_NAMES, 'updateToken', ...integrations.SECRET_NAMES];
@@ -802,18 +840,53 @@ handle('ai:render', async ({ projectId, suitId, batchId, prompt, view, refs = []
   return { id, filename, scope, url: mediaUrl(scope, filename), notes: result.notes, model: result.model };
 });
 
+/**
+ * A read - the measurement sanity check, the body read.
+ *
+ * The image slot repairs itself in Settings when its model goes; the read
+ * slot never did, and its starting model was one Google has since retired.
+ * So every read failed with "model not available" until someone happened to
+ * open Settings and pick another - which is how the sanity check came to
+ * "not work". Now a read whose model is refused picks a current one from the
+ * key's own list, tries once more, and keeps it, so the next read goes
+ * straight through.
+ */
 handle('ai:analyse', async ({ projectId, prompt, refs = [], schema, model }) => {
   const pid = v.id(projectId, 'projectId');
   const config = getAiConfig();
   const adapter = aiProviders.get(config.vision.provider, config.customBaseUrl);
   const images = loadRefImages(refs, storage.scopeForProject(pid));
-  return adapter.analyse({
-    apiKey: secrets.get(config.vision.provider),
-    model: model ? v.modelName(model) : config.vision.model,
+  const apiKey = secrets.get(config.vision.provider);
+  const ask = (name) => adapter.analyse({
+    apiKey,
+    model: name,
     prompt: v.str(prompt, 'prompt', 20000),
     images,
     schema: v.jsonBlob(schema, 'schema', 32 * 1024),
   });
+
+  // A saved model of '' - cleared in Settings - means the provider's own.
+  const chosen = model ? v.modelName(model) : config.vision.model || adapter.defaultVisionModel || undefined;
+  try {
+    return await ask(chosen);
+  } catch (err) {
+    // A model the caller named is theirs to fix; only the saved one is swapped.
+    if (model || !['no_model', 'retired_model'].includes(err?.code)) throw err;
+    let replacement = null;
+    try {
+      replacement = aiProviders.pickReadModel(await adapter.listModels(apiKey), chosen);
+    } catch { /* the list could not be had; the original error says more */ }
+    if (!replacement) throw err;
+    const result = await ask(replacement);
+    db.setSetting('aiConfig', {
+      ...(db.getSetting('aiConfig', null) ?? {}),
+      image: config.image,
+      vision: { provider: config.vision.provider, model: replacement },
+      customBaseUrl: config.customBaseUrl,
+    });
+    logLine(`[ai] read model ${chosen || '(none)'} refused (${err.code}); switched to ${replacement}`);
+    return { ...result, model: replacement, switchedFrom: chosen ?? '' };
+  }
 });
 
 
@@ -1012,6 +1085,128 @@ handle('quote:email', async ({ projectId }) => {
     draftName: `Quote ${project.order_ref || project.id}`,
   });
   return { opened: result.via !== 'gmail', sent: result.via === 'gmail', ...result };
+});
+
+/* the database - GD's workbook, as one editable view over the orders */
+
+handle('database:sheet', () => db.sheet());
+
+/**
+ * Writes one tab of the database page to a CSV file Excel opens.
+ *
+ * The rows are assembled in the window, because that is where the design
+ * summaries and quoted totals are worked out from the catalogue; here they
+ * are bounded and written where GD chooses. Nothing is written without the
+ * save dialog, and cancelling writes nothing.
+ */
+handle('database:export', async ({ name, rows }) => {
+  if (!Array.isArray(rows) || !rows.length) throw new v.ValidationError('There is nothing to export');
+  if (rows.length > 50000) throw new v.ValidationError('That is too many rows to export at once');
+  const clean = rows.map((row) => {
+    if (!Array.isArray(row) || row.length > 60) throw new v.ValidationError('A row of the export is not a list of cells');
+    return row.map((c) => (typeof c === 'number' ? c : v.str(c === null || c === undefined ? '' : String(c), 'cell', 20000)));
+  });
+  const fileName = cleanFileName(name) || 'gd-suits-database';
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: 'Export to a spreadsheet',
+    defaultPath: path.join(app.getPath('documents'), `${fileName}.csv`),
+    buttonLabel: 'Export',
+    filters: [{ name: 'Spreadsheet (CSV)', extensions: ['csv'] }],
+  });
+  if (canceled || !filePath) return { saved: false };
+  fs.writeFileSync(filePath, csv.toCsv(clean), 'utf8');
+  return { saved: true, name: path.basename(filePath), rows: clean.length - 1 };
+});
+
+/* the informal quote - the summary sent before anything is agreed */
+
+const informalOf = (project) => project.informalQuote ?? null;
+
+function orderFor(projectId) {
+  const project = db.getProject(v.id(projectId, 'projectId'));
+  if (!project) throw new Error('Order not found');
+  return project;
+}
+
+/** Who it would go to, and how - for the window to show before anything is sent. */
+handle('informal:recipient', ({ projectId }) => {
+  const project = orderFor(projectId);
+  const who = informal.recipientOf(project);
+  return {
+    ...who,
+    whatsapp: informal.whatsappNumber(who.phone, shop().whatsappCountryCode),
+    emailVia: integrations.statusOf('gmail', connections(), hasSecret).ready ? 'gmail' : 'draft',
+  };
+});
+
+/**
+ * Sends it. The words come from the window, which is where the prices are;
+ * the recipient comes from the order on file, so a window cannot send an
+ * order's details to a number or an address that is not on it.
+ */
+handle('informal:send', async ({ projectId, via, text, subject, total, link }) => {
+  const project = orderFor(projectId);
+  const channel = v.oneOf(via, ['whatsapp', 'email'], 'how to send');
+  const body = v.str(text, 'message', 6000).trim();
+  if (!body) throw new v.ValidationError('There is nothing to send yet.');
+  const who = informal.recipientOf(project);
+
+  let result;
+  if (channel === 'whatsapp') {
+    // No usable number on file still works: WhatsApp opens and asks who to
+    // send it to, with the message already written.
+    const number = informal.whatsappNumber(who.phone, shop().whatsappCountryCode);
+    if (!security.openExternalSafely(informal.whatsappUrl(number, body))) throw new Error('Could not open WhatsApp.');
+    result = { via: 'whatsapp', to: number ? `+${number}` : '', opened: true };
+  } else {
+    if (!who.email) {
+      throw new Error(who.guardian
+        ? 'The parent or provider has no email address on file yet.'
+        : 'This client has no email address on their file yet.');
+    }
+    const delivered = await sendComposed(project, {
+      to: who.email,
+      subject: v.str(subject, 'subject', 300).trim() || 'Your informal quote',
+      body,
+      attachments: [],
+      gmail: integrations.statusOf('gmail', connections(), hasSecret),
+    }, { draftName: `Informal quote ${project.order_ref || project.id}` });
+    result = { via: 'email', to: who.email, sent: delivered.via === 'gmail', opened: delivered.via !== 'gmail' };
+  }
+
+  db.setInformalQuote(project.id, informal.record(informalOf(project), {
+    status: 'sent',
+    via: result.via,
+    sentAt: new Date().toISOString(),
+    answeredAt: '',
+    total: v.num(total, 'total', { min: -1e9, max: 1e9 }) ?? 0,
+    to: result.to,
+    link: !!link,
+  }));
+  return result;
+});
+
+/** Onto the clipboard, for pasting wherever GD likes - recorded as sent that way. */
+handle('informal:copy', ({ projectId, text, total, link }) => {
+  const project = orderFor(projectId);
+  clipboard.writeText(v.str(text, 'message', 6000));
+  db.setInformalQuote(project.id, informal.record(informalOf(project), {
+    status: 'sent', via: 'copied', sentAt: new Date().toISOString(), answeredAt: '',
+    total: v.num(total, 'total', { min: -1e9, max: 1e9 }) ?? 0, to: '', link: !!link,
+  }));
+  return { copied: true };
+});
+
+/** What the client said. */
+handle('informal:mark', ({ projectId, status }) => {
+  const project = orderFor(projectId);
+  const answer = v.oneOf(status, informal.STATUSES, 'answer');
+  if (!informalOf(project)) throw new Error('No informal quote has been sent for this order yet.');
+  db.setInformalQuote(project.id, informal.record(informalOf(project), {
+    status: answer,
+    answeredAt: answer === 'sent' ? '' : new Date().toISOString(),
+  }));
+  return db.getProject(project.id).informalQuote;
 });
 
 /* connections - where data may go, and nowhere by default */

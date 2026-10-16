@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Nothing leaves this page: no requests, no storage, no referrer. The
+       summary is read from the part of the link after "#", which a browser
+       never sends to any server. -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Your informal quote</title>
+  <link rel="stylesheet" href="quote.css">
+</head>
+<body>
+  <main class="page">
+    <header class="brand">
+      <picture>
+        <source srcset="logo-on-dark.png" media="(prefers-color-scheme: dark)">
+        <img src="logo.png" alt="GD Suits" class="logo">
+      </picture>
+    </header>
+    <div id="quote" aria-live="polite">
+      <p class="muted">Opening your quote...</p>
+    </div>
+  </main>
+  <script src="quote.js"></script>
+</body>
+</html>

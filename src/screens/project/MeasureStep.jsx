@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MEASUREMENTS, includesPart } from '../../lib/catalog.js';
+import { MEASUREMENTS, measureRows, measuredGarments } from '../../lib/catalog.js';
 import { UNITS, toDisplay, fromDisplay, unitShort, unitLabel, stepFor } from '../../lib/units.js';
 import { api, messageFor, projectMedia, clientMedia } from '../../lib/api.js';
 import { DebouncedInput, Spinner, useToast, Banner } from '../../components/ui.jsx';
@@ -28,6 +28,27 @@ const ADVICE_SCHEMA = {
 
 const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
+/**
+ * The figures the sanity check is asked about: this suit's only, each under
+ * the name the tailor reads on screen.
+ *
+ * It used to send every measurement on the order, keyed by internal ids like
+ * `pants.ankleLoop` - so on a wedding party the groom and the best man were
+ * checked as one impossible body, and the answer came back naming fields
+ * nobody could find on the page.
+ */
+export function measurementsForCheck(measurements, suitId, garments) {
+  const lines = [];
+  for (const garment of garments) {
+    for (const row of measureRows(garment)) {
+      const m = measurements.find((x) => x.garment === garment && x.field_id === row.id
+        && x.value !== null && (suitId ? x.suit_id === suitId : true));
+      if (m) lines.push(`${MEASUREMENTS[garment].label} - ${row.label}: ${m.value} cm`);
+    }
+  }
+  return lines;
+}
+
 export default function MeasureStep({ ctx, unit = 'cm', onUnitChange, business }) {
   const { project, saveMeasurement, addNote, deleteNote } = ctx;
   const [checking, setChecking] = useState(false);
@@ -45,9 +66,7 @@ export default function MeasureStep({ ctx, unit = 'cm', onUnitChange, business }
     );
 
   // Nothing to measure for a garment this order does not include.
-  const groups = Object.entries(MEASUREMENTS).filter(
-    ([key]) => key !== 'waistcoat' || includesPart(spec.suitType ?? 'two_piece', 'waistcoat')
-  );
+  const groups = measuredGarments(spec.suitType).map((key) => [key, MEASUREMENTS[key]]);
 
   const [exporting, setExporting] = useState(false);
 
@@ -67,7 +86,7 @@ export default function MeasureStep({ ctx, unit = 'cm', onUnitChange, business }
         : `${project.name} ${project.surname}`.trim();
 
       const table = groups.map(([key, group]) => {
-        const rows = group.fields.map((f) => {
+        const rows = measureRows(key).map((f) => {
           const m = value(key, f.id);
           const shown = m && m.value !== null ? toDisplay(m.value, unit) : '';
           return `<tr><td>${esc(f.label)}</td><td class="num">${esc(shown)}</td><td class="u">${esc(unitShort(unit))}</td></tr>`;
@@ -127,36 +146,41 @@ ${refs ? `<h3>Design reference</h3><div class="pics">${refs}</div>` : ''}
     }
   }
 
-  const filled = project.measurements.filter((m) => m.value !== null).length;
-  const totalFields = groups.reduce((sum, [, g]) => sum + g.fields.length, 0);
+  // Counted for the suit on screen, the way the page shows them.
+  const allRows = groups.flatMap(([key]) => measureRows(key).map((r) => ({ garment: key, ...r })));
+  const filled = allRows.filter((r) => value(r.garment, r.id)?.value != null).length;
+  const totalFields = allRows.length;
 
   async function sanityCheck() {
-    const taken = project.measurements
-      .filter((m) => m.value !== null)
-      // Always sent in centimetres regardless of what is on screen: it is the
-      // stored unit, and an unambiguous one for the model to reason in.
-      .map((m) => `${m.garment}.${m.field_id} = ${m.value}cm`)
-      .join('\n');
+    // Always sent in centimetres regardless of what is on screen: it is the
+    // stored unit, and an unambiguous one for the model to reason in.
+    const taken = measurementsForCheck(project.measurements, ctx.activeSuitId, groups.map(([key]) => key));
 
-    if (!taken) {
+    if (!taken.length) {
       toast('Enter some measurements first.', 'err');
       return;
     }
 
     setChecking(true);
+    setAdvice(null);
     try {
-      const { data } = await api.ai.analyse({
+      const { data, switchedFrom, model } = await api.ai.analyse({
         projectId: project.id,
         schema: ADVICE_SCHEMA,
         prompt:
-          'You are a master tailor checking a set of measurements before cutting. Here they are, in centimetres:\n\n' +
-          taken +
+          'You are a master tailor checking one client\'s measurements before the cloth is cut. ' +
+          'They were taken with a tape, in centimetres:\n\n' +
+          taken.join('\n') +
           '\n\nFlag any value that is inconsistent with the others or outside a plausible human range, ' +
-          'explain briefly why, and suggest what to re-measure. If everything is coherent, return an empty flags list. ' +
+          'explain briefly why, and suggest what to re-measure. Name each flagged measurement exactly as it is ' +
+          'written above. Missing measurements are not errors - they have simply not been taken yet. ' +
+          'If everything is coherent, return an empty flags list. ' +
           'Be specific and practical - this goes straight onto a cutting docket.',
       });
+      if (switchedFrom !== undefined) toast(`The reading model${switchedFrom ? ` ${switchedFrom}` : ''} is no longer available - switched to ${model}`, 'info');
+      if (!data || !Array.isArray(data.flags)) throw new Error('The check came back in a shape the app could not read. Try it again.');
       setAdvice(data);
-      toast(data.flags?.length ? `${data.flags.length} thing(s) worth re-checking` : 'Measurements look coherent', data.flags?.length ? 'info' : 'ok');
+      toast(data.flags.length ? `${data.flags.length} thing(s) worth re-checking` : 'Measurements look coherent', data.flags.length ? 'info' : 'ok');
     } catch (err) {
       toast(messageFor(err), 'err');
     } finally {
@@ -204,23 +228,34 @@ ${refs ? `<h3>Design reference</h3><div class="pics">${refs}</div>` : ''}
               <div key={key} style={{ marginTop: 18 }}>
                 <div className="price-group-title">{group.label}</div>
                 {group.fields.map((field) => {
-                  const row = value(key, field.id);
+                  // A pair - the two biceps - is one row with two boxes side
+                  // by side, each saved under its own id.
+                  const ids = field.pair ? [field.id, field.pair.id] : [field.id];
                   return (
-                    <div className="measure-row" key={field.id}>
+                    <div className={`measure-row ${field.pair ? 'measure-row-pair' : ''}`} key={field.id}>
                       <div>
                         <div style={{ fontWeight: 600 }}>{field.label}</div>
                         <div className="tiny faint">{field.hint}</div>
                       </div>
-                      <div className="measure-entry">
-                        <DebouncedInput
-                          type="number"
-                          step={stepFor(unit)}
-                          className={`input measure-input ${row?.source === 'carried-over' ? 'carried' : ''}`}
-                          placeholder="-"
-                          value={toDisplay(row?.value, unit)}
-                          onCommit={(v) => saveMeasurement(key, field.id, fromDisplay(v, unit))}
-                        />
-                        <span className="measure-unit">{unitShort(unit)}</span>
+                      <div className="measure-pair">
+                        {ids.map((id, i) => {
+                          const row = value(key, id);
+                          return (
+                            <div className="measure-entry" key={id}>
+                              {field.pair && <span className="measure-side">{field.pair.sides[i]}</span>}
+                              <DebouncedInput
+                                type="number"
+                                step={stepFor(unit)}
+                                aria-label={field.pair ? `${field.label} ${field.pair.sides[i]}` : field.label}
+                                className={`input measure-input ${row?.source === 'carried-over' ? 'carried' : ''}`}
+                                placeholder="-"
+                                value={toDisplay(row?.value, unit)}
+                                onCommit={(v) => saveMeasurement(key, id, fromDisplay(v, unit))}
+                              />
+                              <span className="measure-unit">{unitShort(unit)}</span>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   );

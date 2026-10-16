@@ -9,6 +9,8 @@ import NotesPanel from '../../components/NotesPanel.jsx';
 import { Banner, Modal, Spinner, useToast } from '../../components/ui.jsx';
 
 const SUBJECT_SLOTS = PHOTO_SLOTS.filter((s) => s.role === 'subject');
+// What is photographed on this page: the client, and the shoes they will wear.
+const SHOWN_SLOTS = PHOTO_SLOTS.filter((s) => s.role === 'subject' || s.role === 'shoes');
 
 /** Structured shape asked of the vision model, so the reply is usable data. */
 const BODY_SCHEMA = {
@@ -24,7 +26,8 @@ const BODY_SCHEMA = {
   required: ['build', 'posture', 'fitAdvice'],
 };
 
-export default function CaptureStep({ ctx }) {
+/** `bare` leaves out the notes, for the page that shows this beside the cloth. */
+export default function CaptureStep({ ctx, bare = false }) {
   const { project, savePhoto, deletePhoto, addNote, deleteNote, updateAnalysis, photoBySlot } = ctx;
   const [sampling, setSampling] = useState(null);
   const [analysing, setAnalysing] = useState(false);
@@ -78,7 +81,7 @@ export default function CaptureStep({ ctx }) {
         </div>
         <div className="card-pad">
           <div className="photo-grid">
-            {SUBJECT_SLOTS.map((slot) => {
+            {SHOWN_SLOTS.map((slot) => {
               const photo = photoBySlot(slot.key);
               return (
                 <PhotoSlot
@@ -97,7 +100,7 @@ export default function CaptureStep({ ctx }) {
       </div>
 
       <div className="row" style={{ alignItems: 'flex-start' }}>
-        <div style={{ flex: 2, minWidth: 420 }}>
+        <div style={{ flex: 2, minWidth: bare ? 0 : 420 }}>
           <div className="card">
             <div className="card-head">
               <h3>Skin tone</h3>
@@ -193,9 +196,11 @@ export default function CaptureStep({ ctx }) {
           </div>
         </div>
 
-        <div style={{ flex: 1, minWidth: 300 }}>
-          <NotesPanel step="capture" notes={project.notes} onAdd={(b) => addNote('capture', b)} onDelete={deleteNote} />
-        </div>
+        {!bare && (
+          <div style={{ flex: 1, minWidth: 300 }}>
+            <NotesPanel step="capture" notes={project.notes} onAdd={(b) => addNote('capture', b)} onDelete={deleteNote} />
+          </div>
+        )}
       </div>
 
       {sampling && (

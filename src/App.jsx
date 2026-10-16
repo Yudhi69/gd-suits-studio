@@ -6,6 +6,7 @@ import brandLogo from './assets/logo-light.png';
 import { ToastProvider } from './components/ui.jsx';
 import Dashboard from './screens/Dashboard.jsx';
 import Analytics from './screens/Analytics.jsx';
+import Database from './screens/Database.jsx';
 import ProjectView from './screens/ProjectView.jsx';
 import ClientFile from './screens/ClientFile.jsx';
 import Settings from './screens/Settings.jsx';
@@ -64,6 +65,8 @@ export default function App() {
 
   const nav = [
     { key: 'dashboard', label: 'Orders' },
+    // The workbook, as one editable sheet over the same orders.
+    { key: 'database', label: 'Database' },
     { key: 'analytics', label: 'Business' },
     { key: 'settings', label: 'Settings' },
   ];
@@ -152,6 +155,15 @@ export default function App() {
               overrides={overrides}
               unit={unit}
               onBack={() => setRoute({ name: 'dashboard' })}
+              onOpenProject={(id) => setRoute({ name: 'project', id })}
+            />
+          )}
+
+          {route.name === 'database' && (
+            <Database
+              steps={catalog.steps}
+              overrides={overrides}
+              unit={unit}
               onOpenProject={(id) => setRoute({ name: 'project', id })}
             />
           )}

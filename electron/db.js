@@ -661,6 +661,34 @@ const MIGRATIONS = [
       );
     `);
   },
+
+  /* v19 - GD's October notes.
+
+     The first appointment was asked for twice: once as the schedule's first
+     consultation and again on the order page. They are the same visit, so
+     the order page stops asking, and any date only the order page held moves
+     to the schedule rather than vanishing with the field. A date already in
+     the schedule wins - it is the one GD has been looking at.
+
+     An alteration is entered against the measurement list: each change
+     records the measurement, by how much, and the figure before and after,
+     and the measurement itself moves with it - and moves back if the
+     alteration is cancelled or deleted. One alteration is one job, as on
+     GD's sheet, so it can carry several changes.
+
+     And an informal quote - the summary sent to a client by WhatsApp or email
+     before anything is agreed - records what was sent and what came back. */
+  (d) => {
+    d.exec(`
+      UPDATE projects SET consultation_date = first_appointment
+       WHERE consultation_date = '' AND first_appointment <> '';
+
+      ALTER TABLE alterations ADD COLUMN suit_id INTEGER REFERENCES suits(id) ON DELETE SET NULL;
+      ALTER TABLE alterations ADD COLUMN changes_json TEXT NOT NULL DEFAULT '';
+
+      ALTER TABLE projects ADD COLUMN informal_quote_json TEXT NOT NULL DEFAULT '';
+    `);
+  },
 ];
 
 function open(userDataPath) {
@@ -762,6 +790,24 @@ function upsertClient(client) {
   return info.lastInsertRowid;
 }
 
+/**
+ * Changes some of a client's details and leaves the rest alone.
+ *
+ * upsertClient rewrites every column from what it is given, which suits the
+ * client page - it always has the whole record - and would blank everything
+ * else from a grid cell that only knows the phone number.
+ */
+function patchClient(id, patch) {
+  const allowed = ['name', 'surname', 'contact', 'email'];
+  const sets = [];
+  const params = { id, updated_at: nowStamp() };
+  for (const key of allowed) {
+    if (patch[key] !== undefined) { sets.push(`${key} = @${key}`); params[key] = patch[key]; }
+  }
+  if (!sets.length) return;
+  get().prepare(`UPDATE clients SET ${sets.join(', ')}, updated_at = @updated_at WHERE id = @id`).run(params);
+}
+
 function deleteClient(id) {
   get().prepare('DELETE FROM clients WHERE id = ?').run(id);
 }
@@ -770,7 +816,11 @@ function deleteClient(id) {
 
 function listProjects(clientId) {
   const d = get();
-  const sql = `SELECT p.*, c.name, c.surname
+  // Every suit's spec rides along, so the list can price a whole wedding party
+  // rather than whatever was left in the order's own, long-retired spec
+  // column. One query for the whole list; char(30) cannot occur in JSON text.
+  const sql = `SELECT p.*, c.name, c.surname,
+                      (SELECT group_concat(s.spec_json, char(30)) FROM suits s WHERE s.project_id = p.id) AS suit_specs
                  FROM projects p JOIN clients c ON c.id = p.client_id
                 ${clientId ? 'WHERE p.client_id = ?' : ''}
                 ORDER BY p.updated_at DESC`;
@@ -820,6 +870,7 @@ function removeMember(id) {
   if (!row) return;
   d.prepare('DELETE FROM suits WHERE project_id = ? AND client_id = ?').run(row.project_id, row.client_id);
   d.prepare('DELETE FROM order_members WHERE id = ?').run(id);
+  syncQuantity(row.project_id);
 }
 
 function listSuits(projectId) {
@@ -831,12 +882,30 @@ function listSuits(projectId) {
     .map((row) => ({ ...row, spec: JSON.parse(row.spec_json || '{}') }));
 }
 
+/**
+ * The order's suit count follows the suits on it.
+ *
+ * It was a number typed on the order page, beside a list of suits that could
+ * say something different. Adding or removing a suit is now what changes it,
+ * so the dashboard, the analytics and the database sheet count what is
+ * actually being made.
+ */
+function syncQuantity(projectId) {
+  get()
+    .prepare(`UPDATE projects
+                 SET quantity = MAX(1, (SELECT COUNT(*) FROM suits WHERE project_id = @id))
+               WHERE id = @id`)
+    .run({ id: projectId });
+}
+
 function addSuit({ projectId, clientId, label = '' }) {
   const d = get();
   const next = d.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS n FROM suits WHERE project_id = ?').get(projectId).n;
-  return d
+  const id = d
     .prepare(`INSERT INTO suits (project_id, client_id, label, position) VALUES (?, ?, ?, ?)`)
     .run(projectId, clientId, label, next).lastInsertRowid;
+  syncQuantity(projectId);
+  return id;
 }
 
 function updateSuit(id, patch) {
@@ -854,10 +923,26 @@ function updateSuit(id, patch) {
   // suits is working on it.
   d.prepare(`UPDATE projects SET updated_at = ?
               WHERE id = (SELECT project_id FROM suits WHERE id = ?)`).run(nowStamp(), id);
+
+  // The first suit's cloth is the order's cloth as far as the order list, the
+  // analytics and the database sheet are concerned - they read the order's
+  // own columns. updateProject writes those through to the first suit; this
+  // is the same road in the other direction, for an edit made on the suit.
+  const projectId = d.prepare('SELECT project_id FROM suits WHERE id = ?').get(id)?.project_id;
+  if (projectId && primarySuitId(projectId) === id) {
+    const cloth = ['fabric_name', 'fabric_code', 'supplier'].filter((k) => patch[k] !== undefined);
+    if (cloth.length) {
+      d.prepare(`UPDATE projects SET ${cloth.map((k) => `${k} = @${k}`).join(', ')} WHERE id = @projectId`)
+        .run({ projectId, ...Object.fromEntries(cloth.map((k) => [k, patch[k]])) });
+    }
+  }
 }
 
 function removeSuit(id) {
-  get().prepare('DELETE FROM suits WHERE id = ?').run(id);
+  const d = get();
+  const projectId = d.prepare('SELECT project_id FROM suits WHERE id = ?').get(id)?.project_id;
+  d.prepare('DELETE FROM suits WHERE id = ?').run(id);
+  if (projectId) syncQuantity(projectId);
 }
 
 /**
@@ -906,6 +991,9 @@ function getProject(id) {
     spec: primary ? primary.spec : JSON.parse(project.spec_json || '{}'),
     analysis: JSON.parse(project.analysis_json || '{}'),
     quote: project.quote_json ? JSON.parse(project.quote_json) : null,
+    informalQuote: (() => {
+      try { return project.informal_quote_json ? JSON.parse(project.informal_quote_json) : null; } catch { return null; }
+    })(),
     photos: d.prepare('SELECT * FROM photos WHERE project_id = ? ORDER BY created_at').all(id)
       .map((p) => ({ ...p, meta: JSON.parse(p.meta_json || '{}') })),
     notes: d.prepare('SELECT * FROM notes WHERE project_id = ? ORDER BY created_at DESC').all(id),
@@ -913,7 +1001,8 @@ function getProject(id) {
     renders: d.prepare('SELECT * FROM renders WHERE project_id = ? ORDER BY created_at DESC').all(id),
     fittings: d.prepare('SELECT * FROM fittings WHERE project_id = ? ORDER BY session_no').all(id),
     payments: d.prepare('SELECT * FROM payments WHERE project_id = ? ORDER BY paid_on, id').all(id),
-    alterations: d.prepare('SELECT * FROM alterations WHERE project_id = ? ORDER BY due_on, id').all(id),
+    alterations: d.prepare('SELECT * FROM alterations WHERE project_id = ? ORDER BY due_on, id').all(id)
+      .map((a) => ({ ...a, changes: readChanges(a) })),
     extras: d.prepare('SELECT * FROM order_extras WHERE project_id = ? ORDER BY id').all(id),
   };
 }
@@ -1074,6 +1163,13 @@ function setQuote(projectId, quote) {
   get()
     .prepare('UPDATE projects SET quote_json = ?, updated_at = ? WHERE id = ?')
     .run(quote ? JSON.stringify(quote) : '', nowStamp(), projectId);
+}
+
+/** What was sent as the informal quote, and what came back. */
+function setInformalQuote(projectId, record) {
+  get()
+    .prepare('UPDATE projects SET informal_quote_json = ?, updated_at = ? WHERE id = ?')
+    .run(record ? JSON.stringify(record) : '', nowStamp(), projectId);
 }
 
 function deleteProject(id) {
@@ -1660,16 +1756,110 @@ const rowCrud = (table, columns) => ({
 });
 
 const paymentsCrud = rowCrud('payments', ['project_id', 'kind', 'amount', 'paid_on', 'method', 'reference', 'note']);
-const alterationsCrud = rowCrud('alterations', ['project_id', 'garment', 'description', 'kind', 'status', 'received_on', 'due_on', 'confirmed_on', 'cost', 'note']);
+const alterationsCrud = rowCrud('alterations', ['project_id', 'garment', 'description', 'kind', 'status', 'received_on', 'due_on', 'confirmed_on', 'cost', 'note', 'suit_id', 'changes_json']);
 const extrasCrud = rowCrud('order_extras', ['project_id', 'extra_type', 'colour', 'quantity', 'status', 'unit_price', 'note']);
 
 const addPayment = (row) => paymentsCrud.add(row);
 const updatePayment = (id, patch) => paymentsCrud.update(id, patch);
 const deletePayment = (id) => paymentsCrud.remove(id);
 
-const addAlteration = (row) => alterationsCrud.add(row);
-const updateAlteration = (id, patch) => alterationsCrud.update(id, patch);
-const deleteAlteration = (id) => alterationsCrud.remove(id);
+/* An alteration that changes measurements moves them, and puts them back. */
+
+const readChanges = (row) => {
+  try {
+    const list = JSON.parse(row?.changes_json || '[]');
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+};
+
+function measurementValue(suitId, garment, fieldId) {
+  const row = get()
+    .prepare('SELECT value FROM measurements WHERE suit_id IS ? AND garment = ? AND field_id = ?')
+    .get(suitId, garment, fieldId);
+  return row?.value ?? null;
+}
+
+/**
+ * Sets one measurement on the suit and on its wearer's body record - the same
+ * two places the measurement page writes - but only if it still reads `from`.
+ * A figure someone has changed since the alteration was logged is theirs, and
+ * is not overwritten by putting the alteration back.
+ */
+function moveMeasurement({ projectId, suitId, garment, fieldId }, from, to) {
+  const now = measurementValue(suitId, garment, fieldId);
+  if (from !== null && (now === null || Math.abs(now - from) > 0.001)) return false;
+  saveMeasurement({ projectId, suitId, garment, fieldId, value: to, source: 'alteration' });
+  const wearer = get().prepare('SELECT client_id FROM suits WHERE id = ?').get(suitId)?.client_id;
+  if (wearer) saveClientMeasurement({ clientId: wearer, garment, fieldId, value: to });
+  return true;
+}
+
+/**
+ * Logs an alteration, applying each measurement change it carries.
+ *
+ * A change is "take the waist in 2cm": the figure on file is read, the change
+ * applied, and both kept on the alteration, so the log reads "100 -> 98" and
+ * the measurement page shows 98. A change to a measurement that was never
+ * taken has nothing to apply to; it is kept as written and moves nothing.
+ */
+function addAlteration(row) {
+  return tx(() => {
+    const projectId = row.project_id;
+    const suitId = row.suit_id ?? primarySuitId(projectId);
+    // The suit has to be on this order: an alteration moves measurements, and
+    // must not be able to reach into someone else's.
+    if (suitId !== null && !get().prepare('SELECT 1 FROM suits WHERE id = ? AND project_id = ?').get(suitId, projectId)) {
+      throw new Error('That suit is not on this order');
+    }
+    const changes = (Array.isArray(row.changes) ? row.changes : []).map((c) => {
+      const before = measurementValue(suitId, row.garment, c.fieldId);
+      const after = before === null ? null : Math.round((before + c.change) * 100) / 100;
+      if (after !== null && row.status !== 'cancelled') {
+        moveMeasurement({ projectId, suitId, garment: row.garment, fieldId: c.fieldId }, before, after);
+      }
+      return { fieldId: c.fieldId, label: c.label, change: c.change, before, after };
+    });
+    const { changes: _ignored, ...columns } = row;
+    return alterationsCrud.add({
+      note: '', confirmed_on: '', ...columns,
+      suit_id: suitId,
+      changes_json: changes.length ? JSON.stringify(changes) : '',
+    });
+  });
+}
+
+/** Every change on an alteration, moved from one side to the other. */
+function shiftChanges(alt, direction) {
+  for (const c of readChanges(alt)) {
+    if (c.before === null || c.after === null) continue;
+    const [from, to] = direction === 'undo' ? [c.after, c.before] : [c.before, c.after];
+    moveMeasurement({ projectId: alt.project_id, suitId: alt.suit_id, garment: alt.garment, fieldId: c.fieldId }, from, to);
+  }
+}
+
+/** Cancelling puts the measurements back; un-cancelling applies them again. */
+function updateAlteration(id, patch) {
+  return tx(() => {
+    const current = get().prepare('SELECT * FROM alterations WHERE id = ?').get(id);
+    if (!current) return;
+    alterationsCrud.update(id, patch);
+    if (patch.status === undefined || patch.status === current.status) return;
+    if (patch.status === 'cancelled') shiftChanges(current, 'undo');
+    else if (current.status === 'cancelled') shiftChanges(current, 'redo');
+  });
+}
+
+/** Deleting one that was still going ahead puts its measurements back. */
+function deleteAlteration(id) {
+  return tx(() => {
+    const current = get().prepare('SELECT * FROM alterations WHERE id = ?').get(id);
+    if (!current) return;
+    if (current.status !== 'cancelled') shiftChanges(current, 'undo');
+    alterationsCrud.remove(id);
+  });
+}
 
 const addOrderExtra = (row) => extrasCrud.add(row);
 const updateOrderExtra = (id, patch) => extrasCrud.update(id, patch);
@@ -1861,21 +2051,61 @@ function analytics({ from = '0000-01-01', to = '9999-12-31' } = {}) {
   };
 }
 
+/* ------------------------------------------------------------ the sheet */
+
+/**
+ * Everything the database page shows, in three queries however many orders
+ * there are: the orders with their client, every suit's spec and what has
+ * been paid; the alterations; and the extras - the workbook's sheets.
+ */
+function sheet() {
+  const d = get();
+  const orders = d.prepare(
+    `SELECT p.id, p.order_ref, p.status, p.title, p.event_date, p.quantity,
+            p.fabric_name, p.fabric_code, p.supplier, p.design, p.lining, p.shirt,
+            p.measurement_form_received, p.form_printed, p.form_url,
+            p.appointment_notes, p.consultation_date, p.first_appointment, p.comments,
+            p.quote_json, p.imported_balance, p.import_source, p.updated_at,
+            p.client_id, c.name, c.surname, c.contact, c.email,
+            (SELECT group_concat(s.spec_json, char(30)) FROM suits s WHERE s.project_id = p.id) AS suit_specs,
+            (SELECT COUNT(*) FROM suits s WHERE s.project_id = p.id) AS suit_count,
+            (SELECT COALESCE(SUM(CASE WHEN y.kind = 'refund' THEN -y.amount ELSE y.amount END), 0)
+               FROM payments y WHERE y.project_id = p.id) AS paid
+       FROM projects p JOIN clients c ON c.id = p.client_id
+      ORDER BY p.updated_at DESC, p.id DESC`
+  ).all();
+
+  const alterations = d.prepare(
+    `SELECT a.*, p.order_ref, c.name, c.surname
+       FROM alterations a JOIN projects p ON p.id = a.project_id JOIN clients c ON c.id = p.client_id
+      ORDER BY COALESCE(NULLIF(a.received_on, ''), a.created_at) DESC, a.id DESC`
+  ).all().map((a) => ({ ...a, changes: readChanges(a) }));
+
+  const extras = d.prepare(
+    `SELECT e.*, p.order_ref, c.name, c.surname
+       FROM order_extras e JOIN projects p ON p.id = e.project_id JOIN clients c ON c.id = p.client_id
+      ORDER BY e.id DESC`
+  ).all();
+
+  return { orders, alterations, extras };
+}
+
 module.exports = {
   open,
   MIGRATIONS,
   SCHEMA_VERSION: MIGRATIONS.length,
-  listClients, getClient, upsertClient, deleteClient,
+  listClients, getClient, upsertClient, patchClient, deleteClient,
   addReference, listReferences, getReference, updateReference, deleteReference,
   linkRenderRefs, styleHistory,
   saveClientMeasurement, listClientMeasurements, seedMeasurementsFromClient,
-  listProjects, getProject, createProject, updateProject, deleteProject, setQuote,
+  listProjects, getProject, createProject, updateProject, deleteProject, setQuote, setInformalQuote,
   addPayment, updatePayment, deletePayment,
   addAlteration, updateAlteration, deleteAlteration,
   addOrderExtra, updateOrderExtra, deleteOrderExtra,
   listMembers, addMember, updateMember, removeMember,
   listSuits, addSuit, updateSuit, removeSuit, primarySuitId, defaultPhotoOwner,
   analytics,
+  sheet,
   tx,
   nextOrderRef, assignOrderRefs, stampImport, isRenderFile,
   addPhoto, getPhoto, deletePhoto, updatePhotoMeta,
