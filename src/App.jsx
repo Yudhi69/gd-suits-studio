@@ -110,7 +110,7 @@ export default function App() {
             </div>
             {updateReady && (
               <button className="update-flag" onClick={() => setRoute({ name: 'settings' })}>
-                Version {updateReady.version} available
+                Version {updateReady.version} {updateReady.downloaded ? 'downloaded - ready to install' : 'available'}
               </button>
             )}
             <div>

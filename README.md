@@ -291,9 +291,24 @@ what it expects.
 
 Nothing this app downloads is ever executed by this app.
 
-**Publishing a release.** Bump `version` in `package.json`, build, and attach
-the installers to a GitHub release. The default feed is the releases endpoint
-for this repository.
+A release is downloaded **once**. The copy that is running stays the old
+version until the new one is installed, so the release goes on being newer
+than it; the app remembers the installer it saved and, while that file is still
+in the Downloads folder exactly as it was checked, shows it ("Already in your
+Downloads folder") instead of offering the download again. Delete or change
+the file and the release is offered afresh. On the newest version, Updates says
+"Up to date" and offers nothing - and main refuses a download if asked anyway.
+
+**Publishing a release.** Nothing to do by hand: every merge to `main` builds
+both platforms and publishes a release (`.github/workflows/release.yml`),
+numbered `<major>.<minor>.<run number>` from `package.json`. Put
+`[skip release]` in the merge commit message for a change that does not need
+one, such as a docs-only PR. The default feed is the releases endpoint for
+this repository.
+
+A copy run from source reports the `version` in `package.json` (`0.1.0`), which
+the workflow stamps only inside the build, so it will always see the latest
+release as newer. That is expected; installed copies report their real number.
 
 Two things to know while the repository is **private**: its releases are
 private too, so the check returns "no releases found" until either an access

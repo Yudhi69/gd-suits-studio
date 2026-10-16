@@ -1459,13 +1459,30 @@ let lastDownload = null;
 handle('updates:check', async () => {
   const feedUrl = db.getSetting('updateFeed', DEFAULT_FEED) || DEFAULT_FEED;
   const result = await updater.check({ feedUrl, token: secrets.get('updateToken') });
+  // A newer version whose installer is already in the Downloads folder is
+  // reported as downloaded, so the page shows the file rather than offering
+  // it again. The copy that is running stays the old one until the tailor
+  // installs the new, so "available" alone would offer it on every check.
+  const saved = result.updateAvailable ? alreadySaved(result) : null;
+  if (saved) lastDownload = saved.path;
   lastRelease = { ...result, feedUrl };
   // Recorded only when the check got an answer. An install opened for the
   // first time with no signal has not yet found out whether it is current,
   // so it has not had its first check - and gets one next time it opens.
   db.setSetting('updatesLastChecked', result.checkedAt);
-  return result;
+  return { ...result, downloaded: saved ? { ...saved, already: true } : null };
 });
+
+/**
+ * The installer already saved for this release, if it is still there.
+ *
+ * Kept in a setting that only this process writes - it is not one of
+ * SETTING_KEYS, so a page can neither read the path nor plant one - and
+ * believed only as far as the disk agrees with it (see savedDownload).
+ */
+function alreadySaved(release) {
+  return updater.savedDownload(db.getSetting('updateDownload', null), release, app.getPath('downloads'));
+}
 
 /**
  * Whether this launch should look for a newer version without being asked.
@@ -1499,6 +1516,14 @@ handle('updates:fetch', async () => {
   if (!lastRelease.canDownload) throw new Error('This release has no file this app will download. Open the release page instead.');
   if (downloading) throw new Error('That download is already running.');
 
+  // Asked for again, the same release is the file already saved - never a
+  // second copy of it beside the first.
+  const existing = alreadySaved(lastRelease);
+  if (existing) {
+    lastDownload = existing.path;
+    return { ...existing, already: true };
+  }
+
   downloading = new AbortController();
   try {
     const saved = await updater.download({
@@ -1515,6 +1540,14 @@ handle('updates:fetch', async () => {
       },
     });
     lastDownload = saved.path;
+    db.setSetting('updateDownload', {
+      version: lastRelease.version,
+      asset: lastRelease.downloadName,
+      path: saved.path,
+      bytes: saved.bytes,
+      sha256: saved.sha256,
+      verified: saved.verified,
+    });
     return { ...saved, version: lastRelease.version };
   } finally {
     downloading = null;
