@@ -74,7 +74,12 @@ export default function App() {
   return (
     <ToastProvider>
       {firstRunUpdate && (
-        <FirstRunUpdate update={firstRunUpdate} platform={platform} onClose={() => setFirstRunUpdate(null)} />
+        <FirstRunUpdate
+          update={firstRunUpdate}
+          platform={platform}
+          onClose={() => setFirstRunUpdate(null)}
+          onReady={() => setUpdateReady((cur) => (cur ? { ...cur, ready: true } : cur))}
+        />
       )}
       <div className="app">
         <aside className="sidebar">
@@ -109,8 +114,10 @@ export default function App() {
               ))}
             </div>
             {updateReady && (
-              <button className="update-flag" onClick={() => setRoute({ name: 'settings' })}>
-                Version {updateReady.version} {updateReady.downloaded ? 'downloaded - ready to install' : 'available'}
+              <button className="update-flag" onClick={() => setRoute({ name: 'settings', tab: 'updates', at: Date.now() })}>
+                Version {updateReady.version}{' '}
+                {updateReady.ready ? 'ready - restart to update'
+                  : updateReady.downloaded ? 'downloaded - ready to install' : 'available'}
               </button>
             )}
             <div>
@@ -174,6 +181,9 @@ export default function App() {
 
           {route.name === 'settings' && (
             <Settings
+              key={route.at ?? 'settings'}
+              initialTab={route.tab}
+              onUpdateChanged={setUpdateReady}
               catalog={catalog}
               overrides={overrides}
               onOverridesChanged={setOverrides}

@@ -24,6 +24,7 @@ const csv = require('./csv');
 /** The shop's details as they are set today, never as they were compiled. */
 const shop = () => business.withDefaults(db.getSetting('business', null));
 const updater = require('./updater');
+const installer = require('./installer');
 const v = require('./validate');
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -166,6 +167,11 @@ function startup() {
     }
   }
   logLine('storage and secrets ready');
+  try {
+    settleUpdate();
+  } catch (err) {
+    logLine(`could not settle the last update: ${err?.message ?? err}`);
+  }
 
   protocol.handle('gdmedia', async (request) => {
     try {
@@ -1439,8 +1445,8 @@ handle('app:info', () => ({
 
 handle('app:openDataFolder', () => shell.openPath(app.getPath('userData')));
 
-/* updates - checked on demand, never applied silently */
-const DEFAULT_FEED = 'https://api.github.com/repos/Yudhi69/gd-suits-studio/releases/latest';
+/* updates - checked on demand, installed when the tailor says so */
+const DEFAULT_FEED = installer.OFFICIAL_FEED;
 
 /**
  * What the last check found, and what the last download left on disk.
@@ -1470,7 +1476,16 @@ handle('updates:check', async () => {
   // first time with no signal has not yet found out whether it is current,
   // so it has not had its first check - and gets one next time it opens.
   db.setSetting('updatesLastChecked', result.checkedAt);
-  return { ...result, downloaded: saved ? { ...saved, already: true } : null };
+  const blocked = result.updateAvailable ? installBlocked(lastRelease) : null;
+  return {
+    ...result,
+    downloaded: saved ? { ...saved, already: true } : null,
+    // Whether this release can put itself in place, and if not, why not -
+    // the page shows the download instead, with the reason.
+    canInstall: result.updateAvailable && !blocked,
+    installBlocked: blocked,
+    ready: result.updateAvailable && !blocked && stagedUpdate()?.version === result.version,
+  };
 });
 
 /**
@@ -1505,10 +1520,10 @@ function firstRunCheck() {
 /**
  * Fetches the release file into the Downloads folder.
  *
- * A download, not an install: it is saved without an executable bit and shown
- * in the file manager. Nothing this app downloads is ever executed by this
- * app - opening it is the tailor's decision, made in the operating system's
- * own dialogs, where an unsigned app is named as one.
+ * The fallback for a release that cannot install itself (see installBlocked):
+ * saved without an executable bit and shown in the file manager. This app
+ * never opens a file it saved here - installing it is the tailor's decision,
+ * made in the operating system's own dialogs.
  */
 handle('updates:fetch', async () => {
   if (!lastRelease) throw new Error('Check for updates first.');
@@ -1577,6 +1592,185 @@ handle('updates:download', ({ url }) => {
 });
 
 handle('updates:defaultFeed', () => DEFAULT_FEED);
+
+/**
+ * Installing in place.
+ *
+ * `updates:install` downloads the release into the app's own data folder -
+ * not Downloads, there is nothing there for the tailor to do - and makes it
+ * ready: on a Mac the app is unpacked from the disk image and checked; on
+ * Windows the installer is kept as downloaded. `updates:restart` then quits
+ * and puts it in place. If he quits instead, it goes in then, the way most
+ * apps finish an update.
+ *
+ * As with the download, the page only ever asks for "the update". The file,
+ * where it comes from and where it goes are decided here, from the release
+ * this process checked itself, and installer.js refuses anything that is not
+ * one of this app's own releases.
+ */
+const updatesDir = () => path.join(app.getPath('userData'), 'updates');
+const installLog = () => path.join(updatesDir(), 'install.log');
+const installResult = () => path.join(updatesDir(), 'install.result');
+let handedOver = false;
+
+/** Where this copy is installed, or why it cannot be replaced. */
+function thisInstall() {
+  return installer.installTarget({
+    platform: process.platform,
+    packaged: app.isPackaged,
+    exePath: app.getPath('exe'),
+    // Lets the install suite point the swap at a folder of its own. Never
+    // read in an installed copy.
+    testTarget: app.isPackaged ? null : process.env.GD_TEST_INSTALL_TARGET || null,
+  });
+}
+
+/** Why `release` cannot install itself here, or null when it can. */
+function installBlocked(release) {
+  const notOfficial = installer.officialRelease(release);
+  if (notOfficial) return notOfficial;
+  const { reason } = thisInstall();
+  if (reason) return reason;
+  const failed = db.getSetting('updateFailed', null);
+  if (failed?.version === release.version) {
+    return `Version ${release.version} could not be put in place automatically last time, so it is ` +
+      'downloaded for you to install by hand.';
+  }
+  return null;
+}
+
+/**
+ * The update made ready earlier, if it is still there, still newer than this
+ * copy, and still where this process put it. Kept in a setting only main
+ * writes - not one of SETTING_KEYS - so a page can neither read the path nor
+ * plant one; and the path is checked against the folder anyway.
+ */
+function stagedUpdate() {
+  const record = db.getSetting('updateStaged', null);
+  if (!record || typeof record !== 'object' || record.platform !== process.platform) return null;
+  if (updater.compareVersions(record.version, updater.currentVersion()) <= 0) return null;
+  const file = String(record.path ?? '');
+  const inside = path.resolve(file).startsWith(path.resolve(updatesDir()) + path.sep);
+  if (!path.isAbsolute(file) || !inside || !fs.existsSync(file)) return null;
+  return record;
+}
+
+handle('updates:install', async () => {
+  if (!lastRelease) throw new Error('Check for updates first.');
+  if (!lastRelease.updateAvailable) throw new Error('There is no newer version to install.');
+  const blocked = installBlocked(lastRelease);
+  if (blocked) throw new Error(blocked);
+  if (downloading) throw new Error('The update is already being downloaded.');
+  if (stagedUpdate()?.version === lastRelease.version) return { version: lastRelease.version, ready: true, already: true };
+
+  const release = lastRelease;
+  const dir = path.join(updatesDir(), release.version);
+  const progress = (p) => {
+    if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('updates:progress', p);
+  };
+  // Whatever an earlier version left here is of no use now.
+  fs.rmSync(updatesDir(), { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+
+  downloading = new AbortController();
+  try {
+    const saved = await updater.download({
+      feedUrl: release.feedUrl,
+      url: release.downloadUrl,
+      name: release.downloadName,
+      size: release.downloadSize,
+      digest: release.downloadDigest,
+      token: secrets.get('updateToken'),
+      dir,
+      signal: downloading.signal,
+      onProgress: progress,
+    });
+    // The download is checked against the release's fingerprint by
+    // updater.download; installBlocked has already insisted there is one.
+    let ready = saved.path;
+    if (process.platform === 'darwin') {
+      progress({ phase: 'preparing', bytes: saved.bytes, total: saved.bytes, name: saved.name });
+      ready = await installer.stageMac({ dmg: saved.path, version: release.version, dir });
+      fs.rmSync(saved.path, { force: true });
+    }
+    db.setSetting('updateStaged', {
+      version: release.version,
+      platform: process.platform,
+      path: ready,
+      sha256: saved.sha256,
+    });
+    return { version: release.version, ready: true };
+  } catch (err) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw err;
+  } finally {
+    downloading = null;
+  }
+});
+
+/**
+ * Hands the ready update over and returns; the caller quits. Throws, and
+ * hands nothing over, if it is no longer exactly what was checked.
+ */
+function handOver(staged, relaunch) {
+  const { target, reason } = thisInstall();
+  if (reason) throw new Error(reason);
+  installer.apply({
+    platform: process.platform,
+    staged: staged.path,
+    target,
+    version: staged.version,
+    sha256: staged.sha256,
+    pid: process.pid,
+    relaunch,
+    log: installLog(),
+    result: installResult(),
+  });
+  handedOver = true;
+  db.setSetting('updateStaged', { ...staged, applying: Date.now() });
+}
+
+handle('updates:restart', () => {
+  const staged = stagedUpdate();
+  if (!staged) throw new Error('No update is ready to install.');
+  handOver(staged, true);
+  setImmediate(() => app.quit());
+  return { restarting: true, version: staged.version };
+});
+
+// An update made ready and not yet put in place goes in as the app quits, so
+// "Later" never means "never". A failure here must not stop the app quitting.
+app.on('will-quit', () => {
+  if (handedOver) return;
+  try {
+    const staged = stagedUpdate();
+    if (staged) handOver(staged, false);
+  } catch (err) {
+    logLine(`update not installed on quit: ${err?.message ?? err}`);
+  }
+});
+
+/**
+ * On launch: did the last update go in? Installed, its leftovers are cleared.
+ * Failed, the same version is offered as a download from then on, rather
+ * than the app trying - and failing - on every quit.
+ */
+function settleUpdate() {
+  const record = db.getSetting('updateStaged', null);
+  let result = null;
+  try { result = fs.readFileSync(installResult(), 'utf8').trim(); } catch { /* not handed over */ }
+  const outcome = installer.settle({
+    record, current: updater.currentVersion(), result, compare: updater.compareVersions,
+  });
+  if (outcome === 'installed' || outcome === 'failed') {
+    if (outcome === 'failed') {
+      db.setSetting('updateFailed', { version: record.version, at: new Date().toISOString(), detail: result ?? '' });
+    }
+    db.setSetting('updateStaged', null);
+    fs.rmSync(updatesDir(), { recursive: true, force: true });
+    logLine(`update ${record.version}: ${outcome}${result ? ` (${result})` : ''}`);
+  }
+}
 
 /**
  * What the app can tell the user about how their data is held. Surfaced in

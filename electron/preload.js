@@ -42,6 +42,7 @@ const CHANNELS = [
   'app:info', 'app:openDataFolder', 'app:security',
   'updates:check', 'updates:download', 'updates:defaultFeed',
   'updates:fetch', 'updates:cancel', 'updates:reveal',
+  'updates:install', 'updates:restart',
 ];
 
 /**
