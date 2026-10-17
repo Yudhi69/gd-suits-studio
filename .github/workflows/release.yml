@@ -125,6 +125,13 @@ jobs:
       #
       # The secrets hold the .p12 (base64) and its password. The key exists
       # nowhere else but the owner's own backup - see build/mac-keychain.sh.
+      #
+      # On the runner the keychain also goes on the search list. codesign on
+      # macOS 14 does not find an identity in a keychain that is not on it,
+      # even when named with --keychain: the first release built this way
+      # found the certificate here and then failed to sign with "The
+      # specified item could not be found in the keychain". The runner is
+      # thrown away after the job; on a laptop the list is never touched.
       - name: Signing certificate
         if: runner.os == 'macOS'
         env:
@@ -143,6 +150,26 @@ jobs:
           node -e "process.stdout.write(Buffer.from(process.env.MAC_SIGNING_P12, 'base64'))" > "$p12"
           # Assigned first: inside an echo, a failure here would go unnoticed.
           identity=$(build/mac-keychain.sh "$p12" "$keychain")
+          expected=$(node -p "require('./electron/installer.js').SIGNER")
+          if [ "$(echo "$identity" | tr A-F a-f)" != "$expected" ]; then
+            echo "::error::The certificate in MAC_SIGNING_P12 is $identity, not the one installed copies insist on ($expected)."
+            exit 1
+          fi
+          searchlist=()
+          while IFS= read -r line; do
+            line=${line#*\"}
+            searchlist+=("${line%\"*}")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$keychain" ${searchlist[@]+"${searchlist[@]}"}
+          # Sign something small now, so a certificate codesign cannot use
+          # stops the job here and not after the whole build.
+          probe="$RUNNER_TEMP/signing-probe"
+          cp /usr/bin/true "$probe"
+          codesign --force --sign "$identity" --keychain "$keychain" --timestamp=none "$probe" ||
+            { echo "::error::codesign cannot sign with the certificate in $keychain."; exit 1; }
+          codesign -d -r- "$probe" 2>&1 | grep -i "certificate leaf = H\"$expected\"" >/dev/null ||
+            { echo "::error::A test signature does not name the project's certificate."; exit 1; }
+          rm -f "$probe"
           echo "signing as $identity"
           echo "GD_MAC_SIGN_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
       # --publish never on every call above, not just here: on CI
