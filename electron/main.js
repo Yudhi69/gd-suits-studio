@@ -25,6 +25,7 @@ const csv = require('./csv');
 const shop = () => business.withDefaults(db.getSetting('business', null));
 const updater = require('./updater');
 const installer = require('./installer');
+const placement = require('./placement');
 const v = require('./validate');
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -39,6 +40,8 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow = null;
+// Set once the database is open; until then there is nothing to settle or install.
+let started = false;
 
 /** Defined once in ./mediaUrl so the preload cannot drift from it again. */
 const mediaUrl = media.mediaUrl;
@@ -153,6 +156,7 @@ function startup() {
   security.hardenSession(isDev);
 
   db.open(userData);
+  started = true;
   logLine('database opened');
   storage.init(userData);
   secrets.init(userData);
@@ -206,7 +210,45 @@ function startup() {
   logLine('window created - startup complete');
 }
 
-app.whenReady().then(() => {
+/**
+ * Whether this copy should start at all, decided before it opens anything -
+ * see placement.js. Only an installed copy is checked.
+ *
+ * A failure in the check itself is logged and the app starts: this guards
+ * against opening an older copy by mistake, and an app that will not open
+ * at all is the worse outcome.
+ */
+async function placeThisCopy() {
+  if (!app.isPackaged) return 'run';
+  try {
+    return await placement.place({
+      platform: process.platform,
+      current: updater.currentVersion(),
+      bundle: process.platform === 'darwin' ? placement.ownBundle(app.getPath('exe')) : null,
+      compare: updater.compareVersions,
+      dataDir: app.getPath('userData'),
+      applications: '/Applications',
+      homeApplications: path.join(os.homedir(), 'Applications'),
+      ask: (options) => dialog.showMessageBox(options),
+      open: placement.openWhenGone,
+      move: (conflictHandler) => app.moveToApplicationsFolder({ conflictHandler }),
+      openPage: () => security.openExternalSafely(RELEASES_PAGE),
+      log: logLine,
+    });
+  } catch (err) {
+    logLine(`placement check failed, starting anyway: ${err?.stack ?? err}`);
+    return 'run';
+  }
+}
+
+app.whenReady().then(async () => {
+  const placed = await placeThisCopy();
+  // Moved: Electron reopens it from Applications and quits this one itself.
+  if (placed === 'moved') return;
+  if (placed !== 'run') {
+    app.exit(0);
+    return;
+  }
   try {
     startup();
   } catch (err) {
@@ -1440,13 +1482,13 @@ handle('app:info', () => ({
   userData: app.getPath('userData'),
   platform: process.platform,
   online: true,
-  firstRunCheck: firstRunCheck(),
 }));
 
 handle('app:openDataFolder', () => shell.openPath(app.getPath('userData')));
 
-/* updates - checked on demand, installed when the tailor says so */
+/* updates - checked on launch and on demand, installed when the tailor says so */
 const DEFAULT_FEED = installer.OFFICIAL_FEED;
+const RELEASES_PAGE = 'https://github.com/Yudhi69/gd-suits-studio/releases/latest';
 
 /**
  * What the last check found, and what the last download left on disk.
@@ -1462,7 +1504,7 @@ let lastRelease = null;
 let downloading = null;
 let lastDownload = null;
 
-handle('updates:check', async () => {
+async function checkForUpdates() {
   const feedUrl = db.getSetting('updateFeed', DEFAULT_FEED) || DEFAULT_FEED;
   const result = await updater.check({ feedUrl, token: secrets.get('updateToken') });
   // A newer version whose installer is already in the Downloads folder is
@@ -1486,6 +1528,38 @@ handle('updates:check', async () => {
     installBlocked: blocked,
     ready: result.updateAvailable && !blocked && stagedUpdate()?.version === result.version,
   };
+}
+
+handle('updates:check', () => checkForUpdates());
+
+/**
+ * The check an installed copy makes as it opens - on unless the tailor has
+ * turned it off in Settings.
+ *
+ * The prompt comes up once for each new version, the first launch that finds
+ * it; after that the flag in the corner says it is there. Which version was
+ * last put in front of him is kept where only this process writes, so a page
+ * cannot make the prompt come back or keep it away.
+ *
+ * Only in an installed copy. A development build - and every test suite,
+ * which each starts from an empty folder - would otherwise go out to GitHub
+ * on launch and put a prompt over whatever it was about to test; there, it
+ * looks only if the setting has been turned on, and never prompts.
+ * GD_TEST_FIRST_RUN lets the suites that test this run as an installed copy.
+ */
+handle('updates:launchCheck', async () => {
+  const installed = app.isPackaged || process.env.GD_TEST_FIRST_RUN === '1';
+  const setting = db.getSetting('autoCheckUpdates', null);
+  // A copy that has never once heard back from the feed looks whatever the
+  // setting says, as it always has, so a package sent out a few versions ago
+  // brings itself up to date on its first launch with a connection.
+  const firstRun = installed && !db.getSetting('updatesLastChecked', null);
+  if (!(installed ? firstRun || setting !== false : setting === true)) return { checked: false };
+
+  const result = await checkForUpdates();
+  const prompt = installed && result.updateAvailable && db.getSetting('updatePrompted', null) !== result.version;
+  if (prompt) db.setSetting('updatePrompted', result.version);
+  return { ...result, checked: true, prompt };
 });
 
 /**
@@ -1497,24 +1571,6 @@ handle('updates:check', async () => {
  */
 function alreadySaved(release) {
   return updater.savedDownload(db.getSetting('updateDownload', null), release, app.getPath('downloads'));
-}
-
-/**
- * Whether this launch should look for a newer version without being asked.
- *
- * An install that has never once heard back from the update feed looks on
- * its first launch, so a package sent out a few versions ago brings its owner
- * up to date the first time he opens it rather than whenever he happens to
- * open Settings. After that it is his setting.
- *
- * Only in an installed copy. A development build - and every test suite,
- * which each starts from an empty folder and so is always "new" - would
- * otherwise go out to GitHub on launch and put a prompt over whatever it was
- * about to test. GD_TEST_FIRST_RUN lets the one suite that tests this do so.
- */
-function firstRunCheck() {
-  const installed = app.isPackaged || process.env.GD_TEST_FIRST_RUN === '1';
-  return installed && !db.getSetting('updatesLastChecked', null);
 }
 
 /**
@@ -1625,6 +1681,12 @@ function thisInstall() {
   });
 }
 
+/**
+ * The certificate an update has to be signed with. Lets the install suite use
+ * one of its own; never read in an installed copy.
+ */
+const updateSigner = () => (app.isPackaged ? null : process.env.GD_TEST_SIGNER) || installer.SIGNER;
+
 /** Why `release` cannot install itself here, or null when it can. */
 function installBlocked(release) {
   const notOfficial = installer.officialRelease(release);
@@ -1690,7 +1752,7 @@ handle('updates:install', async () => {
     let ready = saved.path;
     if (process.platform === 'darwin') {
       progress({ phase: 'preparing', bytes: saved.bytes, total: saved.bytes, name: saved.name });
-      ready = await installer.stageMac({ dmg: saved.path, version: release.version, dir });
+      ready = await installer.stageMac({ dmg: saved.path, version: release.version, dir, signer: updateSigner() });
       fs.rmSync(saved.path, { force: true });
     }
     db.setSetting('updateStaged', {
@@ -1702,6 +1764,7 @@ handle('updates:install', async () => {
     return { version: release.version, ready: true };
   } catch (err) {
     fs.rmSync(dir, { recursive: true, force: true });
+    logLine(`update ${release.version} not made ready: ${err?.code ?? ''} ${err?.detail ?? err?.message ?? err}`);
     throw err;
   } finally {
     downloading = null;
@@ -1725,6 +1788,7 @@ function handOver(staged, relaunch) {
     relaunch,
     log: installLog(),
     result: installResult(),
+    signer: updateSigner(),
   });
   handedOver = true;
   db.setSetting('updateStaged', { ...staged, applying: Date.now() });
@@ -1741,7 +1805,7 @@ handle('updates:restart', () => {
 // An update made ready and not yet put in place goes in as the app quits, so
 // "Later" never means "never". A failure here must not stop the app quitting.
 app.on('will-quit', () => {
-  if (handedOver) return;
+  if (handedOver || !started) return;
   try {
     const staged = stagedUpdate();
     if (staged) handOver(staged, false);

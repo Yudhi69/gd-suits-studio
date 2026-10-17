@@ -847,7 +847,8 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
       const fallback = await api.updates.defaultFeed().catch(() => '');
       setDefaultFeed(fallback);
       setFeed((await api.settings.get({ key: 'updateFeed', fallback })) || fallback);
-      setAutoCheck(!!(await api.settings.get({ key: 'autoCheckUpdates', fallback: false })));
+      // On unless he has turned it off - the rule main applies as the app opens.
+      setAutoCheck((await api.settings.get({ key: 'autoCheckUpdates', fallback: true })) !== false);
       setTokenState(await api.secrets.describe({ name: 'updateToken' }).catch(() => null));
     })();
   }, []);

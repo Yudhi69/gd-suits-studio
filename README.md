@@ -24,8 +24,9 @@ recorded in every compiled file in the bundle and refuses to package one that
 asks for more than 10.15. Raising Electron past 32 will fail that check, by
 design - drop Catalina knowingly or not at all.
 
-The builds are **ad-hoc signed, not notarised**, so the first launch on macOS
-needs a right-click → *Open* to get past Gatekeeper. See *Signing* below.
+The builds are **signed with the project's own certificate, not an Apple
+Developer ID, and not notarised**, so the first launch on macOS needs a
+right-click → *Open* to get past Gatekeeper. See *Signing* below.
 
 [**docs/installing.md**](docs/installing.md) is the same thing written for the
 tailor rather than for a developer - which file to take, what each warning
@@ -275,9 +276,11 @@ the judgement this app exists to support.
 
 ## Updates
 
-**Settings → Updates → Check for updates.** It compares the installed version
-against a release feed, shows what changed, and offers the download built for
-that machine (arm64 vs Intel vs Windows is chosen automatically).
+An installed copy looks for a new version **each time it opens**, and
+**Settings → Updates → Check for updates** looks on demand. Either compares the
+installed version against a release feed, shows what changed, and offers the
+download built for that machine (arm64 vs Intel vs Windows is chosen
+automatically).
 
 **Install** then **Restart now**, and the next copy that opens is the new
 version: nothing to find in Downloads, nothing to drag, no installer to click
@@ -285,8 +288,9 @@ through. **Later** works too - an update made ready goes in the next time the
 app quits.
 
 Electron's own updater (Squirrel / `electron-updater`) cannot do this here:
-Squirrel only accepts a replacement signed by the same Apple Developer ID as
-the running copy, and these builds are ad-hoc signed. So `electron/installer.js`
+Squirrel only accepts a replacement that meets the running copy's own signature
+requirement, and every copy released before October 2026 was ad-hoc signed - a
+requirement naming that one build and nothing else. So `electron/installer.js`
 does what an installer would, and everything that lets the app run what it
 downloaded is a gate passed first, in the main process:
 
@@ -298,8 +302,11 @@ downloaded is a gate passed first, in the main process:
 - **On a Mac**, the disk image is opened read-only and out of sight, the one
   real `*.app` folder in it is copied out (a link is not followed), and it must
   have this app's bundle identifier, exactly the version the release names, and
-  an intact code signature (`codesign --verify --deep --strict`) - checked when
-  it is unpacked and again at the moment it is handed over. A fixed `/bin/sh`
+  a code signature that is intact **and made with the project's certificate**
+  (`codesign --verify --deep --strict -R` against `installer.SIGNER`; see
+  *Signing*) - checked when it is unpacked and again at the moment it is handed
+  over. An ad-hoc build, or one signed by anyone else, is offered as a download
+  instead. A fixed `/bin/sh`
   script, given the paths as arguments, waits for the app to exit, copies the
   new bundle beside the old and swaps them with two renames in the same folder,
   putting the old one back if the second fails, then reopens the app.
@@ -319,11 +326,36 @@ app's own data folder (`updates/`), never in Downloads, and the record of it is
 a setting a page can neither read nor write.
 
 On a Mac, the first launch after each update may ask for the keychain password
-once, so the new copy can read the saved API keys: ad-hoc signatures change
-with every build. The app says so and asks for **Always Allow**.
+once, so the new copy can read the saved API keys. The project certificate does
+not stop this: macOS only carries a saved password across builds for apps
+signed with an Apple-issued certificate, and ties it to the exact build
+otherwise. The app says so and asks for **Always Allow**. An Apple Developer ID
+would end it - see *Signing*.
 
 Copies older than this change cannot install themselves - they update once by
 hand, the old way, and from then on they do.
+
+**Only the newest copy opens.** An update in place replaces the copy that was
+running, but a copy opened from anywhere else - straight from the disk image,
+from Downloads, from a `release/` folder Spotlight found - would leave the one
+in Applications as it was, and the Dock would go on opening that. So as an
+installed copy starts (`electron/placement.js`):
+
+- It records the newest version opened on this account, and where it was. A
+  copy older than that does not run: it opens the newer copy if that is still
+  where it was, and otherwise says it is out of date and quits, offering the
+  releases page. An older version would be opening orders a newer one has
+  already changed.
+- A Mac copy outside Applications opens the copy in Applications instead when
+  that one is at least as new, and otherwise offers to **move itself there**,
+  replacing the older one (Electron's `app.moveToApplicationsFolder`; the
+  replaced copy goes to the Bin). If the older copy is still open it is not
+  handed control - the tailor is asked to quit it first.
+- Anything else under the app's name in Applications, or a copy renamed by
+  hand, is left alone.
+
+Copies released before this check cannot be stopped by it - they do not have
+it. Moving the new copy into Applications replaces them.
 
 A release that is not installed in place is downloaded **once**. The copy that
 is running stays the old version until the new one is installed, so the
@@ -353,9 +385,11 @@ not be shipped to anyone else's — publish releases publicly before handing the
 app out. The feed can also point at a plain JSON file of the shape
 `{ version, notes, url, assets: [{ name, url }] }`; it must be https.
 
-Auto-check on launch is **off by default** and can be turned on in the same
-place. It is one GET for the latest version number; nothing about the user or
-their clients is sent.
+Looking on launch is **on by default** in an installed copy and can be
+turned off in the same place (a copy run from source looks only if it is
+turned on). A version it finds is put in front of the tailor once; after that
+it is the flag in the corner and the Updates page. It is one GET for the
+latest version number; nothing about the user or their clients is sent.
 
 ---
 
@@ -366,6 +400,8 @@ npm test              # security, updates, catalog, workflow, then the render pi
 npm run test:security # proves the hardening actually blocks attacks
 npm run test:updates  # the update flow against a stubbed release feed
 npm run test:install  # an update installing itself, with real disk images and a real swap (macOS)
+npm run test:signing  # afterPack's signing, a real launch, and what the installer accepts (macOS)
+npm run test:placement # an older copy never opens; a copy outside Applications moves there
 npm run test:catalog  # adds a custom category and items, then checks the whole chain
 npm run test:models   # the model picker only offers models the key really has
 npm run test:workflow # units, custom options on built-in selectors, first/final fittings
@@ -387,7 +423,8 @@ tweak chains to its parent, and that reference usage is recorded.
 disguised HTML payload, renderer network egress — and fails if any succeeds.
 `test:updates` covers version comparison, per-platform asset selection, and
 that a `file://` or `javascript:` download address is refused. `test:install`
-builds tiny ad-hoc signed app bundles and disk images, then runs the unpacking,
+builds tiny app bundles and disk images, signed with a throwaway certificate
+the way releases are signed with the real one, then runs the unpacking,
 the signature checks and the swap itself for real against folders of its own -
 nothing in Applications is touched; only the network and the final hand-over
 to the quitting app are stubbed. `test:catalog`
@@ -471,7 +508,8 @@ sees a masked hint.
   recorded, and a client's file should be deleted once there is no longer a
   reason to keep it — deleting a client removes their orders, photos,
   references and renders.
-- **Builds are ad-hoc signed, not notarised** (see *Signing*).
+- **Builds are signed with the project's own certificate, not an Apple
+  Developer ID, and not notarised** (see *Signing*).
 - `npm audit` reports **0 vulnerabilities in what ships**. There are advisories
   in `electron-builder`'s own dependency tree — build tooling only, mostly in
   `electron-updater`, which this app does not use. Clearing them needs a major
@@ -542,27 +580,61 @@ re-sign ad-hoc, and the app aborts:
 FATAL:asar_util.cc(144)] Integrity check failed for asar archive
 ```
 
-Note what that does **not** cover while builds are ad-hoc signed: an attacker
-who can rewrite the archive can also rewrite the hash in `Info.plist` and
-re-sign. These fuses raise the bar and are the correct pairing for a real
-Developer ID signature; they are not a substitute for one.
+Note what that does **not** cover without an Apple Developer ID: an attacker
+who can rewrite the archive on the machine can also rewrite the hash in
+`Info.plist` and re-sign ad hoc, and macOS will run it. What the project
+certificate does stop is such a copy arriving as an update. These fuses raise
+the bar and are the correct pairing for a real Developer ID signature; they are
+not a substitute for one.
 
 ### Signing
 
-Builds are **ad-hoc signed** so they run without an Apple Developer account.
-Two things this handles, both of which fail silently otherwise:
+Every Mac release is signed with **the project's own certificate**:
+self-made, CN "GD Suits Studio", valid until 2046. Its public half is
+`build/signing-cert.pem`, and `electron/installer.js` names it by SHA-1 as
+`SIGNER`. What that buys:
+
+- **Updates are bound to it.** An installed copy installs an update only if it
+  carries this certificate (see *Updates*). A release built anywhere else, or
+  signed by anyone else, is offered as a download instead.
+- **macOS names the app by its certificate, not by one build.** Its designated
+  requirement is `identifier "za.co.gdsuits.studio" and certificate leaf =
+  H"…"`, the same for every release, so a permission granted to one version
+  (the camera) should carry to the next. Not yet seen on a real update.
+
+What it does not do: Gatekeeper still warns on first launch, and the keychain
+still asks once after each update - both need an Apple Developer ID.
+
+**Where it lives.** The release job reads two Actions secrets,
+`MAC_SIGNING_P12` (the certificate and key, base64) and `MAC_SIGNING_PASSWORD`.
+`build/mac-keychain.sh` puts them in a throwaway keychain of their own, never on
+the keychain search list, and `build/afterPack.js` signs from it with
+`codesign --keychain`. The job stops if the secrets are missing, and afterPack
+stops any CI build that would come out unsigned - or signed with a certificate
+other than `SIGNER` - rather than publish a release no installed copy would
+take. The only other copy of the key is the owner's backup; it is not in this
+repository. A build on a laptop has no keychain and is signed ad hoc: it runs,
+but nothing installed takes it as an update.
+
+**Changing the certificate** strands every copy that trusts only the old one:
+they fall back to the download. To change it without that, first ship a release
+(signed with the old one) whose `SIGNER` check accepts both.
+
+Two things the signing handles, both of which fail silently otherwise:
 
 - Apple Silicon refuses to run any unsigned binary — an unsigned build is
   killed at launch with no error at all.
 - `codesign --deep` does *not* fix it. macOS rejects the result with
   "different Team IDs" because the nested Electron Framework keeps its original
   signature. `build/afterPack.js` signs nested code explicitly, innermost
-  first.
+  first, all with the same certificate.
 
 To distribute properly, get an Apple Developer ID, set `build.mac.identity` in
 `package.json` to that identity and `build.mac.hardenedRuntime` back to `true`,
 then notarise. `afterPack.js` stands aside automatically once an identity is
-set.
+set. Do that in two releases: the first still signed with the project
+certificate and accepting the Developer ID as well, so installed copies take
+the second.
 
 ---
 

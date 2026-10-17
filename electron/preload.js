@@ -40,7 +40,7 @@ const CHANNELS = [
   'renders:approve', 'renders:delete',
   'project:export',
   'app:info', 'app:openDataFolder', 'app:security',
-  'updates:check', 'updates:download', 'updates:defaultFeed',
+  'updates:check', 'updates:launchCheck', 'updates:download', 'updates:defaultFeed',
   'updates:fetch', 'updates:cancel', 'updates:reveal',
   'updates:install', 'updates:restart',
 ];
