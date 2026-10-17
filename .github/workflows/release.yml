@@ -118,16 +118,46 @@ jobs:
       - run: npm ci
       - name: Stamp the version being released
         run: npm version ${{ needs.version.outputs.version }} --no-git-tag-version --allow-same-version
+      # The certificate every Mac release is signed with, put in a keychain of
+      # its own for afterPack to sign from. Installed copies take an update
+      # only if it carries this certificate, so a Mac build without it stops
+      # here rather than ship a release nothing installed would accept.
+      #
+      # The secrets hold the .p12 (base64) and its password. The key exists
+      # nowhere else but the owner's own backup - see build/mac-keychain.sh.
+      - name: Signing certificate
+        if: runner.os == 'macOS'
+        env:
+          MAC_SIGNING_P12: ${{ secrets.MAC_SIGNING_P12 }}
+          P12_PASSWORD: ${{ secrets.MAC_SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$MAC_SIGNING_P12" ] || [ -z "$P12_PASSWORD" ]; then
+            echo "::error::MAC_SIGNING_P12 and MAC_SIGNING_PASSWORD have to be set in this repository's Actions secrets."
+            exit 1
+          fi
+          umask 077
+          p12="$RUNNER_TEMP/signing.p12"
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          trap 'rm -f "$p12"' EXIT
+          node -e "process.stdout.write(Buffer.from(process.env.MAC_SIGNING_P12, 'base64'))" > "$p12"
+          # Assigned first: inside an echo, a failure here would go unnoticed.
+          identity=$(build/mac-keychain.sh "$p12" "$keychain")
+          echo "signing as $identity"
+          echo "GD_MAC_SIGN_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
       # --publish never on every call above, not just here: on CI
       # electron-builder decides by itself to publish, then stops the build
       # because there is no GH_TOKEN. The release is cut by the job below,
       # from artifacts, which is the only place that should be doing it.
       - run: ${{ matrix.build }}
         env:
-          # Ad-hoc signing only. There is no Developer ID yet, and without
-          # this electron-builder looks for one and fails the build rather
-          # than falling back.
+          # electron-builder must not go looking for an Apple Developer ID:
+          # there is none, and it fails the build rather than fall back.
+          # afterPack signs with the project's certificate instead.
           CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Remove the signing keychain
+        if: always() && runner.os == 'macOS'
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         with:
           name: installers-${{ matrix.name }}

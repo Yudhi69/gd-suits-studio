@@ -21,7 +21,7 @@
     "test:render": "cross-env DATA_DIR=.testdata/render electron scripts/test-render-pipeline.js",
     "test:tour": "cross-env DATA_DIR=.testdata/tour SHOT_DIR=.testdata/shots electron scripts/screenshot-tour.js",
     "test:security": "cross-env DATA_DIR=.testdata/security electron scripts/test-security.js",
-    "test": "npm run build && npm run test:migrations && npm run test:macosfloor && npm run test:installnote && npm run test:secrets && npm run test:security && npm run test:branding && npm run test:models && npm run test:updates && npm run test:firstrun && npm run test:install && npm run test:placement && npm run test:catalog && npm run test:clientorder && npm run test:garment && npm run test:party && npm run test:persistence && npm run test:documents && npm run test:workflow && npm run test:client && npm run test:quote && npm run test:mail && npm run test:connections && npm run test:attachments && npm run test:operations && npm run test:import && npm run test:feedback && npm run test:render",
+    "test": "npm run build && npm run test:migrations && npm run test:macosfloor && npm run test:installnote && npm run test:secrets && npm run test:security && npm run test:branding && npm run test:models && npm run test:updates && npm run test:firstrun && npm run test:install && npm run test:signing && npm run test:placement && npm run test:catalog && npm run test:clientorder && npm run test:garment && npm run test:party && npm run test:persistence && npm run test:documents && npm run test:workflow && npm run test:client && npm run test:quote && npm run test:mail && npm run test:connections && npm run test:attachments && npm run test:operations && npm run test:import && npm run test:feedback && npm run test:render",
     "test:updates": "cross-env DATA_DIR=.testdata/updates electron scripts/test-updates.js",
     "test:catalog": "cross-env DATA_DIR=.testdata/catalog electron scripts/test-catalog.js",
     "test:workflow": "cross-env DATA_DIR=.testdata/workflow electron scripts/test-workflow.js",
@@ -49,7 +49,8 @@
     "test:installnote": "node scripts/test-install-note.js",
     "test:feedback": "cross-env DATA_DIR=.testdata/feedback electron scripts/test-feedback.js",
     "test:install": "cross-env DATA_DIR=.testdata/install GD_TEST_FIRST_RUN=1 electron scripts/test-install.js",
-    "test:placement": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-placement.js"
+    "test:placement": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-placement.js",
+    "test:signing": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-signing.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",

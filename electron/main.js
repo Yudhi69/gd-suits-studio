@@ -1681,6 +1681,12 @@ function thisInstall() {
   });
 }
 
+/**
+ * The certificate an update has to be signed with. Lets the install suite use
+ * one of its own; never read in an installed copy.
+ */
+const updateSigner = () => (app.isPackaged ? null : process.env.GD_TEST_SIGNER) || installer.SIGNER;
+
 /** Why `release` cannot install itself here, or null when it can. */
 function installBlocked(release) {
   const notOfficial = installer.officialRelease(release);
@@ -1746,7 +1752,7 @@ handle('updates:install', async () => {
     let ready = saved.path;
     if (process.platform === 'darwin') {
       progress({ phase: 'preparing', bytes: saved.bytes, total: saved.bytes, name: saved.name });
-      ready = await installer.stageMac({ dmg: saved.path, version: release.version, dir });
+      ready = await installer.stageMac({ dmg: saved.path, version: release.version, dir, signer: updateSigner() });
       fs.rmSync(saved.path, { force: true });
     }
     db.setSetting('updateStaged', {
@@ -1782,6 +1788,7 @@ function handOver(staged, relaunch) {
     relaunch,
     log: installLog(),
     result: installResult(),
+    signer: updateSigner(),
   });
   handedOver = true;
   db.setSetting('updateStaged', { ...staged, applying: Date.now() });

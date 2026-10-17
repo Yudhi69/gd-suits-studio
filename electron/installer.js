@@ -12,10 +12,11 @@ const childProcess = require('node:child_process');
  * version - no file to find, no window to drag, nothing to replace by hand.
  *
  * Electron's own updater cannot do this here. Squirrel only accepts a
- * replacement signed by the same Apple Developer ID as the running copy, and
- * these builds are ad-hoc signed. So the swap is done the way an installer
- * would do it, and everything that lets this app run what it downloaded is a
- * gate that has to be passed first:
+ * replacement that meets the running copy's own signature requirement, and
+ * every copy released before October 2026 was ad-hoc signed - a requirement
+ * naming that one build and nothing else. So the swap is done the way an
+ * installer would do it, and everything that lets this app run what it
+ * downloaded is a gate that has to be passed first:
  *
  *   - Only a release from this app's own GitHub repository, read from the
  *     official feed, with a file hosted under that repository's releases. A
@@ -23,8 +24,9 @@ const childProcess = require('node:child_process');
  *     address is a setting, and a setting is not a reason to run code.
  *   - Only when GitHub states the file's SHA-256, and the bytes match it.
  *   - On a Mac, only an app bundle with this app's identifier and exactly the
- *     version the release names, whose code signature is intact - checked
- *     when it is unpacked and again just before it goes in.
+ *     version the release names, signed with this app's own certificate and
+ *     unchanged since - checked when it is unpacked and again just before it
+ *     goes in.
  *   - Only in an installed copy, somewhere this account can write.
  *
  * Anything that fails a gate falls back to the download the tailor installs
@@ -36,6 +38,18 @@ const OFFICIAL_FEED = 'https://api.github.com/repos/Yudhi69/gd-suits-studio/rele
 const OFFICIAL_FILE = /^https:\/\/github\.com\/Yudhi69\/gd-suits-studio\/releases\/download\/[^/?#]+\/[^/?#]+$/i;
 const APP_ID = 'za.co.gdsuits.studio';
 const BUNDLE_NAME = 'GD Suits Studio.app';
+
+/**
+ * The certificate every Mac release is signed with, by its SHA-1 - which is
+ * how macOS names a certificate in a code requirement. It is the one in
+ * build/signing-cert.pem. Made for this project rather than issued by Apple:
+ * it says a release came from this project's build, not that Apple has seen it.
+ *
+ * An update signed with anything else does not install itself; it is offered
+ * as a download instead. To change certificate, first ship a release that
+ * accepts both - copies that predate it accept only this one.
+ */
+const SIGNER = '25294558ac2e19e7255e2e5e1c29b7b744120d62';
 
 class InstallError extends Error {
   constructor(message, code) {
@@ -144,10 +158,15 @@ function bundleVersion(app) {
 }
 
 /**
- * Whether `app` is this app, at exactly `version`, with its signature intact.
- * Synchronous, because it is also the last thing done as the app quits.
+ * Whether `app` is this app, at exactly `version`, signed with `signer` and
+ * unchanged since. Synchronous, because it is also the last thing done as the
+ * app quits.
  */
-function verifyBundle(app, version) {
+function verifyBundle(app, version, signer = SIGNER) {
+  // Becomes part of the requirement text below, so it is a fingerprint or nothing.
+  if (!/^[0-9a-f]{40}$/i.test(String(signer))) {
+    throw new InstallError('There is no certificate to check the update against.', 'wrong_signer');
+  }
   let id, shown;
   try {
     id = plistValue(app, 'CFBundleIdentifier');
@@ -157,11 +176,14 @@ function verifyBundle(app, version) {
   }
   if (id !== APP_ID) throw new InstallError('The update is a different app.', 'wrong_app');
   if (shown !== version) throw new InstallError(`The update says it is version ${shown}, not ${version}.`, 'wrong_version');
+  const requirement = `=identifier "${APP_ID}" and certificate leaf = H"${signer}"`;
   try {
-    childProcess.execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', app], {
+    childProcess.execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', `-R${requirement}`, app], {
       timeout: 120000, stdio: 'ignore',
     });
-  } catch {
+  } catch (err) {
+    // codesign's 3: the signature is intact, but it is not ours.
+    if (err.status === 3) throw new InstallError('The update is not signed with this app\'s certificate.', 'wrong_signer');
     throw new InstallError('The update has been changed since it was built.', 'bad_signature');
   }
 }
@@ -198,7 +220,7 @@ function lastLine(text) {
  * *.app is taken out of it - the Applications shortcut beside it is a link,
  * and a link is not followed.
  */
-async function stageMac({ dmg, version, dir }) {
+async function stageMac({ dmg, version, dir, signer }) {
   const mount = fs.mkdtempSync(path.join(dir, 'mount-'));
   const staged = path.join(dir, 'staged', BUNDLE_NAME);
   fs.rmSync(path.dirname(staged), { recursive: true, force: true });
@@ -224,7 +246,7 @@ async function stageMac({ dmg, version, dir }) {
     try { fs.rmdirSync(mount); } catch { /* left for the next clean-up */ }
   }
   try {
-    verifyBundle(staged, version);
+    verifyBundle(staged, version, signer);
   } catch (err) {
     fs.rmSync(path.dirname(staged), { recursive: true, force: true });
     throw err;
@@ -283,9 +305,9 @@ finish 0 "installed"
  * closes the app if it is still running, replaces it, and with --force-run
  * opens the new version afterwards.
  */
-function apply({ platform, staged, target, version, sha256, pid, relaunch, log, result }) {
+function apply({ platform, staged, target, version, sha256, pid, relaunch, log, result, signer }) {
   if (platform === 'darwin') {
-    verifyBundle(staged, version);
+    verifyBundle(staged, version, signer);
     fs.rmSync(result, { force: true });
     const child = childProcess.spawn(
       '/bin/sh',
@@ -327,6 +349,6 @@ function settle({ record, current, result, now = Date.now(), compare }) {
 }
 
 module.exports = {
-  OFFICIAL_FEED, APP_ID, BUNDLE_NAME, MAC_HELPER,
+  OFFICIAL_FEED, APP_ID, BUNDLE_NAME, SIGNER, MAC_HELPER,
   officialRelease, installTarget, stageMac, verifyBundle, bundleVersion, apply, settle, InstallError,
 };

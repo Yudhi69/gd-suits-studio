@@ -16,8 +16,9 @@ const { app } = require('electron');
  * with no executable bit, for the tailor to install by hand.
  *
  * Electron's built-in updater (Squirrel) is not used: it insists the new
- * bundle carries the same Apple Developer ID as the running one, and these
- * builds are ad-hoc signed.
+ * bundle meets the running one's signature requirement, and the ad-hoc signed
+ * copies released before October 2026 cannot meet that with anything but
+ * themselves. See installer.js.
  */
 
 const GITHUB_API = /^https:\/\/api\.github\.com\/repos\/[\w.-]+\/[\w.-]+\/releases/;

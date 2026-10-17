@@ -212,9 +212,13 @@ anything by itself: it tells you it is due and opens the draft for you.
 
 ## 5. Getting updates
 
-**Settings → Updates → Check for updates.**
+The app looks for a new version each time you open it. If there is one, it
+tells you once; after that a small flag in the corner reminds you, and
+**Settings → Updates** has it whenever you are ready. You can look yourself
+there at any time with **Check for updates**, and turn off the looking on
+opening with the switch on the same page.
 
-If there is a newer version it tells you what changed. Press **Install**: it
+When there is a newer version it tells you what changed. Press **Install**: it
 downloads the new version, checks it is genuine, and gets it ready. Then press
 **Restart now** and the app reopens as the new version. There is nothing else
 to do - no file to find, nothing to drag. If you are busy, carry on working:
@@ -229,6 +233,15 @@ Drag it into Applications and open it from there first. The same goes for the
 copy you have now if it is older than this way of updating: install the next
 version by hand once, as you installed this one, and after that updates
 install themselves.
+
+**You always open the newest version.** On a Mac, if you open the app from
+anywhere but Applications - the installer disk, Downloads - it offers to move
+itself into Applications, replacing the older one there, so the Dock opens the
+new one from then on. Press **Move to Applications**. If the older one is still
+open it asks you to quit that first. If you open an older copy after a newer
+one has been used, it opens the newer one instead, or tells you it is out of
+date, with **Get the latest version** to take you to it. It never opens your
+orders as an older version.
 
 If an update cannot install itself it says why, and offers **Download**
 instead, which saves it to your Downloads folder for you to install the same

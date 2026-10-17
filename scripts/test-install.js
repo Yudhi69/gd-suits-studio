@@ -3,9 +3,10 @@
  *
  * Install downloads the release, checks it and makes it ready; Restart now -
  * or quitting - puts it in place of the running copy. This suite builds real
- * (tiny, ad-hoc signed) app bundles and disk images, so the unpacking, the
- * signature check and the swap itself all run for real, against folders of
- * the suite's own. Nothing in Applications is touched.
+ * (tiny) app bundles and disk images, signed with a throwaway certificate the
+ * way releases are signed with the real one, so the unpacking, the signature
+ * check and the swap itself all run for real, against folders of the suite's
+ * own. Nothing in Applications is touched.
  *
  * Two things are stubbed: the network (the release feed and its file) and the
  * final hand-over - the helper is recorded rather than started, then run here
@@ -45,8 +46,16 @@ const BUNDLE = 'GD Suits Studio.app';
 const WORK = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gd-install-')));
 const sh = (file, args) => childProcess.execFileSync(file, args, { stdio: ['ignore', 'pipe', 'pipe'] }).toString();
 
-/** A two-file app bundle, signed the way the real builds are (ad hoc). */
-function fakeApp(dir, { id = APP_ID, version, tamper = false, name = BUNDLE } = {}) {
+// The certificate this suite's releases are signed with, standing in for the
+// project's own - and someone else's. The app is told to trust the first the
+// way main lets a test do it, only outside an installed copy.
+const { throwawaySigner } = require('./signer.js');
+const OURS = throwawaySigner(WORK, 'GD Install Suite');
+const THEIRS = throwawaySigner(WORK, 'Somebody Else');
+process.env.GD_TEST_SIGNER = OURS.sha1;
+
+/** A two-file app bundle, signed as a release is - or as `signer` says (null: ad hoc). */
+function fakeApp(dir, { id = APP_ID, version, tamper = false, name = BUNDLE, signer = OURS } = {}) {
   const bundle = path.join(dir, name);
   fs.mkdirSync(path.join(bundle, 'Contents', 'MacOS'), { recursive: true });
   fs.mkdirSync(path.join(bundle, 'Contents', 'Resources'), { recursive: true });
@@ -61,7 +70,7 @@ function fakeApp(dir, { id = APP_ID, version, tamper = false, name = BUNDLE } = 
 `);
   fs.writeFileSync(path.join(bundle, 'Contents', 'MacOS', 'GD Suits Studio'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   fs.writeFileSync(path.join(bundle, 'Contents', 'Resources', 'version.txt'), version);
-  sh('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', bundle]);
+  sh('/usr/bin/codesign', ['--force', '--deep', ...(signer ? signer.args : ['--sign', '-']), bundle]);
   if (tamper) fs.writeFileSync(path.join(bundle, 'Contents', 'Resources', 'version.txt'), 'changed after signing');
   return bundle;
 }
@@ -76,6 +85,8 @@ const IMAGES = {
   wrongApp: (d) => fakeApp(d, { version: NEWER, id: 'com.example.other' }),
   wrongVersion: (d) => fakeApp(d, { version: INSTALLED }),
   tampered: (d) => fakeApp(d, { version: NEWER, tamper: true }),
+  adHoc: (d) => fakeApp(d, { version: NEWER, signer: null }),
+  theirs: (d) => fakeApp(d, { version: NEWER, signer: THEIRS }),
   linked: (d) => { fakeApp(path.join(WORK, 'elsewhere'), { version: NEWER }); fs.symlinkSync(path.join(WORK, 'elsewhere', BUNDLE), path.join(d, BUNDLE)); },
   twoApps: (d) => { fakeApp(d, { version: NEWER }); fakeApp(d, { version: NEWER, name: 'Second.app' }); },
 };
@@ -187,6 +198,8 @@ const until = async (fn, ms = 20000) => {
 // Also run when the suite stops part-way, so a failing run leaves nothing in
 // the temp folder - including the folder it locks to test an unwritable one.
 function cleanUp() {
+  OURS.remove();
+  THEIRS.remove();
   try { sh('/bin/chmod', ['-R', 'u+w', WORK]); } catch { /* already gone */ }
   fs.rmSync(WORK, { recursive: true, force: true });
   fs.rmSync(DOWNLOADS, { recursive: true, force: true });
@@ -259,21 +272,35 @@ app.whenReady().then(async () => {
   log('\n=== unpacking a downloaded disk image ===');
   const stageDir = path.join(WORK, 'stage');
   fs.mkdirSync(stageDir);
-  const staged = await installer.stageMac({ dmg: dmg.good, version: NEWER, dir: stageDir });
+  const staged = await installer.stageMac({ signer: OURS.sha1, dmg: dmg.good, version: NEWER, dir: stageDir });
   check(versionOf(staged) === NEWER, 'the app comes out of the image', staged);
   check(!mountedHere(), 'and the image is closed again');
   for (const [key, code] of [['wrongApp', 'wrong_app'], ['wrongVersion', 'wrong_version'], ['tampered', 'bad_signature'],
+    ['adHoc', 'wrong_signer'], ['theirs', 'wrong_signer'],
     ['linked', 'bad_image'], ['twoApps', 'bad_image'], ['notAnImage', 'attach_failed']]) {
     const dir = path.join(WORK, `stage-${key}`);
     fs.mkdirSync(dir);
-    const err = await installer.stageMac({ dmg: dmg[key], version: NEWER, dir }).then(() => null, (e) => e);
+    const err = await installer.stageMac({ signer: OURS.sha1, dmg: dmg[key], version: NEWER, dir }).then(() => null, (e) => e);
     check(err?.code === code, `refused: ${{
       wrongApp: 'a different app', wrongVersion: 'the app at another version', tampered: 'an app changed after it was signed',
+      adHoc: 'an app signed ad hoc, as every build before October 2026 was', theirs: 'an app signed with some other certificate',
       linked: 'a shortcut to an app somewhere else', twoApps: 'an image with two apps in it', notAnImage: 'a file that is not a disk image',
     }[key]}`, err?.code ?? 'accepted');
     check(!fs.existsSync(path.join(dir, 'staged', BUNDLE)), '  and nothing is left ready to install');
   }
   check(!mountedHere(), 'no image is left open after any of them');
+
+  const unnamed = await installer.stageMac({ dmg: dmg.good, version: NEWER,
+    dir: fs.mkdtempSync(path.join(WORK, 'stage-unnamed-')) }).catch((e) => e);
+  check(unnamed?.code === 'wrong_signer', 'with no certificate named, only the project\'s own is accepted - not this suite\'s',
+    unnamed?.code ?? 'accepted');
+  check(installer.SIGNER === '25294558ac2e19e7255e2e5e1c29b7b744120d62', '  which is the one in build/signing-cert.pem', installer.SIGNER);
+  // Unchecked, this would read "(our certificate) or (any app with this
+  // identifier)" - which an ad-hoc build passes.
+  const injected = await installer.stageMac({ signer: `${OURS.sha1}" or identifier "${APP_ID}`, dmg: dmg.adHoc, version: NEWER,
+    dir: fs.mkdtempSync(path.join(WORK, 'stage-injected-')) }).catch((e) => e);
+  check(injected?.code === 'wrong_signer', 'a certificate named by anything but its fingerprint is refused, not read as a rule',
+    injected?.code ?? 'accepted');
 
   // macOS's disk-image service is now and then too busy to open an image it
   // opens a moment later - one run in about fifteen of this suite.
@@ -291,11 +318,11 @@ app.whenReady().then(async () => {
   };
   const busyDir = path.join(WORK, 'stage-busy');
   fs.mkdirSync(busyDir);
-  const afterBusy = await installer.stageMac({ dmg: dmg.good, version: NEWER, dir: busyDir }).catch((e) => e);
+  const afterBusy = await installer.stageMac({ signer: OURS.sha1, dmg: dmg.good, version: NEWER, dir: busyDir }).catch((e) => e);
   childProcess.execFile = realExecFile;
   check(busy === 2 && typeof afterBusy === 'string' && versionOf(afterBusy) === NEWER,
     'an image the system was too busy to open is tried again, and opens', `${busy} ${afterBusy?.code ?? afterBusy}`);
-  const unopened = await installer.stageMac({ dmg: dmg.notAnImage, version: NEWER,
+  const unopened = await installer.stageMac({ signer: OURS.sha1, dmg: dmg.notAnImage, version: NEWER,
     dir: fs.mkdtempSync(path.join(WORK, 'stage-again-')) }).catch((e) => e);
   check(unopened?.code === 'attach_failed' && /\S/.test(unopened.detail ?? '') && !/WARNING/.test(unopened.detail),
     'one that never opens is still refused, keeping what the system said for the log', unopened?.detail);
@@ -304,12 +331,12 @@ app.whenReady().then(async () => {
   // A process that is "the app", so the swap can be seen to wait for it.
   const place = fs.mkdtempSync(path.join(WORK, 'place-'));
   const target = fakeApp(place, { version: INSTALLED });
-  const ready = await installer.stageMac({ dmg: dmg.good, version: NEWER, dir: fs.mkdtempSync(path.join(WORK, 'ready-')) });
+  const ready = await installer.stageMac({ signer: OURS.sha1, dmg: dmg.good, version: NEWER, dir: fs.mkdtempSync(path.join(WORK, 'ready-')) });
   const standIn = realSpawn('/bin/sleep', ['30'], { stdio: 'ignore' });
   const result = path.join(place, 'result');
   installer.apply({
     platform: 'darwin', staged: ready, target, version: NEWER, pid: standIn.pid, relaunch: false,
-    log: path.join(place, 'log'), result,
+    log: path.join(place, 'log'), result, signer: OURS.sha1,
   });
   const swap = handed.pop();
   check(swap && swap[1] === installer.MAC_HELPER, 'the swap is handed to the fixed helper script');
@@ -341,7 +368,7 @@ app.whenReady().then(async () => {
   // shell is just a folder name.
   const odd = fs.mkdtempSync(path.join(WORK, 'odd-'));
   const oddTarget = fakeApp(path.join(odd, 'a"; touch PWNED; echo "$(touch PWNED2)`touch PWNED3`'), { version: INSTALLED });
-  const oddReady = await installer.stageMac({ dmg: dmg.good, version: NEWER, dir: fs.mkdtempSync(path.join(WORK, 'oddready-')) });
+  const oddReady = await installer.stageMac({ signer: OURS.sha1, dmg: dmg.good, version: NEWER, dir: fs.mkdtempSync(path.join(WORK, 'oddready-')) });
   const oddResult = path.join(odd, 'result');
   await runHelper(['-c', installer.MAC_HELPER, 'gd-suits-update', '999999', oddReady, oddTarget, '0', path.join(odd, 'log'), oddResult]);
   const pwned = ['PWNED', 'PWNED2', 'PWNED3'].some((f) => fs.existsSync(path.join(odd, f)) || fs.existsSync(path.join(process.cwd(), f)));
@@ -349,11 +376,11 @@ app.whenReady().then(async () => {
 
   // Checked again at the last moment: a bundle changed after it was made
   // ready is not handed over at all.
-  const changed = await installer.stageMac({ dmg: dmg.good, version: NEWER, dir: fs.mkdtempSync(path.join(WORK, 'changed-')) });
+  const changed = await installer.stageMac({ signer: OURS.sha1, dmg: dmg.good, version: NEWER, dir: fs.mkdtempSync(path.join(WORK, 'changed-')) });
   fs.writeFileSync(path.join(changed, 'Contents', 'Resources', 'version.txt'), 'swapped in later');
   const before = handed.length;
   const refused = (() => {
-    try { installer.apply({ platform: 'darwin', staged: changed, target, version: NEWER, pid: 1, relaunch: false, log: '/dev/null', result: path.join(WORK, 'r') }); return null; }
+    try { installer.apply({ platform: 'darwin', staged: changed, target, version: NEWER, pid: 1, relaunch: false, log: '/dev/null', result: path.join(WORK, 'r'), signer: OURS.sha1 }); return null; }
     catch (e) { return e; }
   })();
   check(refused?.code === 'bad_signature' && handed.length === before, 'a ready update changed since is refused at the hand-over',
@@ -526,6 +553,14 @@ app.whenReady().then(async () => {
   check(!r.ok && /version/.test(r.error?.message ?? '') && !db.getSetting('updateStaged', null),
     'an image holding another version is refused, even with a matching fingerprint', JSON.stringify(r.error));
   served = GOOD; digest = `sha256:${sha(GOOD)}`;
+
+  // As an installed copy sees it: no test certificate, only the project's.
+  delete process.env.GD_TEST_SIGNER;
+  d = await reason();
+  r = await call(`gd.updates.install()`);
+  check(!r.ok && /certificate/.test(r.error?.message ?? '') && !db.getSetting('updateStaged', null),
+    'a release signed with any other certificate is never made ready - the app insists on its own', JSON.stringify(r.error));
+  process.env.GD_TEST_SIGNER = OURS.sha1;
 
   log('\n=== the next launch ===');
   // Nothing is installed on the way out of a test run: app.exit skips the
