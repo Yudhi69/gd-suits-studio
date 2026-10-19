@@ -256,6 +256,12 @@ app.whenReady().then(async () => {
   const back = await js(`[...document.querySelectorAll('.card')].find(c => c.querySelector('h3')?.textContent === 'Informal quote')?.innerText ?? ''`);
   check(!/The order has changed since/.test(back), 'put it back as it was, and his figures stand again', back);
 
+  log('\n=== the client confirms, and the figures stay ===');
+  await js(`(async () => { T.byText('button', 'Client confirmed').click(); await T.wait(1000); return true; })()`);
+  iq = db.getProject(order).informalQuote;
+  check(iq?.status === 'confirmed' && iq.total === REVISED && iq.lines.length === 3 && iq.basis.length === 2,
+    'marking the answer keeps his figures and what they were worked out from', JSON.stringify({ ...iq, lines: iq?.lines?.length, basis: iq?.basis?.length }));
+
   log('\n=== the formal quote is fixed at his figures ===');
   await openOrder('Sipho', 'Summary');
   summary = await js(`document.querySelector('.content').innerText`);
