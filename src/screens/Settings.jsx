@@ -73,27 +73,6 @@ function BusinessDetails() {
         </div>
 
         <div className="price-group-title field-section">Informal quote</div>
-        <div className="field">
-          <label>Quote page address</label>
-          <DebouncedInput
-            className="input mono"
-            placeholder="https://gdsuits.co.za/quote/"
-            value={shop.quotePageUrl ?? ''}
-            onCommit={async (v) => {
-              await save({ quotePageUrl: v });
-              // The address is checked as it is stored - only https is kept -
-              // so what shows is read back rather than assumed.
-              const stored = await api.business.get();
-              setShop(stored);
-              if (v.trim() && !stored.quotePageUrl) toast('The quote page needs an https:// address.', 'err');
-            }}
-          />
-          <div className="hint">
-            Where the quote page is published. With it, an informal quote is sent as a short message and a link to
-            the summary laid out properly; without it, the summary goes in the message itself. The summary travels
-            inside the link, so nothing about the order is stored on the page.
-          </div>
-        </div>
         <div className="grid grid-2">
           <div className="field">
             <label>WhatsApp country code</label>

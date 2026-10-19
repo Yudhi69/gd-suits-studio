@@ -76,6 +76,59 @@ export function quoteFromOrder(order, overrides, steps, status = 'approved') {
   return { lines, total, currency: CURRENCY, status };
 }
 
+/**
+ * The price list's lines as they stood when GD sent his figures, kept beside
+ * them: [key, amount] for each line.
+ */
+export const basisOf = (lines) => lines.map((l) => [String(l.key), Number(l.amount) || 0]);
+
+/** Whether the price list still gives exactly the lines it gave then. */
+export function sameBasis(basis, lines) {
+  return Array.isArray(basis) && basis.length === lines.length
+    && lines.every((l, i) => Array.isArray(basis[i]) && basis[i][0] === String(l.key)
+      && Math.abs(Number(basis[i][1]) - (Number(l.amount) || 0)) < 0.005);
+}
+
+/**
+ * The figures the last informal quote went out with - GD's, after any he
+ * changed - as long as the order is still what they were worked out for.
+ *
+ * Anything chosen, removed or repriced since, and they no longer describe this
+ * order, so there are none: what was sent for a 2-piece is not a price for
+ * the 3-piece it has become.
+ */
+export function sentFigures(order, list) {
+  const sent = order?.informalQuote;
+  if (!sent || !Array.isArray(sent.lines) || !sent.lines.length) return null;
+  return sameBasis(sent.basis, list.lines) ? sent : null;
+}
+
+/**
+ * What fixing the price fixes it at.
+ *
+ * The figures the client was last quoted, if the order is unchanged since;
+ * otherwise the price list. Before GD could change the figures on the informal
+ * quote these were always the same thing. Now a client who confirmed R10,000
+ * would otherwise get a formal quote for the R10,550 on the price list.
+ *
+ * `listTotal` keeps what the price list said at the time, so a later change
+ * to the price list is still noticed - and GD's own figure is not mistaken
+ * for one.
+ */
+export function agreedQuote(order, overrides, steps, status = 'approved') {
+  const list = orderBreakdown(order, overrides, steps);
+  const sent = sentFigures(order, list);
+  if (!sent) return { lines: list.lines, total: list.total, currency: CURRENCY, status };
+  return {
+    lines: sent.lines,
+    total: sent.total,
+    currency: CURRENCY,
+    status,
+    listTotal: list.total,
+    informalAt: sent.sentAt,
+  };
+}
+
 /** Parses whatever the row carries, tolerating the pre-v7 empty string. */
 export function readQuote(row) {
   if (!row) return null;
@@ -98,11 +151,19 @@ export function quotedTotal(row, overrides, steps) {
   return orderBreakdown(row, overrides, steps).total;
 }
 
-/** Whether today's price list would produce a different number for the whole order. */
+/**
+ * Whether today's price list would produce a different number for the whole
+ * order. Measured against what the price list said when the quote was fixed,
+ * so a figure GD chose himself is not reported as the price list moving; the
+ * difference shown is what re-quoting would change for the client.
+ */
 export function quoteDrift(locked, order, overrides, steps) {
   if (!locked) return null;
   const live = orderBreakdown(order, overrides, steps);
+  const then = Number.isFinite(locked.listTotal) ? locked.listTotal : locked.total;
+  if (Math.abs(live.total - then) < 0.005) return null;
   const difference = live.total - locked.total;
+  // Moved, but onto the very figure the client has: re-quoting would change nothing.
   if (Math.abs(difference) < 0.005) return null;
   return {
     live,

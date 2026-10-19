@@ -183,7 +183,7 @@ app.whenReady().then(async () => {
     'the postal address carries GD\'s instruction');
 
   log('\n=== the informal quote ===');
-  db.setSetting('business', { quotePageUrl: 'https://quotes.example.com/q/', whatsappCountryCode: '27' });
+  db.setSetting('business', { whatsappCountryCode: '27' });
   await openOrder('Sipho', 'Order');
   const modal = JSON.parse(await js(`(async () => {
     T.byText('button', 'Send informal quote').click(); await T.wait(1200);
@@ -191,44 +191,19 @@ app.whenReady().then(async () => {
     return JSON.stringify({ text: m?.innerText ?? '', message: m?.querySelector('.informal-message')?.textContent ?? '' });
   })()`));
   check(/\+27821112222/.test(modal.text), 'it goes to the client\'s WhatsApp, written the way wa.me needs it', modal.text.slice(0, 160));
-  check(/https:\/\/quotes\.example\.com\/q\/#q=/.test(modal.message), 'with a link to the quote page', modal.message.slice(0, 200));
+  check(!/https?:\/\//.test(modal.message), 'with no link in it - the whole quote is in the message', modal.message.slice(0, 200));
   check(/Total: R10,550/.test(modal.message), 'and the whole order\'s total', modal.message);
   const before = opened.length;
   await js(`(async () => { T.byText('.modal button', 'Send by WhatsApp').click(); await T.wait(1200); return true; })()`);
   const wa = opened.slice(before).find((u) => u.startsWith('https://wa.me/'));
   check(!!wa && wa.startsWith('https://wa.me/27821112222?text='), 'WhatsApp opens on that number with the message written', String(wa).slice(0, 60));
   const sentText = wa ? decodeURIComponent(wa.split('?text=')[1]) : '';
+  // This order has no renders, so the email's words and WhatsApp's are the same.
   check(sentText === modal.message, 'exactly the message that was shown');
   const record = db.getProject(order).informalQuote;
-  check(record?.status === 'sent' && record?.via === 'whatsapp' && record?.total === WHOLE && record?.link === true,
-    'it is recorded on the order: when, how and for how much', JSON.stringify(record));
-
-  // The page the link opens - a separate window, nothing of the app's in it.
-  const fragment = (sentText.match(/#q=([A-Za-z0-9_-]+)/) || [])[1];
-  const page = new BrowserWindow({ show: false, webPreferences: { partition: 'quote-page-test' } });
-  const pageFile = path.join(__dirname, '..', 'quote-page', 'index.html');
-  await page.loadURL(`file://${pageFile}#q=${fragment}`);
-  await wait(500);
-  const shown = await page.webContents.executeJavaScript(`JSON.stringify({ text: document.body.innerText, imgs: document.images.length,
-    actions: [...document.querySelectorAll('.action')].map(a => a.href) })`).then(JSON.parse);
-  check(/Total\s*R10,550/.test(shown.text), 'the quote page shows the whole order\'s total', shown.text.slice(0, 120));
-  check(/For Sipho/.test(shown.text) && /Sipho - Groom/.test(shown.text) && /Thabo - Best man/.test(shown.text),
-    'each suit under whose it is, by first name', shown.text.slice(0, 300));
-  check(!/082 111 2222|sipho@example\.com|Ndlovu/.test(shown.text), 'and nothing about the client beyond a first name');
-  check(shown.actions.some((h) => h.startsWith('https://wa.me/27824856941?text=')), 'confirming goes back to GD on WhatsApp',
-    shown.actions.join(' '));
-
-  // A link anyone could have made: words, never markup.
-  const hostile = { v: 1, ref: 'X', to: '<img src=x onerror=alert(1)>', s: [{ t: '', i: [['<b>Lapel</b>', 'Peak']], l: [['Suit', 100]], st: 100 }],
-    tot: 100, shop: { n: 'GD Suits', p: '', e: '' } };
-  await page.loadURL(`file://${pageFile}#q=${Buffer.from(JSON.stringify(hostile)).toString('base64url')}`);
-  await wait(400);
-  const safe = await page.webContents.executeJavaScript(`JSON.stringify({ imgs: document.images.length, bold: document.querySelectorAll('#quote b').length, text: document.body.innerText })`).then(JSON.parse);
-  check(safe.imgs === 1 && safe.bold === 0 && /<img src=x/.test(safe.text), 'markup in a link is shown as text, never run', JSON.stringify(safe).slice(0, 120));
-  await page.loadURL(`file://${pageFile}#q=not-a-quote`);
-  await wait(300);
-  check(/incomplete/i.test(await page.webContents.executeJavaScript('document.body.innerText')), 'a broken link says so');
-  page.destroy();
+  check(record?.status === 'sent' && record?.via === 'whatsapp' && record?.total === WHOLE
+    && record?.lines?.length > 0 && record?.basis?.length === record?.lines?.length,
+    'it is recorded on the order: when, how, for how much, and the figures', JSON.stringify(record).slice(0, 200));
 
   // The answer, and the step to the formal quote.
   await openOrder('Sipho', 'Order');
@@ -242,10 +217,11 @@ app.whenReady().then(async () => {
   const minor = db.upsertClient({ name: 'Lwazi', surname: 'Dube', contact: '071 000 0000', isMinor: true,
     secondaryName: 'Zanele Dube', secondaryContact: '+27 83 444 5555', secondaryEmail: 'zanele@example.com' });
   const matric = db.createProject({ clientId: minor, title: 'Matric' });
-  const toParent = await call('informal.recipient', { projectId: matric });
+  const toParent = await call('informal.preview', { projectId: matric });
   check(toParent.data?.guardian && toParent.data?.whatsapp === '27834445555' && toParent.data?.email === 'zanele@example.com',
     'an under-18 client\'s quote goes to the parent or provider', JSON.stringify(toParent));
-  const smuggled = await call('informal.send', { projectId: matric, via: 'whatsapp', text: 'hello', to: '+15550000000', phone: '+15550000000' });
+  const smuggled = await call('informal.send', { projectId: matric, via: 'whatsapp', text: 'hello', to: '+15550000000', phone: '+15550000000',
+    lines: [{ label: 'Suit', amount: 100, key: 'x' }], basis: [] });
   check(smuggled.data?.to === '+27834445555' && !opened.some((u) => u.includes('15550000000')),
     'a number passed from the window is ignored', JSON.stringify(smuggled));
   check(informal.whatsappNumber('082 111 2222') === '27821112222' && informal.whatsappNumber('0044 7700 900123') === '447700900123'

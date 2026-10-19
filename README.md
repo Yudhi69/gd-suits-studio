@@ -176,18 +176,25 @@ price list (`jacketFit:medium`). Only labels change; option keys - and so every
 order - stay as they were.
 
 **The informal quote.** From the Order page or the price bar: a summary of
-whatever has been chosen, sent by WhatsApp (`wa.me`), by email through the
-same path as the quote email, or copied. The recipient is decided in the main
-process from the order (the parent or provider for a minor), never taken from
-the window. What was sent, how, for how much, and the client's answer are
-stored on the order (`informal_quote_json`). Sending the formal quote from
-the Summary page fixes the price first if the order is still a draft.
+whatever has been chosen, emailed to the client with the order's renders
+attached (badged JPEGs, the same set and path as the quote email - Gmail when
+connected and allowed, otherwise a draft file opened in GD's mail program).
+WhatsApp and Copy carry the same words without the pictures. Before it goes,
+GD sees every line at its price-list figure and can change any of them, add
+his own lines (a discount, a rush charge), or go back to the price list.
 
-**The quote page.** `quote-page/` is a static page the informal quote can link
-to. The summary rides in the link after `#q=`, which browsers never send to a
-server, so the page needs no backend and stores nothing - see *Publishing the
-quote page* below. Without a page address the message carries the whole
-summary as text.
+What was sent is stored on the order (`informal_quote_json`): his lines, the
+total, how it went, which pictures, the client's answer - and the price-list
+lines it was worked out from (`basis`). While the order still prices to that
+same basis, his figures are what reopening the informal quote starts from and
+what fixing the price fixes it at (`agreedQuote`), with the price list's own
+total kept beside them (`listTotal`) so the drift banner reports the price
+list moving, not GD's discount. Change the order and the figures fall back to
+the price list. Re-quoting from the drift banner is deliberately the price
+list. The recipient is decided in the main process from the order (the parent
+or provider for a minor), never taken from the window. Sending the formal
+quote from the Summary page fixes the price first if the order is still a
+draft.
 
 **Alterations follow the measurement list.** On the Fitting page an
 alteration is entered against the measurements of a garment. Logging it moves
@@ -475,10 +482,13 @@ Path traversal is impossible before it reaches the filesystem.
 dynamically assemble it from a fixed allowlist of column names, never from
 input.
 
-**Informal quotes** — the window supplies the words, the main process
-supplies the recipient from the order on file, so a compromised window cannot
-send an order's details to a number or address that is not on it. WhatsApp
-opens through `openExternalSafely` (https only).
+**Informal quotes** — the window supplies the words and GD's figures; the
+main process supplies the recipient and the attachments from the order on
+file, so a compromised window cannot send an order's details or renders to a
+number or address that is not on it. The figures are validated in main
+(bounded line count, labels and amounts) and the stored total is summed there,
+never taken from the window. WhatsApp opens through `openExternalSafely`
+(https only). Nothing is hosted: there is no quote page and no link.
 
 **Alterations** — an alteration may only name a suit on its own order; the
 measurement figures before and after are read from the database, not taken
@@ -517,28 +527,6 @@ sees a masked hint.
   is a deliberate deferral rather than an oversight.
 
 ---
-
-## Publishing the quote page
-
-`quote-page/` (`index.html`, `quote.js`, `quote.css`, two logos) is four
-static files. Put them on any https host - GD's own website
-(`gdsuits.co.za/quote/`), GitHub Pages, Netlify, Cloudflare Pages - and enter
-that address in **Settings → Your business → Quote page address**. Until then
-the informal quote is sent as text, which works without it.
-
-What makes it safe to host anywhere:
-
-- The summary is in the link's fragment (`#q=` + base64url JSON). Browsers do
-  not send the fragment to the server, so the host never sees an order.
-- The page makes no requests (`connect-src` is not granted), keeps nothing,
-  sends no referrer and asks not to be indexed.
-- Everything read from a link is shown with `textContent`, after a shape
-  check. Anyone can craft a link; the worst it can do is make this page say
-  something untrue, and the formal quote is always drawn up in the app from
-  its own records.
-- Only first names, the shop's public contact details and the order's
-  options and prices go in the link - no phone number, address or
-  measurement of the client.
 
 ## Building installers
 

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { isVisible, statusLabel, statusPill } from '../lib/catalog.js';
 import { useProject } from '../lib/useProject.js';
 import SuitStrip from '../components/SuitStrip.jsx';
-import { quoteFromOrder, isDraft } from '../lib/quote.js';
+import { agreedQuote, isDraft } from '../lib/quote.js';
 import { api } from '../lib/api.js';
 import PriceBar from '../components/PriceBar.jsx';
 import Stepper from '../components/Stepper.jsx';
@@ -70,8 +70,9 @@ export default function ProjectView({ projectId, onBack, overrides, business, ha
       .setQuote({
         id: project.id,
         // The whole order, every suit on it - not whichever suit happened to
-        // be on screen when the status moved.
-        quote: quoteFromOrder(project, overrides, catalogSteps, project.status),
+        // be on screen when the status moved - at the figures the client was
+        // last quoted, if the order is unchanged since.
+        quote: agreedQuote(project, overrides, catalogSteps, project.status),
       })
       .then(() => ctx.reload())
       .catch(() => {});

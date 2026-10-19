@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, messageFor } from '../lib/api.js';
 import { formatMoney } from '../lib/pricing.js';
-import { quotedTotal, quoteFromOrder, isDraft, suitsOf } from '../lib/quote.js';
+import { quotedTotal, agreedQuote, isDraft, suitsOf } from '../lib/quote.js';
 import { sheetSummaries } from '../lib/sheet.js';
 import { prettyDate } from '../lib/informalQuote.js';
 import {
@@ -68,7 +68,7 @@ export default function Database({ steps, overrides, onOpenProject, unit = 'cm' 
   const setStatus = useCallback((row, status) => save(async () => {
     if (isDraft(row.status) && !isDraft(status) && !row.quote_json) {
       const order = await api.projects.get({ id: row.id });
-      await api.projects.setQuote({ id: row.id, quote: quoteFromOrder(order, overrides, steps, status) });
+      await api.projects.setQuote({ id: row.id, quote: agreedQuote(order, overrides, steps, status) });
     }
     await api.projects.update({ id: row.id, patch: { status } });
   }), [save, overrides, steps]);

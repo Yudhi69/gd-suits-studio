@@ -162,11 +162,16 @@ Each suit has its own fabric, code and supplier under **Order details**, and
 **+ Add another suit** adds a second suit for the same client.
 
 **The informal quote.** As soon as the base garment is chosen, **Informal
-quote** (on the Order page, or at the bottom of every page) shows a summary of
-the order and its price, ready to send by WhatsApp or email, or to copy. For a
-client under 18 it goes to the parent or provider. When the client answers,
-mark it **Client confirmed** or **Asked for changes**, make the changes, and
-send the formal quote from the Summary page - which fixes the price.
+quote** (on the Order page, or at the bottom of every page) shows every line of
+the price with its figure. Change any figure, add a line of your own - a
+discount, a rush charge - or go back to the price list; the total and the
+message follow as you type. It is emailed to the client with their renders
+attached (tick the box off to leave them out), or sent by WhatsApp or copied
+without the pictures. For a client under 18 it goes to the parent or provider.
+When the client answers, mark it **Client confirmed** or **Asked for
+changes**, make the changes, and send the formal quote from the Summary page -
+which fixes the price at the figures you sent, as long as the order has not
+changed since. Change the order and it goes back to the price list.
 
 **The render.** On **Preview**, one press of *Render all four views* draws the
 suit on the client from the front, the side, the back and at an angle. Click

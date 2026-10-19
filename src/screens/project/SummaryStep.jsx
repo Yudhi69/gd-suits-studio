@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { api, projectMedia, messageFor } from '../../lib/api.js';
 import { buildSpecSheet } from '../../lib/promptBuilder.js';
 import { formatMoney } from '../../lib/pricing.js';
-import { orderBreakdown, quoteFromOrder, quoteDrift, isDraft, suitsOf, suitName } from '../../lib/quote.js';
+import { agreedQuote, quoteFromOrder, quoteDrift, isDraft, suitsOf, suitName } from '../../lib/quote.js';
 import { prettyDate } from '../../lib/informalQuote.js';
 import { ConfirmButton } from '../../components/ui.jsx';
 import {
@@ -53,10 +53,14 @@ export default function SummaryStep({ ctx, overrides, steps, unit = 'cm', busine
   const suits = suitsOf(project);
   const multi = suits.length > 1;
   const analysis = project.analysis ?? {};
-  const live = orderBreakdown(project, overrides, steps);
+  // What fixing the price would fix it at: the figures in the informal quote
+  // if the order is unchanged since it went, otherwise the price list.
+  const agreed = agreedQuote(project, overrides, steps, 'quoted');
+  // From the informal quote, and not what the price list says.
+  const ownFigures = agreed.listTotal !== undefined;
   // Once the order has left draft the agreed figure is the quote; the live one
   // is only there to show whether the price list has moved since.
-  const { lines, total } = project.quote ?? live;
+  const { lines, total } = project.quote ?? agreed;
   const drift = quoteDrift(project.quote, project, overrides, steps);
   const approved = project.renders.filter((r) => r.approved);
   const event = eventTypesWith(customOptions).find((e) => e.key === project.event_type);
@@ -106,10 +110,10 @@ export default function SummaryStep({ ctx, overrides, steps, unit = 'cm', busine
   async function fixAndEmail() {
     setConfirmFix(false);
     try {
-      await api.projects.setQuote({ id: project.id, quote: quoteFromOrder(project, overrides, steps, 'quoted') });
+      await api.projects.setQuote({ id: project.id, quote: agreed });
       if (isDraft(project.status)) await api.projects.update({ id: project.id, patch: { status: 'quoted' } });
       await ctx.reload();
-      toast(`Price fixed at ${formatMoney(live.total)}`, 'ok');
+      toast(`Price fixed at ${formatMoney(agreed.total)}`, 'ok');
     } catch (err) {
       toast(messageFor(err), 'err');
       return;
@@ -257,9 +261,10 @@ ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c"
       <Modal title="Send the formal quote" onClose={() => setConfirmFix(false)}>
         <div className="stack">
           <p style={{ margin: 0 }}>
-            The formal quote fixes the price at <strong>{formatMoney(live.total)}</strong> and moves the order to
-            <strong> Quoted</strong>. After this, a change to the price list will not change what this client pays
-            unless you re-quote.
+            The formal quote fixes the price at <strong>{formatMoney(agreed.total)}</strong>
+            {ownFigures && <> - the figures in the informal quote you sent on {prettyDate(agreed.informalAt)}</>} - and
+            moves the order to <strong>Quoted</strong>. After this, a change to the price list will not change what
+            this client pays unless you re-quote.
           </p>
           <div className="inline">
             <button className="btn btn-gold" onClick={fixAndEmail}>Fix the price and send</button>
@@ -474,7 +479,9 @@ ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c"
             )}
             {!project.quote && (
               <p className="tiny faint" style={{ marginTop: 0 }}>
-                This total follows the price list until the formal quote is sent, then it is fixed.
+                {ownFigures
+                  ? `These are the figures in the informal quote you sent on ${prettyDate(agreed.informalAt)}. They are fixed when the formal quote is sent.`
+                  : 'This total follows the price list until the formal quote is sent, then it is fixed.'}
               </p>
             )}
             {Object.entries(groups).map(([group, groupLines]) => (

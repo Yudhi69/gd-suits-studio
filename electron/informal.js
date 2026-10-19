@@ -1,13 +1,16 @@
 'use strict';
 
+const v = require('./validate');
+
 /**
- * The informal quote: a summary of the order sent to the client by WhatsApp
- * or email before anything is agreed, so they can say yes or ask for changes
- * before GD draws up the formal quote.
+ * The informal quote: a summary of the order sent to the client before
+ * anything is agreed - by email with their renders attached, or by WhatsApp -
+ * so they can say yes or ask for changes before GD draws up the formal quote.
  *
  * The message itself is written in the window, where the catalogue and the
- * prices live. Who it goes to is decided here, from the order on file - the
- * window says what to send, never where.
+ * prices live, and GD can change any figure in it before it goes. Who it goes
+ * to, and which pictures ride with it, are decided here from the order on
+ * file - the window says what to send, never where, and never which files.
  */
 
 /** A WhatsApp number as wa.me wants it: country code and digits, nothing else. */
@@ -56,8 +59,45 @@ function whatsappUrl(number, text) {
 
 const STATUSES = ['sent', 'confirmed', 'changes'];
 const VIAS = ['whatsapp', 'email', 'copied'];
+const MAX_LINES = 400;
 
-/** What is kept on the order about the informal quote: when, how, for how much, and the answer. */
+const cents = (n) => Math.round(n * 100) / 100;
+
+/**
+ * The figures as GD settled on them, checked: a bounded list of lines, each
+ * with a label and an amount. The total is added up here from those lines,
+ * never taken from the window, so what is recorded is the sum of what was
+ * sent. `basis` is the price list's lines at the time, [key, amount], which
+ * is how the window later tells whether the order has changed since.
+ */
+function figures(lines, basis) {
+  if (!Array.isArray(lines) || !lines.length) throw new v.ValidationError('There are no figures to send yet.');
+  if (lines.length > MAX_LINES) throw new v.ValidationError('That is too many quote lines');
+  if (!Array.isArray(basis) || basis.length > MAX_LINES) throw new v.ValidationError('The price list the figures came from is missing');
+  const clean = lines.map((line) => {
+    if (!line || typeof line !== 'object') throw new v.ValidationError('A quote line is not a line');
+    const label = v.str(line.label, 'label', 200).trim();
+    if (!label) throw new v.ValidationError('Every quote line needs a description');
+    return {
+      group: v.str(line.group, 'group', 120),
+      label,
+      amount: cents(v.num(line.amount, 'amount', { min: -1e7, max: 1e7 }) ?? 0),
+      key: v.str(line.key, 'key', 160),
+    };
+  });
+  const keys = basis.map((pair) => {
+    if (!Array.isArray(pair) || pair.length !== 2) throw new v.ValidationError('The price list the figures came from is not a list of lines');
+    return [v.str(pair[0], 'key', 160), cents(v.num(pair[1], 'amount', { min: -1e7, max: 1e7 }) ?? 0)];
+  });
+  return { lines: clean, basis: keys, total: cents(clean.reduce((t, l) => t + l.amount, 0)) };
+}
+
+/**
+ * What is kept on the order about the informal quote: when, how, to whom, the
+ * figures it went with, how many pictures, and the answer. A record from
+ * before the figures were kept reads back with none, which simply means the
+ * formal quote starts from the price list.
+ */
 function record(previous, patch) {
   const base = previous && typeof previous === 'object' ? previous : {};
   const next = { ...base, ...patch };
@@ -68,8 +108,10 @@ function record(previous, patch) {
     answeredAt: String(next.answeredAt ?? '').slice(0, 40),
     total: Number.isFinite(Number(next.total)) ? Number(next.total) : 0,
     to: String(next.to ?? '').slice(0, 200),
-    link: !!next.link,
+    lines: Array.isArray(next.lines) ? next.lines.slice(0, MAX_LINES) : [],
+    basis: Array.isArray(next.basis) ? next.basis.slice(0, MAX_LINES) : [],
+    pictures: Number.isInteger(next.pictures) && next.pictures > 0 ? next.pictures : 0,
   };
 }
 
-module.exports = { whatsappNumber, recipientOf, whatsappUrl, record, STATUSES, VIAS };
+module.exports = { whatsappNumber, recipientOf, whatsappUrl, figures, record, STATUSES, VIAS };

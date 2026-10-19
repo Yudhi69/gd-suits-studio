@@ -384,17 +384,21 @@ handle('projects:setQuote', ({ id, quote }) => {
   if (!Array.isArray(quote?.lines)) throw new v.ValidationError('A quote needs a list of lines');
   if (quote.lines.length > 400) throw new v.ValidationError('That is too many quote lines');
 
+  // Fixed from the figures on an informal quote, the price list's own total
+  // at the time comes too - see agreedQuote.
+  const listTotal = v.num(quote.listTotal, 'listTotal', { min: -1e9, max: 1e9 });
   return db.setQuote(projectId, {
     lines: quote.lines.map((line) => ({
-      group: v.str(line.group, 'group', 80),
+      group: v.str(line.group, 'group', 120),
       label: v.str(line.label, 'label', 200),
       amount: v.num(line.amount, 'amount', { min: -1e7, max: 1e7 }) ?? 0,
-      key: v.str(line.key, 'key', 120),
+      key: v.str(line.key, 'key', 160),
     })),
     total: v.num(quote.total, 'total', { min: -1e9, max: 1e9 }) ?? 0,
     currency: v.str(quote.currency, 'currency', 8),
     at: new Date().toISOString(),
     status: v.oneOf(quote.status ?? 'approved', v.PROJECT_STATUSES, 'status'),
+    ...(listTotal === null ? {} : { listTotal, informalAt: v.str(quote.informalAt, 'informalAt', 40) }),
   });
 });
 
@@ -1176,27 +1180,53 @@ function orderFor(projectId) {
   return project;
 }
 
-/** Who it would go to, and how - for the window to show before anything is sent. */
-handle('informal:recipient', ({ projectId }) => {
+/**
+ * Everything GD needs to see before it goes: who it is to, which way the
+ * email would leave, and which pictures would ride with it - named, not
+ * read, so opening the window costs nothing.
+ */
+handle('informal:preview', ({ projectId }) => {
   const project = orderFor(projectId);
   const who = informal.recipientOf(project);
+  const gmail = integrations.statusOf('gmail', connections(), hasSecret);
+  const pictures = delivery.plannedAttachments(project);
   return {
     ...who,
     whatsapp: informal.whatsappNumber(who.phone, shop().whatsappCountryCode),
-    emailVia: integrations.statusOf('gmail', connections(), hasSecret).ready ? 'gmail' : 'draft',
+    emailVia: gmail.ready ? 'gmail' : 'draft',
+    from: gmail.ready ? connections().gmail.address : null,
+    pictures: pictures.map(({ filename, render }) => ({ name: filename, file: render.filename, view: render.view })),
+    rendersLine: delivery.rendersLine(project),
   };
 });
 
+/** Kept on the order: when, how, to whom, and the figures it went with. */
+function recordSent(project, { via, to, sent, pictures = 0 }) {
+  db.setInformalQuote(project.id, informal.record(informalOf(project), {
+    status: 'sent',
+    via,
+    sentAt: new Date().toISOString(),
+    answeredAt: '',
+    total: sent.total,
+    to,
+    lines: sent.lines,
+    basis: sent.basis,
+    pictures,
+  }));
+}
+
 /**
- * Sends it. The words come from the window, which is where the prices are;
- * the recipient comes from the order on file, so a window cannot send an
- * order's details to a number or an address that is not on it.
+ * Sends it. The words and the figures come from the window, which is where
+ * the prices are; the recipient and the pictures come from the order on
+ * file, so a window cannot send an order's details to a number or an address
+ * that is not on it, nor attach anything but that order's own renders.
  */
-handle('informal:send', async ({ projectId, via, text, subject, total, link }) => {
+handle('informal:send', async ({ projectId, via, text, subject, lines, basis, pictures }) => {
   const project = orderFor(projectId);
   const channel = v.oneOf(via, ['whatsapp', 'email'], 'how to send');
-  const body = v.str(text, 'message', 6000).trim();
+  const body = v.str(text, 'message', 12000).trim();
   if (!body) throw new v.ValidationError('There is nothing to send yet.');
+  const sent = informal.figures(lines, basis);
   const who = informal.recipientOf(project);
 
   let result;
@@ -1205,44 +1235,50 @@ handle('informal:send', async ({ projectId, via, text, subject, total, link }) =
     // send it to, with the message already written.
     const number = informal.whatsappNumber(who.phone, shop().whatsappCountryCode);
     if (!security.openExternalSafely(informal.whatsappUrl(number, body))) throw new Error('Could not open WhatsApp.');
-    result = { via: 'whatsapp', to: number ? `+${number}` : '', opened: true };
+    result = { via: 'whatsapp', to: number ? `+${number}` : '', opened: true, attached: 0 };
   } else {
     if (!who.email) {
       throw new Error(who.guardian
         ? 'The parent or provider has no email address on file yet.'
         : 'This client has no email address on their file yet.');
     }
+    // Only ever this order's own renders, badged as every render that leaves
+    // the app is, and only when GD left them ticked.
+    const built = pictures === true
+      ? delivery.buildAttachments(project, {
+          readImage: storage.readImage,
+          stamp: brand.stamp,
+          scope: storage.scopeForProject(project.id),
+        })
+      : { attachments: [], total: 0, omitted: 0 };
     const delivered = await sendComposed(project, {
       to: who.email,
       subject: v.str(subject, 'subject', 300).trim() || 'Your informal quote',
       body,
-      attachments: [],
+      attachments: built.attachments,
       gmail: integrations.statusOf('gmail', connections(), hasSecret),
     }, { draftName: `Informal quote ${project.order_ref || project.id}` });
-    result = { via: 'email', to: who.email, sent: delivered.via === 'gmail', opened: delivered.via !== 'gmail' };
+    result = {
+      via: 'email',
+      to: who.email,
+      sent: delivered.via === 'gmail',
+      opened: delivered.via !== 'gmail',
+      attached: built.attachments.length,
+      omitted: built.omitted,
+    };
   }
 
-  db.setInformalQuote(project.id, informal.record(informalOf(project), {
-    status: 'sent',
-    via: result.via,
-    sentAt: new Date().toISOString(),
-    answeredAt: '',
-    total: v.num(total, 'total', { min: -1e9, max: 1e9 }) ?? 0,
-    to: result.to,
-    link: !!link,
-  }));
-  return result;
+  recordSent(project, { via: result.via, to: result.to, sent, pictures: result.attached });
+  return { ...result, total: sent.total };
 });
 
 /** Onto the clipboard, for pasting wherever GD likes - recorded as sent that way. */
-handle('informal:copy', ({ projectId, text, total, link }) => {
+handle('informal:copy', ({ projectId, text, lines, basis }) => {
   const project = orderFor(projectId);
-  clipboard.writeText(v.str(text, 'message', 6000));
-  db.setInformalQuote(project.id, informal.record(informalOf(project), {
-    status: 'sent', via: 'copied', sentAt: new Date().toISOString(), answeredAt: '',
-    total: v.num(total, 'total', { min: -1e9, max: 1e9 }) ?? 0, to: '', link: !!link,
-  }));
-  return { copied: true };
+  const sent = informal.figures(lines, basis);
+  clipboard.writeText(v.str(text, 'message', 12000));
+  recordSent(project, { via: 'copied', to: '', sent });
+  return { copied: true, total: sent.total };
 });
 
 /** What the client said. */
