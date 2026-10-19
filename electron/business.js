@@ -21,9 +21,7 @@ const DEFAULT_BUSINESS = {
   // Clause 5 of the terms below, as a number the app can actually check
   // orders against.
   depositFraction: 0.5,
-  // The informal quote. The page address is where the summary page is
-  // published; without one the message carries the whole summary as text.
-  quotePageUrl: '',
+  // The informal quote.
   whatsappCountryCode: '27',
   informalValidDays: 14,
   terms: [
@@ -36,27 +34,12 @@ const DEFAULT_BUSINESS = {
   ],
 };
 
-/**
- * The quote page's address, or nothing. Only https, and only the page itself:
- * the summary rides in the part after `#`, which a browser never sends to the
- * server, so anything the address already carries there would be lost.
- */
-function quotePage(value) {
-  const text = String(value ?? '').trim();
-  if (!text) return '';
-  try {
-    const url = new URL(text);
-    if (url.protocol !== 'https:' || url.username || url.password) return '';
-    url.hash = '';
-    return url.toString();
-  } catch {
-    return '';
-  }
-}
-
 /** Whatever is stored, filled out with the defaults for anything absent. */
 function withDefaults(stored) {
-  const b = stored && typeof stored === 'object' ? stored : {};
+  // quotePageUrl was the address of a page the informal quote once linked
+  // to. It is gone - the quote goes by email with the renders - and a copy
+  // that saved one simply stops showing it.
+  const { quotePageUrl, ...b } = stored && typeof stored === 'object' ? stored : {};
   const fraction = Number(b.depositFraction);
   const days = Number(b.informalValidDays);
   return {
@@ -67,7 +50,6 @@ function withDefaults(stored) {
       ? fraction
       : DEFAULT_BUSINESS.depositFraction,
     terms: Array.isArray(b.terms) && b.terms.length ? b.terms : DEFAULT_BUSINESS.terms,
-    quotePageUrl: quotePage(b.quotePageUrl),
     whatsappCountryCode: /^\d{1,3}$/.test(String(b.whatsappCountryCode ?? ''))
       ? String(b.whatsappCountryCode)
       : DEFAULT_BUSINESS.whatsappCountryCode,
@@ -75,4 +57,4 @@ function withDefaults(stored) {
   };
 }
 
-module.exports = { DEFAULT_BUSINESS, withDefaults, quotePage };
+module.exports = { DEFAULT_BUSINESS, withDefaults };

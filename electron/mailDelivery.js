@@ -68,6 +68,29 @@ function latestRenderSets(project) {
 const safe = (text) => String(text ?? '').replace(/[^\w .()-]+/g, ' ').replace(/\s+/g, ' ').trim();
 
 /**
+ * Which pictures would go, and what each would be called - without reading a
+ * single one. Cheap enough to show before anything is sent.
+ */
+function plannedAttachments(project) {
+  const sets = latestRenderSets(project);
+  const people = new Map();
+  for (const { suit } of sets) people.set(suit.client_id ?? 'solo', (people.get(suit.client_id ?? 'solo') ?? 0) + 1);
+
+  const planned = [];
+  for (const { suit, pictures } of sets) {
+    const person = safe(`${suit.name ?? project.name ?? ''} ${suit.surname ?? project.surname ?? ''}`);
+    // A man with two suits needs the suit named, or his two fronts collide.
+    const which = (people.get(suit.client_id ?? 'solo') ?? 0) > 1 ? safe(suit.label || suit.fabric_name || `suit ${suit.id}`) : '';
+    for (const render of pictures) {
+      const name = [safe(project.order_ref || 'GD Suits'), person, which, VIEW_LABEL[render.view] ?? safe(render.view)]
+        .filter(Boolean).join(' - ');
+      planned.push({ filename: `${name}.jpg`, render });
+    }
+  }
+  return planned;
+}
+
+/**
  * The renders, as the client will receive them: badged and watermarked, as
  * JPEGs, named for what they are.
  *
@@ -79,25 +102,14 @@ const safe = (text) => String(text ?? '').replace(/[^\w .()-]+/g, ' ').replace(/
  * can see exactly what went in and what came out.
  */
 function buildAttachments(project, { readImage, stamp, scope }) {
-  const sets = latestRenderSets(project);
-  const people = new Map();
-  for (const { suit } of sets) people.set(suit.client_id ?? 'solo', (people.get(suit.client_id ?? 'solo') ?? 0) + 1);
-
   const attachments = [];
   let total = 0;
   let omitted = 0;
-  for (const { suit, pictures } of sets) {
-    const person = safe(`${suit.name ?? project.name ?? ''} ${suit.surname ?? project.surname ?? ''}`);
-    // A man with two suits needs the suit named, or his two fronts collide.
-    const which = (people.get(suit.client_id ?? 'solo') ?? 0) > 1 ? safe(suit.label || suit.fabric_name || `suit ${suit.id}`) : '';
-    for (const render of pictures) {
-      const bytes = stamp(readImage(scope, render.filename), 'jpeg');
-      if (total + bytes.length > MAX_ATTACH_BYTES) { omitted++; continue; }
-      total += bytes.length;
-      const name = [safe(project.order_ref || 'GD Suits'), person, which, VIEW_LABEL[render.view] ?? safe(render.view)]
-        .filter(Boolean).join(' - ');
-      attachments.push({ filename: `${name}.jpg`, content: bytes, contentType: 'image/jpeg' });
-    }
+  for (const { filename, render } of plannedAttachments(project)) {
+    const bytes = stamp(readImage(scope, render.filename), 'jpeg');
+    if (total + bytes.length > MAX_ATTACH_BYTES) { omitted++; continue; }
+    total += bytes.length;
+    attachments.push({ filename, content: bytes, contentType: 'image/jpeg' });
   }
   return { attachments, total, omitted };
 }
@@ -164,5 +176,5 @@ async function deliver({
 
 module.exports = {
   VIEW_ORDER, VIEW_LABEL, MAX_ATTACH_BYTES,
-  latestRenderSets, buildAttachments, rendersLine, deliver,
+  latestRenderSets, plannedAttachments, buildAttachments, rendersLine, deliver,
 };

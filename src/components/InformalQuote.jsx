@@ -1,37 +1,56 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { api, messageFor } from '../lib/api.js';
+import { api, messageFor, projectMedia } from '../lib/api.js';
 import { formatMoney } from '../lib/pricing.js';
-import { orderBreakdown } from '../lib/quote.js';
-import { informalQuote, quoteLink, quoteMessage, quoteSubject, prettyDate } from '../lib/informalQuote.js';
+import { orderBreakdown, basisOf, sentFigures, suitsOf } from '../lib/quote.js';
+import {
+  informalQuote, quoteMessage, quoteSubject, prettyDate, startingFigures, figuresFrom,
+} from '../lib/informalQuote.js';
 import { Banner, Modal, Spinner, useToast } from './ui.jsx';
 
 /**
  * Sending the informal quote.
  *
- * Shows exactly what will go - to whom, and every word of it - and sends it
- * only when GD presses a button. WhatsApp opens with the chat chosen and the
- * message written, so even then the last tap is his.
+ * GD sees every figure first and can change any of them - reprice a line, add
+ * a discount - and the message rewrites itself as he does. Then it goes by
+ * email with the client's renders attached, only when he presses send. Through
+ * Gmail the app sends it; otherwise it opens in his own mail program, pictures
+ * and all, for him to send from there. WhatsApp and copying carry the same
+ * words without the pictures.
  */
 export function InformalQuoteModal({ project, overrides, steps, business, customOptions, onClose, onSent }) {
-  const [recipient, setRecipient] = useState(null);
-  // Read fresh: the quote page address may have been set in Settings since
-  // the app opened, and the copy loaded at startup would not know it.
+  const [preview, setPreview] = useState(null);
   const [shop, setShop] = useState(business ?? null);
   const [busy, setBusy] = useState(null);
   const toast = useToast();
 
+  const list = useMemo(() => orderBreakdown(project, overrides, steps), [project, overrides, steps]);
+  const start = useMemo(() => startingFigures(project, list), [project, list]);
+  const [amounts, setAmounts] = useState(start.amounts);
+  const [added, setAdded] = useState(start.added);
+  const [attach, setAttach] = useState(true);
+
   useEffect(() => {
-    api.informal.recipient({ projectId: project.id }).then(setRecipient).catch(() => setRecipient({}));
+    api.informal.preview({ projectId: project.id }).then(setPreview).catch(() => setPreview({ pictures: [] }));
     api.business.get().then(setShop).catch(() => {});
   }, [project.id]);
 
-  const payload = useMemo(
-    () => informalQuote({ order: project, overrides, steps, business: shop ?? {}, customOptions }),
-    [project, overrides, steps, shop, customOptions]
-  );
-  const link = quoteLink(shop?.quotePageUrl, payload);
-  const text = quoteMessage(payload, link);
-  const empty = payload.s.every((s) => !s.i.length && !s.l.length);
+  const figures = figuresFrom(list, amounts, added);
+  const payload = informalQuote({ order: project, figures, business: shop ?? {}, customOptions });
+  const pictures = preview?.pictures ?? [];
+  const withPictures = attach && pictures.length > 0;
+  const emailText = quoteMessage(payload, { renders: withPictures ? preview.rendersLine : '' });
+  // The same words without the sentence about pictures, which only email carries.
+  const plainText = quoteMessage(payload);
+  const subject = quoteSubject(payload);
+  const empty = !list.lines.length;
+  const changed = Math.abs(figures.total - list.total) >= 0.005 || figures.lines.length !== list.lines.length;
+
+  // Grouped as they are priced: by suit on a party, by page on one suit.
+  const groups = list.lines.reduce((acc, line) => {
+    (acc[line.group ?? ''] ??= []).push(line);
+    return acc;
+  }, {});
+  const multi = suitsOf(project).length > 1;
 
   async function run(kind, fn, done) {
     setBusy(kind);
@@ -46,14 +65,30 @@ export function InformalQuoteModal({ project, overrides, steps, business, custom
     }
   }
 
-  const send = (via) => run(via, () => api.informal.send({
-    projectId: project.id, via, text, subject: quoteSubject(payload), total: payload.tot, link: !!link,
-  }), (r) => (r.via === 'whatsapp'
-    ? 'WhatsApp opened with the message - press send there'
-    : r.sent ? `Sent to ${r.to}` : 'Email opened - check it, then send'));
+  const figuresArg = { lines: figures.lines, basis: basisOf(list.lines) };
 
-  const copy = () => run('copy', () => api.informal.copy({ projectId: project.id, text, total: payload.tot, link: !!link }),
+  const sendEmail = () => run('email', () => api.informal.send({
+    projectId: project.id, via: 'email', text: emailText, subject, pictures: withPictures, ...figuresArg,
+  }), (r) => {
+    const pics = r.attached ? ` with ${r.attached} render${r.attached === 1 ? '' : 's'}` : '';
+    const left = r.omitted ? ` (${r.omitted} left off - too large for one email)` : '';
+    return r.sent ? `Sent to ${r.to}${pics}${left}` : `Email opened${pics}${left} - check it, then send`;
+  });
+
+  const sendWhatsapp = () => run('whatsapp', () => api.informal.send({
+    projectId: project.id, via: 'whatsapp', text: plainText, subject, ...figuresArg,
+  }), () => 'WhatsApp opened with the message - press send there');
+
+  const copy = () => run('copy', () => api.informal.copy({ projectId: project.id, text: plainText, ...figuresArg }),
     () => 'Message copied - paste it wherever you like');
+
+  const setAmount = (key, value) => setAmounts((a) => ({ ...a, [key]: value }));
+  const setAddedAt = (i, patch) => setAdded((rows) => rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const reset = () => { setAmounts(Object.fromEntries(list.lines.map((l) => [l.key, l.amount]))); setAdded([]); };
+
+  const emailLabel = !preview?.email
+    ? 'Email'
+    : preview.emailVia === 'gmail' ? `Send to ${preview.email}` : 'Open the email to send';
 
   return (
     <Modal title="Informal quote" onClose={onClose} wide>
@@ -62,56 +97,149 @@ export function InformalQuoteModal({ project, overrides, steps, business, custom
           <div className="price-line">
             <span className="muted">To</span>
             <span>
-              {recipient?.name || 'The client'}
-              {recipient?.guardian && <span className="faint"> (parent or provider)</span>}
-            </span>
-          </div>
-          <div className="price-line">
-            <span className="muted">WhatsApp</span>
-            <span className={recipient?.whatsapp ? 'mono' : 'faint small'}>
-              {recipient === null ? '...' : recipient.whatsapp
-                ? `+${recipient.whatsapp}`
-                : 'No number on file - WhatsApp will ask who to send it to'}
+              {preview?.name || 'The client'}
+              {preview?.guardian && <span className="faint"> (parent or provider)</span>}
             </span>
           </div>
           <div className="price-line">
             <span className="muted">Email</span>
-            <span className={recipient?.email ? '' : 'faint small'}>{recipient?.email || 'No email on file'}</span>
+            <span className={preview?.email ? '' : 'faint small'}>
+              {preview === null ? '...' : preview.email || 'No email on file - add one on the Client page'}
+            </span>
           </div>
+          {preview?.email && (
+            <div className="price-line">
+              <span className="muted">Sent</span>
+              <span className="small">
+                {preview.emailVia === 'gmail'
+                  ? `By the app, through Gmail as ${preview.from}`
+                  : 'Opens in your mail program, ready for you to send'}
+              </span>
+            </div>
+          )}
         </div>
 
         {empty && <Banner kind="warn">Nothing is chosen for this order yet - pick the base garment first.</Banner>}
 
-        <div className="note informal-message">{text}</div>
-
-        {link ? (
-          <div className="inline tiny faint">
-            <span>The link opens the summary laid out on a page of its own. Nothing about the order is stored there.</span>
-            <button className="btn btn-sm btn-ghost" onClick={() => window.open(link)}>Preview the page</button>
+        {!empty && (
+          <div className="informal-figures">
+            <div className="inline">
+              <strong>The figures</strong>
+              <span className="tiny faint">
+                {start.fromSent ? 'As you last sent them. ' : 'From the price list. '}
+                Change any of them before it goes - only this quote changes, not the price list.
+              </span>
+              <div className="spacer" />
+              {changed && <button className="btn btn-sm btn-ghost" onClick={reset}>Back to the price list</button>}
+            </div>
+            {Object.entries(groups).map(([group, lines]) => (
+              <div key={group || 'all'}>
+                {group && <div className="price-group-title">{group}</div>}
+                {lines.map((l) => (
+                  <div className="price-line informal-line" key={l.key}>
+                    <span className="small">{l.label}</span>
+                    <span className="inline">
+                      {Math.abs((Number(amounts[l.key]) || 0) - l.amount) >= 0.005 && (
+                        <span className="tiny faint" title="The price list's figure">{formatMoney(l.amount)}</span>
+                      )}
+                      <input
+                        className="input input-bare mono informal-amount"
+                        type="number"
+                        min="0"
+                        step="any"
+                        aria-label={`${multi ? `${group} - ` : ''}${l.label}`}
+                        value={amounts[l.key] ?? ''}
+                        onChange={(e) => setAmount(l.key, e.target.value)}
+                      />
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ))}
+            {added.length > 0 && <div className="price-group-title">Adjustments</div>}
+            {added.map((row, i) => (
+              <div className="price-line informal-line" key={i}>
+                <input
+                  className="input input-bare small"
+                  placeholder="Discount, rush fee..."
+                  aria-label="What this line is"
+                  value={row.label}
+                  maxLength={120}
+                  onChange={(e) => setAddedAt(i, { label: e.target.value })}
+                />
+                <span className="inline">
+                  <input
+                    className="input input-bare mono informal-amount"
+                    type="number"
+                    step="any"
+                    aria-label="Its amount - negative for a discount"
+                    value={row.amount}
+                    onChange={(e) => setAddedAt(i, { amount: e.target.value })}
+                  />
+                  <button className="btn btn-icon btn-ghost" title="Remove this line"
+                    onClick={() => setAdded((rows) => rows.filter((_, j) => j !== i))}>×</button>
+                </span>
+              </div>
+            ))}
+            <button className="btn btn-sm btn-ghost" style={{ marginTop: 6 }}
+              onClick={() => setAdded((rows) => [...rows, { label: '', amount: '' }])}>
+              + Add a line
+            </button>
+            <div className="price-line" style={{ marginTop: 8 }}>
+              <strong>Total</strong>
+              <span>
+                {changed && <span className="tiny faint">price list {formatMoney(list.total)} · </span>}
+                <strong className="mono">{formatMoney(figures.total)}</strong>
+              </span>
+            </div>
           </div>
-        ) : (
-          <p className="tiny faint" style={{ margin: 0 }}>
-            The whole summary goes in the message. To send a link to a laid-out page instead, put the quote
-            page&apos;s address in Settings &rarr; Your business.
-          </p>
         )}
 
-        <div className="inline">
-          <button className="btn btn-gold" disabled={!!busy || empty} onClick={() => send('whatsapp')}>
-            {busy === 'whatsapp' ? <><Spinner /> Opening...</> : 'Send by WhatsApp'}
-          </button>
+        <div>
+          <div className="price-line"><span className="muted">Subject</span><span className="small">{subject}</span></div>
+          <div className="note informal-message">{emailText}</div>
+        </div>
+
+        {pictures.length > 0 ? (
+          <div>
+            <label className="inline small" style={{ cursor: 'pointer' }}>
+              <input type="checkbox" checked={attach} onChange={(e) => setAttach(e.target.checked)} />
+              Attach the renders - {pictures.length} picture{pictures.length === 1 ? '' : 's'}, with the GD Suits badge
+            </label>
+            {attach && (
+              <div className="informal-renders">
+                {pictures.map((p) => (
+                  <img key={p.name} src={projectMedia(project.id, p.file)} alt={p.name} title={p.name} />
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          preview && (
+            <p className="tiny faint" style={{ margin: 0 }}>
+              No renders yet - render the suit on the Preview page and they will be attached.
+            </p>
+          )
+        )}
+
+        <div className="inline" style={{ flexWrap: 'wrap' }}>
           <button
-            className="btn"
-            disabled={!!busy || empty || !recipient?.email}
-            title={recipient?.email ? '' : 'There is no email address on file'}
-            onClick={() => send('email')}
+            className="btn btn-gold"
+            disabled={!!busy || empty || !preview?.email}
+            title={preview?.email ? '' : 'There is no email address on file'}
+            onClick={sendEmail}
           >
-            {busy === 'email' ? <><Spinner /> Sending...</> : recipient?.emailVia === 'gmail' ? 'Send by email' : 'Open as an email'}
+            {busy === 'email' ? <><Spinner /> Sending...</> : emailLabel}
+          </button>
+          <button className="btn" disabled={!!busy || empty} onClick={sendWhatsapp}>
+            {busy === 'whatsapp' ? <><Spinner /> Opening...</> : 'Send by WhatsApp'}
           </button>
           <button className="btn btn-ghost" disabled={!!busy || empty} onClick={copy}>Copy message</button>
         </div>
         <p className="tiny faint" style={{ margin: 0 }}>
-          Prices follow the price list until the formal quote is sent from the Summary page, which fixes them.
+          WhatsApp and the copied message carry the same words without the pictures
+          {preview?.whatsapp ? ` (WhatsApp to +${preview.whatsapp})` : ''}. While the order stays as it is, the formal
+          quote on the Summary page is fixed at these figures.
         </p>
       </div>
     </Modal>
@@ -124,8 +252,11 @@ const VIA = { whatsapp: 'WhatsApp', email: 'email', copied: 'a copied message' }
 export function InformalQuoteCard({ project, overrides, steps, onOpen, onFormal, reload }) {
   const iq = project.informalQuote;
   const toast = useToast();
-  const live = orderBreakdown(project, overrides, steps).total;
-  const moved = iq && Math.abs(live - (iq.total ?? 0)) >= 0.005;
+  const list = orderBreakdown(project, overrides, steps);
+  // A quote sent with its figures kept is out of date once the order no
+  // longer gives the lines they were worked from; an older one, once the
+  // total moves.
+  const moved = iq && (iq.basis?.length ? !sentFigures(project, list) : Math.abs(list.total - (iq.total ?? 0)) >= 0.005);
 
   async function mark(status) {
     try {
@@ -152,18 +283,21 @@ export function InformalQuoteCard({ project, overrides, steps, onOpen, onFormal,
       <div className="card-pad">
         {!iq ? (
           <p className="small muted" style={{ marginTop: 0 }}>
-            A summary of the order, sent by WhatsApp or email before anything is agreed. The client confirms or
-            asks for changes, and the formal quote follows.
+            A summary of the order, emailed with the client&apos;s renders before anything is agreed. You see every
+            figure first and can change any of them. The client confirms or asks for changes, and the formal quote
+            follows.
           </p>
         ) : (
           <div className="small" style={{ marginBottom: 10 }}>
-            Sent {prettyDate(iq.sentAt)} by {VIA[iq.via] ?? iq.via}{iq.to ? ` to ${iq.to}` : ''}, for{' '}
+            Sent {prettyDate(iq.sentAt)} by {VIA[iq.via] ?? iq.via}{iq.to ? ` to ${iq.to}` : ''}
+            {iq.pictures ? ` with ${iq.pictures} render${iq.pictures === 1 ? '' : 's'}` : ''}, for{' '}
             <strong>{formatMoney(iq.total)}</strong>.
             {iq.status === 'confirmed' && <> The client confirmed on {prettyDate(iq.answeredAt)}.</>}
             {iq.status === 'changes' && <> The client asked for changes on {prettyDate(iq.answeredAt)}.</>}
             {moved && (
               <div className="tiny" style={{ marginTop: 6, color: 'var(--warn)' }}>
-                The order now comes to {formatMoney(live)} - send it again if the client should see the new figure.
+                The order has changed since - on the price list it now comes to {formatMoney(list.total)}. Send it
+                again if the client should see the new figures.
               </div>
             )}
           </div>

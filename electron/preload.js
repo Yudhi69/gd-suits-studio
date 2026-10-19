@@ -20,7 +20,7 @@ const CHANNELS = [
   'analytics:get',
   'media:download',
   'quote:email', 'quote:template', 'quote:preview',
-  'informal:recipient', 'informal:send', 'informal:copy', 'informal:mark',
+  'informal:preview', 'informal:send', 'informal:copy', 'informal:mark',
   'database:sheet', 'database:export',
   'connections:get', 'connections:set', 'connections:test',
   'mail:rules', 'mail:saveRule', 'mail:deleteRule', 'mail:due', 'mail:send', 'mail:preview',

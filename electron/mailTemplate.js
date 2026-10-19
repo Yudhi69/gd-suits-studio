@@ -65,7 +65,11 @@ const VARIABLES = [
  * added in a single place rather than in each email that wanted it.
  */
 function buildValues(project, shop) {
-  const money = (n) => `R${Math.round(Number(n) || 0).toLocaleString('en-ZA')}`;
+  // "-R500" for a discount line, not "R-500".
+  const money = (n) => {
+    const r = Math.round(Number(n) || 0);
+    return `${r < 0 ? '-' : ''}R${Math.abs(r).toLocaleString('en-ZA')}`;
+  };
   const quote = project.quote;
   const suits = project.suits ?? [];
   const people = project.members ?? [];

@@ -93,7 +93,9 @@ export function buildBreakdown(spec = {}, overrides = {}, steps = STEPS) {
 
 export function formatMoney(amount) {
   const n = Number(amount) || 0;
-  return `${CURRENCY}${n.toLocaleString('en-ZA', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+  // "-R500", not "R-500": a discount GD adds to a quote is a negative line.
+  const sign = n < 0 ? '-' : '';
+  return `${sign}${CURRENCY}${Math.abs(n).toLocaleString('en-ZA', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 }
 
 /** Every price the tailor can override, for the Settings price-list editor. */
