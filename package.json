@@ -45,6 +45,7 @@
     "test:documents": "cross-env DATA_DIR=.testdata/documents electron scripts/test-documents.js",
     "test:mail": "cross-env DATA_DIR=.testdata/mail electron scripts/test-mail.js",
     "test:connections": "cross-env DATA_DIR=.testdata/connections electron scripts/test-connections.js",
+    "test:sheets": "cross-env DATA_DIR=.testdata/sheets GD_TEST_SHEETS_DELAY_MS=300 electron scripts/test-sheets.js",
     "test:attachments": "cross-env DATA_DIR=.testdata/attachments electron scripts/test-attachments.js",
     "test:firstrun": "cross-env DATA_DIR=.testdata/firstrun GD_TEST_FIRST_RUN=1 electron scripts/test-first-run.js",
     "test:macosfloor": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-macos-floor.js",

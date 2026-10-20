@@ -2189,6 +2189,51 @@ function sheet() {
   return { orders, alterations, extras };
 }
 
+/**
+ * How many rows this connection has written since it opened. A call that
+ * moved it changed something, which is how the spreadsheet copy knows to look
+ * again without a list of every handler that writes.
+ */
+function changeCount() {
+  return get().prepare('SELECT total_changes() AS n').get().n;
+}
+
+/**
+ * The tables the Google spreadsheet copies, one query each however many
+ * rows there are. Only the columns sheetsMirror lists are read - what is not
+ * selected here cannot be sent - plus the stored quote, which is reduced to
+ * its agreed total before it leaves.
+ */
+function mirror() {
+  const d = get();
+  return {
+    clients: d.prepare(
+      'SELECT id, name, surname, contact, email, created_at, updated_at FROM clients ORDER BY id'
+    ).all(),
+    orders: d.prepare(
+      `SELECT id, order_ref, client_id, status, title, event_type, event_other, event_date,
+              quantity, fabric_name, fabric_code, supplier, design, lining, shirt,
+              consultation_date, first_appointment, measurement_date, first_fitting_date,
+              final_fitting_date, delivery_date, review_date, measurements_done,
+              measurement_form_received, form_printed, quote_json, imported_balance,
+              comments, appointment_notes, created_at, updated_at
+         FROM projects ORDER BY id`
+    ).all(),
+    payments: d.prepare(
+      'SELECT id, project_id, kind, amount, paid_on, method, reference, note, created_at FROM payments ORDER BY id'
+    ).all(),
+    alterations: d.prepare(
+      `SELECT id, project_id, suit_id, garment, kind, description, status,
+              received_on, due_on, confirmed_on, cost, note, created_at
+         FROM alterations ORDER BY id`
+    ).all(),
+    extras: d.prepare(
+      `SELECT id, project_id, extra_type, colour, quantity, status, unit_price, note, created_at
+         FROM order_extras ORDER BY id`
+    ).all(),
+  };
+}
+
 module.exports = {
   open,
   MIGRATIONS,
@@ -2204,7 +2249,7 @@ module.exports = {
   listMembers, addMember, updateMember, removeMember,
   listSuits, addSuit, updateSuit, removeSuit, primarySuitId, defaultPhotoOwner,
   analytics,
-  sheet,
+  sheet, mirror, changeCount,
   tx,
   nextOrderRef, assignOrderRefs, stampImport, isRenderFile,
   addPhoto, getPhoto, deletePhoto, updatePhotoMeta,

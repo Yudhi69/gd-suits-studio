@@ -8,8 +8,16 @@
  */
 const { app, BrowserWindow } = require('electron');
 require('./fresh.js').freshUserData(app);
+
+// Ready means ready to write, and Sheets writes a few seconds after a change.
+// Nothing here may reach the internet, so every request is caught and counted.
+const sent = [];
+global.fetch = async (url) => { sent.push(String(url)); throw new Error('no network in this test'); };
+
 require('../electron/main.js');
 const integrations = require('../electron/integrations.js');
+const secrets = require('../electron/secrets.js');
+const db = require('../electron/db.js');
 
 let pass = 0, fail = 0;
 const log = (...a) => process.stdout.write(a.join(' ') + '\n');
@@ -30,16 +38,19 @@ app.whenReady().then(async () => {
     JSON.stringify(Object.fromEntries(integrations.SERVICES.map((s) => [s, state.status[s].ready]))));
   check(state.config.gmail.method === 'draft', 'mail starts as a draft, which sends nothing');
 
-  // Everything configured, gate still shut: still refuses.
+  // Everything configured, gate still shut: still refuses. The account token
+  // and the spreadsheet come from linking and from the app making one, never
+  // from a page, so they are put in place here the way the app itself would.
   await call('connections.set', {
     gmail: { method: 'gmail', address: 'gareth@gdsuits.co.za' },
-    sheets: { enabled: true, spreadsheetId: 'A'.repeat(30), tab: 'Orders' },
+    sheets: { enabled: true },
     drive: { enabled: true, photosFolderId: 'B'.repeat(30) },
   });
   await call('secrets.set', { name: 'gmailAppPassword', value: 'abcd efgh ijkl mnop' });
   await call('secrets.set', { name: 'googleClientId', value: 'x.apps.googleusercontent.com' });
   await call('secrets.set', { name: 'googleClientSecret', value: 'a-secret' });
-  await call('secrets.set', { name: 'googleRefreshToken', value: 'a-token' });
+  secrets.set('googleRefreshToken', 'a-token');
+  db.setSetting('sheetsSpreadsheet', 'A'.repeat(30));
 
   state = (await call('connections.get')).data;
   check(integrations.SERVICES.every((s) => state.status[s].ready === false),
@@ -72,27 +83,27 @@ app.whenReady().then(async () => {
 
   await call('connections.set', {
     gmail: { method: 'carrier pigeon', address: 'not-an-address' },
-    sheets: { enabled: true, spreadsheetId: '../../../etc', tab: 'x'.repeat(5000), when: 'always' },
+    sheets: { enabled: true, spreadsheetId: '../../../etc', when: 'always' },
     drive: { enabled: true, photosFolderId: 'javascript:alert(1)' },
   });
   state = (await call('connections.get')).data;
   check(state.config.gmail.method === 'draft', 'an unknown way of sending falls back to the draft');
   check(state.config.gmail.address === '', 'an address that is not an address is dropped');
-  check(state.config.sheets.spreadsheetId === '', 'a spreadsheet id that is a path is dropped');
-  check(state.config.sheets.tab.length <= 100, 'a tab name of five thousand characters is cut');
+  check(state.config.sheets.spreadsheetId === 'A'.repeat(30),
+    'a spreadsheet id from a page is ignored, and the one the app made is kept', state.config.sheets.spreadsheetId);
   check(state.config.sheets.when === 'manual', 'and an unknown moment to write falls back');
   check(state.config.drive.photosFolderId === '', 'a folder id that is a javascript: url is dropped');
 
   log('\n=== pasting the link, because nobody copies the id ===');
   await call('connections.set', {
-    sheets: { enabled: true, spreadsheetId: 'https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/edit#gid=0', tab: 'Orders' },
+    sheets: { enabled: true, spreadsheetId: 'https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/edit#gid=0' },
     drive: { enabled: true, photosFolderId: 'https://drive.google.com/drive/folders/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765' },
   });
   state = (await call('connections.get')).data;
-  check(state.config.sheets.spreadsheetId === '1AbCdEfGhIjKlMnOpQrStUvWxYz012345',
-    'the id is taken out of a spreadsheet link', state.config.sheets.spreadsheetId);
   check(state.config.drive.photosFolderId === '1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765',
-    'and out of a folder link', state.config.drive.photosFolderId);
+    'the id is taken out of a folder link', state.config.drive.photosFolderId);
+  check(state.config.sheets.spreadsheetId === 'A'.repeat(30),
+    'while a pasted spreadsheet link is not taken: the app writes only to the one it made', state.config.sheets.spreadsheetId);
 
   log('\n=== the page GD actually uses ===');
   win.webContents.reload(); await wait(2400);
@@ -119,6 +130,7 @@ app.whenReady().then(async () => {
   check(ui.secretFields >= 1 && ui.reveals >= 1,
     'and every key on it is hidden behind a reveal', JSON.stringify({ f: ui.secretFields, r: ui.reveals }));
   check(ui.dimmed >= 3, 'the three are dimmed while the gate is shut', String(ui.dimmed));
+  check(sent.length === 0, 'and nothing in all of this reached the internet', JSON.stringify(sent));
 
   log(`\n${fail === 0 ? 'ALL CONNECTION CHECKS PASSED' : 'FAILED'} — ${pass} passed, ${fail} failed`);
   app.exit(fail === 0 ? 0 : 1);

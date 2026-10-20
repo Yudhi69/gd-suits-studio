@@ -531,10 +531,18 @@ function EmailEditor({ rule, meta, clients, onClose, onSave }) {
  * would change that, so they are off until he turns them on, one at a time,
  * behind a gate that says plainly what it is letting out.
  */
+/** When the spreadsheet was last written, in GD's own time. */
+function writtenAt(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.valueOf())) return '';
+  return d.toLocaleString('en-ZA', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
 function Connections() {
   const [state, setState] = useState(null);
   const [inputs, setInputs] = useState({});
   const [tests, setTests] = useState({});
+  const [busy, setBusy] = useState('');
   const toast = useToast();
 
   const load = React.useCallback(async () => {
@@ -561,6 +569,26 @@ function Connections() {
     } catch (err) { toast(messageFor(err), 'err'); }
   }
 
+  /** A step that hands back the whole state - linking, making, writing. */
+  async function act(kind, step, message) {
+    setBusy(kind);
+    try {
+      setState(await step());
+      setTests({});
+      if (message) toast(message, 'ok');
+    } catch (err) {
+      toast(messageFor(err), 'err');
+      await load();
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function openSheet() {
+    try { await api.sheets.open(); }
+    catch (err) { toast(messageFor(err), 'err'); }
+  }
+
   async function test(service) {
     try {
       const result = await api.connections.test({ service });
@@ -571,6 +599,9 @@ function Connections() {
   if (!state) return <div className="card"><div className="card-pad"><Spinner /></div></div>;
   const { config, methods, secrets: keys, status } = state;
   const locked = !config.consent;
+  const googleSaved = keys.googleClientId?.present && keys.googleClientSecret?.present;
+  const linked = keys.googleRefreshToken?.present;
+  const written = state.sheets;
 
   const Status = ({ service }) => {
     const s = tests[service] ?? status[service];
@@ -683,33 +714,55 @@ function Connections() {
         <div className="card-pad">
           <div className="toggle-row">
             <div>
-              <div style={{ fontWeight: 600 }}>Write orders to a spreadsheet</div>
-              <div className="tiny faint">One row per order, kept up to date.</div>
+              <div style={{ fontWeight: 600 }}>Keep a copy of the database in a spreadsheet</div>
+              <div className="tiny faint" style={{ maxWidth: 620 }}>
+                The app makes a blank spreadsheet in your Google account and fills it: a tab each for
+                clients, orders, payments, alterations and extras. It is a copy - make changes in this app,
+                because the next write replaces anything changed in the spreadsheet. Order, payment,
+                alteration and extra notes go with them; dates of birth, postal addresses, a guardian's
+                details, measurements, the notes on the Client page and photographs stay on this computer.
+              </div>
             </div>
             <Switch
               checked={config.sheets.enabled}
               onChange={(on) => patch({ sheets: { ...config.sheets, enabled: on } })}
             />
           </div>
-          <div className="field">
-            <label>Spreadsheet</label>
-            <DebouncedInput
-              className="input mono"
-              placeholder="Paste the spreadsheet link, or its id"
-              value={config.sheets.spreadsheetId}
-              onCommit={(val) => patch({ sheets: { ...config.sheets, spreadsheetId: val } }, 'Spreadsheet saved')}
-            />
-            <div className="tiny faint">The whole link is fine - the id is taken out of it.</div>
+          {config.sheets.enabled && !status.sheets.ready && status.sheets.needs !== 'spreadsheet' && (
+            <div className="tiny faint" data-sheets-why>{status.sheets.why}</div>
+          )}
+          <div className="inline" style={{ margin: '10px 0' }}>
+            {config.sheets.spreadsheetId ? (
+              <>
+                <button className="btn btn-sm" data-sheets="open" onClick={openSheet}>Open in Google Sheets</button>
+                <button
+                  className="btn btn-sm"
+                  data-sheets="write"
+                  disabled={!!busy || !status.sheets.ready}
+                  onClick={() => act('write', () => api.sheets.write(), 'Spreadsheet written')}
+                >
+                  {busy === 'write' ? 'Writing…' : 'Write now'}
+                </button>
+              </>
+            ) : null}
+            {(!config.sheets.spreadsheetId || written?.code === 'missing') && (
+              <button
+                className="btn btn-sm btn-primary"
+                data-sheets="create"
+                disabled={!!busy || (status.sheets.needs !== 'spreadsheet' && written?.code !== 'missing')}
+                onClick={() => act('create', () => api.sheets.create(), 'Spreadsheet made')}
+              >
+                {busy === 'create' ? 'Making it…' : config.sheets.spreadsheetId ? 'Make a new spreadsheet' : 'Make the spreadsheet'}
+              </button>
+            )}
           </div>
-          <div className="field">
-            <label>Which tab</label>
-            <DebouncedInput
-              className="input"
-              placeholder="Orders"
-              value={config.sheets.tab}
-              onCommit={(val) => patch({ sheets: { ...config.sheets, tab: val } })}
-            />
-          </div>
+          {written && (
+            <div className={`tiny ${written.ok ? 'faint' : ''}`} style={written.ok ? undefined : { color: 'var(--danger)' }} data-sheets-written>
+              {written.ok
+                ? `Last written ${writtenAt(written.at)}: ${written.rows?.Clients ?? 0} clients, ${written.rows?.Orders ?? 0} orders.`
+                : `Not written ${writtenAt(written.at)}: ${written.error}`}
+            </div>
+          )}
           <div className="field">
             <label>When to write</label>
             <select
@@ -717,8 +770,8 @@ function Connections() {
               value={config.sheets.when}
               onChange={(e) => patch({ sheets: { ...config.sheets, when: e.target.value } })}
             >
-              <option value="manual">When I press the button</option>
-              <option value="onSave">Every time an order changes</option>
+              <option value="manual">When I press Write now</option>
+              <option value="onSave">A few seconds after anything changes</option>
             </select>
           </div>
           <button className="btn btn-sm" onClick={() => test('sheets')}>Check</button>
@@ -781,10 +834,38 @@ function Connections() {
           </Banner>
           <Secret name="googleClientId" label="Client id" hint="Ends in .apps.googleusercontent.com" />
           <Secret name="googleClientSecret" label="Client secret" hint="From the same Google Cloud page" />
+          <div className="inline" style={{ marginTop: 8 }}>
+            {linked ? (
+              <>
+                <span className="pill pill-ok">Linked</span>
+                <button
+                  className="btn btn-sm"
+                  data-google="unlink"
+                  disabled={!!busy}
+                  onClick={() => act('unlink', () => api.connections.unlink(), 'Google account unlinked')}
+                >
+                  Unlink
+                </button>
+              </>
+            ) : (
+              <button
+                className="btn btn-sm btn-primary"
+                data-google="link"
+                disabled={!!busy || locked || !googleSaved}
+                onClick={() => act('link', () => api.connections.link(), 'Google account linked')}
+              >
+                {busy === 'link' ? 'Waiting for Google in your browser…' : 'Link a Google account'}
+              </button>
+            )}
+          </div>
           <div className="tiny faint">
-            {keys.googleRefreshToken?.present
-              ? 'A Google account is linked.'
-              : 'No Google account linked yet. Once the two details above are saved, linking is the last step.'}
+            {linked
+              ? 'The app can reach only the files it made itself, not the rest of your Google Drive.'
+              : locked
+                ? 'Allow sending data to Google at the top of this page first.'
+                : googleSaved
+                  ? 'Your browser opens Google’s own page. Sign in there and allow access; the app never sees your password.'
+                  : 'Save the two details above, then link the account.'}
           </div>
         </div>
       </Collapsible>

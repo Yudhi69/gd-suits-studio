@@ -41,6 +41,19 @@ const SEND_METHOD_KEYS = SEND_METHODS.map((m) => m.key);
  */
 const SECRET_NAMES = ['gmailAppPassword', 'googleClientId', 'googleClientSecret', 'googleRefreshToken'];
 
+/**
+ * The secrets only the main process writes. The account token comes from
+ * Google when GD links the account, never from a page: a page that could set
+ * it could point the spreadsheet copy at an account that is not GD's.
+ */
+const MAIN_ONLY_SECRETS = ['googleRefreshToken'];
+
+/**
+ * The Google application details. Changing either one is a different
+ * application, so the account linked through the old one is unlinked.
+ */
+const GOOGLE_CLIENT_SECRETS = ['googleClientId', 'googleClientSecret'];
+
 const DEFAULTS = {
   consent: false,
   gmail: {
@@ -49,8 +62,8 @@ const DEFAULTS = {
   },
   sheets: {
     enabled: false,
+    /** The spreadsheet the app made. Only the main process sets it, and keeps it apart (main.js connections). */
     spreadsheetId: '',
-    tab: 'Orders',
     /** 'manual' - he presses a button. 'onSave' - every change goes up. */
     when: 'manual',
   },
@@ -81,8 +94,8 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 /**
  * A stored configuration, whatever arrived.
  *
- * Nothing is trusted: an address that is not an address, a spreadsheet id
- * that is really a whole URL, a sheet tab named with a thousand characters.
+ * Nothing is trusted: an address that is not an address, a spreadsheet or
+ * folder id that is really a whole URL.
  * Each is corrected or dropped rather than stored, because these values are
  * used to decide where a client's details are about to be written.
  */
@@ -102,7 +115,6 @@ function withDefaults(stored) {
     sheets: {
       enabled: !!sheets.enabled,
       spreadsheetId: idFrom(sheets.spreadsheetId, 'spreadsheet'),
-      tab: String(sheets.tab ?? 'Orders').trim().slice(0, 100) || 'Orders',
       when: sheets.when === 'onSave' ? 'onSave' : 'manual',
     },
     drive: {
@@ -141,12 +153,15 @@ function statusOf(service, config, hasSecret) {
   const google = hasSecret('googleClientId') && hasSecret('googleClientSecret');
   const linked = hasSecret('googleRefreshToken');
 
+  // The spreadsheet is asked about last: the app makes it, which needs the
+  // account linked first, so "no spreadsheet yet" is the one gap the app can
+  // close itself (`needs` says so).
   if (service === 'sheets') {
     if (!c.sheets.enabled) return { ready: false, why: 'Switched off.' };
-    if (!c.sheets.spreadsheetId) return { ready: false, why: 'No spreadsheet chosen.' };
     if (!google) return { ready: false, why: 'No Google application details saved yet.' };
     if (!linked) return { ready: false, why: 'Google account not linked yet.' };
-    return { ready: true, why: `Writing to the "${c.sheets.tab}" tab.` };
+    if (!c.sheets.spreadsheetId) return { ready: false, why: 'No spreadsheet made yet.', needs: 'spreadsheet' };
+    return { ready: true, why: 'Copying the database to the spreadsheet the app made.' };
   }
 
   if (!c.drive.enabled) return { ready: false, why: 'Switched off.' };
@@ -159,6 +174,6 @@ function statusOf(service, config, hasSecret) {
 }
 
 module.exports = {
-  SERVICES, SEND_METHODS, SEND_METHOD_KEYS, SECRET_NAMES, DEFAULTS,
+  SERVICES, SEND_METHODS, SEND_METHOD_KEYS, SECRET_NAMES, MAIN_ONLY_SECRETS, GOOGLE_CLIENT_SECRETS, DEFAULTS,
   withDefaults, statusOf, idFrom,
 };

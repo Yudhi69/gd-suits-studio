@@ -3,6 +3,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const crypto = require('node:crypto');
 const { app, BrowserWindow, protocol, ipcMain, dialog, shell, Menu, nativeTheme, clipboard } = require('electron');
 
 const db = require('./db');
@@ -16,6 +17,8 @@ const brand = require('./brand');
 const mail = require('./mailTemplate');
 const rules = require('./mailRules');
 const integrations = require('./integrations');
+const google = require('./google');
+const sheetsMirror = require('./sheetsMirror');
 const delivery = require('./mailDelivery');
 const business = require('./business');
 const informal = require('./informal');
@@ -208,6 +211,11 @@ function startup() {
   buildMenu();
   createWindow();
   logLine('window created - startup complete');
+
+  // Changes made while the app was closed, or in the seconds before it last
+  // quit, reach the spreadsheet now - and nothing is sent if it already has
+  // them.
+  sheetsSoon();
 }
 
 /**
@@ -290,11 +298,40 @@ let working = 0;
 let idleWaiters = [];
 const whenIdle = () => (working === 0 ? Promise.resolve() : new Promise((resolve) => idleWaiters.push(resolve)));
 
-/** Wraps a handler so a thrown error reaches the UI as a message, not a crash. */
+/**
+ * How many rows the database has written, or null when it cannot be read -
+ * which the call itself then reports, rather than this.
+ */
+function changesSoFar() {
+  try {
+    return db.changeCount();
+  } catch {
+    return null;
+  }
+}
+
+/** Asks the spreadsheet copy to look again if a call wrote something. Never throws. */
+function noticeChanges(before) {
+  try {
+    if (before !== null && db.changeCount() !== before) sheetsSoon();
+  } catch {
+    /* the next call that writes asks again */
+  }
+}
+
+/**
+ * Wraps a handler so a thrown error reaches the UI as a message, not a crash.
+ *
+ * A call that wrote to the database also tells the spreadsheet copy to look
+ * again. It is asked of every call rather than a list of the ones that write,
+ * so a handler added later cannot be forgotten; one whose change does not
+ * reach the copy (a setting, a photograph) costs a comparison and no request.
+ */
 function handle(channel, fn) {
   const guarded = UNINTERRUPTIBLE.has(channel);
   ipcMain.handle(channel, async (_event, payload) => {
     if (guarded) working++;
+    const before = changesSoFar();
     try {
       return { ok: true, data: await fn(payload ?? {}) };
     } catch (err) {
@@ -303,6 +340,7 @@ function handle(channel, fn) {
         error: { message: err?.message ?? String(err), code: err?.code ?? null, retryable: !!err?.retryable },
       };
     } finally {
+      noticeChanges(before);
       if (guarded && --working === 0) {
         const waiting = idleWaiters;
         idleWaiters = [];
@@ -795,7 +833,7 @@ handle('catalog:deleteItem', ({ id }) => db.deleteCustomItem(v.id(id)));
 
 /* settings + secrets */
 const SETTING_KEYS = ['priceOverrides', 'imageModel', 'visionModel', 'theme', 'updateFeed', 'autoCheckUpdates', 'measureUnit', 'aiConfig',
-  'quoteEmailTemplate', 'quoteEmailSubject', 'business', 'integrations', 'labelOverrides'];
+  'quoteEmailTemplate', 'quoteEmailSubject', 'business', 'labelOverrides'];
 handle('settings:get', ({ key, fallback }) => db.getSetting(v.oneOf(key, SETTING_KEYS, 'setting'), fallback ?? null));
 handle('settings:set', ({ key, value }) => {
   const name = v.oneOf(key, SETTING_KEYS, 'setting');
@@ -813,11 +851,29 @@ handle('settings:set', ({ key, value }) => {
   return db.setSetting(name, v.jsonBlob(value, 'value', 128 * 1024));
 });
 const SECRET_NAMES = [...aiProviders.SECRET_NAMES, 'updateToken', ...integrations.SECRET_NAMES];
-handle('secrets:describe', ({ name }) => secrets.describe(v.oneOf(name, SECRET_NAMES, 'secret')));
+
+// The Google account token is written by connections:link alone, from what
+// Google hands back. A page that could set it could send the spreadsheet copy
+// to an account that is not GD's.
+const PAGE_SECRETS = SECRET_NAMES.filter((n) => !integrations.MAIN_ONLY_SECRETS.includes(n));
+
+/** Whether a secret is saved. A token only Google gives is not hinted at either. */
+function describeSecret(name) {
+  const said = secrets.describe(name);
+  return integrations.MAIN_ONLY_SECRETS.includes(name) ? { ...said, hint: '' } : said;
+}
+
+handle('secrets:describe', ({ name }) => describeSecret(v.oneOf(name, SECRET_NAMES, 'secret')));
 handle('secrets:set', ({ name, value }) => {
-  const secret = v.oneOf(name, SECRET_NAMES, 'secret');
-  secrets.set(secret, v.str(value, 'key', 400).trim());
-  return secrets.describe(secret);
+  const secret = v.oneOf(name, PAGE_SECRETS, 'secret');
+  const next = v.str(value, 'key', 400).trim();
+  // Different application details are a different application: the account
+  // linked through the old ones is unlinked rather than used with the new.
+  if (integrations.GOOGLE_CLIENT_SECRETS.includes(secret) && next !== (secrets.get(secret) ?? '')) {
+    unlinkGoogle();
+  }
+  secrets.set(secret, next);
+  return describeSecret(secret);
 });
 
 /* AI */
@@ -1334,7 +1390,19 @@ handle('informal:mark', ({ projectId, status }) => {
 
 /* connections - where data may go, and nowhere by default */
 
-const connections = () => integrations.withDefaults(db.getSetting('integrations', null));
+/**
+ * The configuration as stored, with the spreadsheet the app made.
+ *
+ * That id is kept in a setting of its own, which only this process writes
+ * (it is not one of SETTING_KEYS). An id in `integrations` was pasted by hand
+ * in an earlier version: a spreadsheet the app did not make, which the
+ * `drive.file` permission cannot reach, so it is not used.
+ */
+const connections = () => {
+  const config = integrations.withDefaults(db.getSetting('integrations', null));
+  const made = integrations.idFrom(db.getSetting('sheetsSpreadsheet', ''), 'spreadsheet');
+  return { ...config, sheets: { ...config.sheets, spreadsheetId: made } };
+};
 const hasSecret = (name) => !!secrets.describe(name)?.present;
 
 /**
@@ -1345,21 +1413,31 @@ const hasSecret = (name) => !!secrets.describe(name)?.present;
  */
 function connectionState() {
   const config = connections();
+  const written = db.getSetting('sheetsStatus', null);
   return {
     config,
     methods: integrations.SEND_METHODS,
-    secrets: Object.fromEntries(integrations.SECRET_NAMES.map((n) => [n, secrets.describe(n)])),
+    secrets: Object.fromEntries(integrations.SECRET_NAMES.map((n) => [n, describeSecret(n)])),
     status: Object.fromEntries(
       integrations.SERVICES.map((s) => [s, integrations.statusOf(s, config, hasSecret)])
     ),
+    linking: !!linking,
+    // The last write to the spreadsheet, as GD needs to read it - not the
+    // fingerprint it is compared by.
+    sheets: written && written.spreadsheetId === config.sheets.spreadsheetId
+      ? { at: written.at, ok: !!written.ok, error: written.error ?? '', code: written.code ?? null, rows: written.rows ?? null }
+      : null,
   };
 }
 
 handle('connections:get', () => connectionState());
 
 handle('connections:set', (patch) => {
-  const next = integrations.withDefaults({ ...connections(), ...(patch ?? {}) });
-  db.setSetting('integrations', next);
+  const next = integrations.withDefaults({ ...connections(), ...(patch && typeof patch === 'object' ? patch : {}) });
+  // The spreadsheet is the one the app made (see connections). Whatever a
+  // page names is not stored, so the copy cannot be sent to a spreadsheet
+  // someone else owns.
+  db.setSetting('integrations', { ...next, sheets: { ...next.sheets, spreadsheetId: '' } });
   return connectionState();
 });
 
@@ -1374,6 +1452,205 @@ handle('connections:set', (patch) => {
 handle('connections:test', ({ service }) => {
   const name = v.oneOf(service, integrations.SERVICES, 'service');
   return { service: name, ...integrations.statusOf(name, connections(), hasSecret) };
+});
+
+/* the Google spreadsheet - a copy of the database GD can open anywhere */
+
+const SHEET_TITLE = 'GD Suits database';
+
+// How long after a change the copy is written, so a run of edits is one
+// write. Tests shorten it; a packaged copy ignores the variable.
+const SHEETS_DELAY_MS = (() => {
+  const asked = app.isPackaged ? NaN : Number(process.env.GD_TEST_SHEETS_DELAY_MS);
+  return Number.isFinite(asked) && asked >= 0 ? Math.min(asked, 60_000) : 8_000;
+})();
+
+let googleAccess = null;   // { accessToken, expiresAt } - an hour's access, never written down
+let refreshing = null;     // the one token refresh in flight
+let linking = null;        // the one link waiting on the browser
+let sheetsTimer = null;
+let sheetsRun = null;      // the one write in flight
+let sheetsAgain = false;
+
+const googleClient = () => ({
+  clientId: secrets.get('googleClientId') ?? '',
+  clientSecret: secrets.get('googleClientSecret') ?? '',
+});
+
+/**
+ * Forgets the linked account here, and asks Google to as well when sending
+ * is switched on (when it is off, nothing goes to Google, this included).
+ */
+function unlinkGoogle() {
+  const token = secrets.get('googleRefreshToken');
+  secrets.set('googleRefreshToken', '');
+  googleAccess = null;
+  if (token && connections().consent) void google.revoke(token);
+}
+
+/** An access token, refreshed when it is about to run out or Google turned it down. */
+function googleToken(fresh = false) {
+  if (!fresh && googleAccess && googleAccess.expiresAt - 60_000 > Date.now()) {
+    return Promise.resolve(googleAccess.accessToken);
+  }
+  if (!refreshing) {
+    const refreshToken = secrets.get('googleRefreshToken');
+    refreshing = (async () => {
+      if (!refreshToken) throw google.failure('Google account not linked yet.', 'unlinked');
+      try {
+        googleAccess = await google.refresh({ ...googleClient(), refreshToken });
+        return googleAccess.accessToken;
+      } catch (err) {
+        // Google has let the link go (revoked, expired, password changed):
+        // say so here too, unless GD has linked again in the meantime.
+        if (err.code === 'unlinked' && secrets.get('googleRefreshToken') === refreshToken) unlinkGoogle();
+        throw err;
+      }
+    })().finally(() => { refreshing = null; });
+  }
+  return refreshing;
+}
+
+/** One Sheets API call, refused outright once sending is switched off. */
+async function sheetsCall(method, path, body) {
+  if (!connections().consent) {
+    throw google.failure('Sending anything off this machine is switched off.', 'consent');
+  }
+  return google.sheets(googleToken, method, path, body);
+}
+
+const sheetsAuto = () => {
+  const config = connections();
+  return config.sheets.when === 'onSave' && integrations.statusOf('sheets', config, hasSecret).ready;
+};
+
+/**
+ * Writes the copy a few seconds after a change. The first change starts the
+ * wait and the rest join it, so a run of edits is one write, and steady
+ * editing still reaches the spreadsheet every few seconds.
+ */
+function sheetsSoon() {
+  if (sheetsTimer || !sheetsAuto()) return;
+  sheetsTimer = setTimeout(() => {
+    sheetsTimer = null;
+    if (sheetsAuto()) writeSheets(false).catch(() => { /* recorded in sheetsStatus */ });
+  }, SHEETS_DELAY_MS);
+  sheetsTimer.unref?.();
+}
+
+function recordSheets(entry) {
+  const stamped = { at: new Date().toISOString(), ...entry };
+  db.setSetting('sheetsStatus', stamped);
+  return stamped;
+}
+
+/**
+ * Writes the copy if it is ready to go. Unless `force`d (GD pressing "Write
+ * now"), a copy identical to the last one written is not sent again. One
+ * write at a time: a change during one is written after it.
+ */
+function writeSheets(force) {
+  if (sheetsRun) {
+    sheetsAgain = true;
+    return sheetsRun;
+  }
+  sheetsRun = (async () => {
+    const config = connections();
+    const status = integrations.statusOf('sheets', config, hasSecret);
+    if (!status.ready) throw new Error(status.why);
+    const { spreadsheetId } = config.sheets;
+    const data = db.mirror();
+    const fingerprint = crypto.createHash('sha256')
+      .update(JSON.stringify(sheetsMirror.grids(data))).digest('hex');
+    const last = db.getSetting('sheetsStatus', null);
+    if (!force && last?.ok && last.spreadsheetId === spreadsheetId && last.fingerprint === fingerprint) return last;
+    try {
+      const rows = await sheetsMirror.push(sheetsCall, spreadsheetId, data);
+      return recordSheets({ ok: true, spreadsheetId, fingerprint, rows });
+    } catch (err) {
+      logLine(`spreadsheet not written: ${err?.code ?? 'error'}`);
+      recordSheets({ ok: false, spreadsheetId, error: err?.message ?? String(err), code: err?.code ?? null });
+      throw err;
+    }
+  })().finally(() => {
+    sheetsRun = null;
+    if (sheetsAgain) {
+      sheetsAgain = false;
+      sheetsSoon();
+    }
+  });
+  return sheetsRun;
+}
+
+/**
+ * Links GD's Google account: the browser opens Google's own page, and the
+ * token comes back to this process alone (see google.js).
+ */
+handle('connections:link', async () => {
+  if (!connections().consent) throw new Error('Switch on sending data off this machine first.');
+  if (linking) throw new Error('Already waiting for Google in the browser.');
+  const client = googleClient();
+  linking = google.link({ ...client, open: (url) => security.openExternalSafely(url) });
+  try {
+    const got = await linking;
+    // Application details changed while the browser was open: this token
+    // belongs to the old ones, so it is not kept.
+    const now = googleClient();
+    if (now.clientId !== client.clientId || now.clientSecret !== client.clientSecret) {
+      void google.revoke(got.refreshToken);
+      throw new Error('The Google application details changed while linking. Link again.');
+    }
+    secrets.set('googleRefreshToken', got.refreshToken);
+    googleAccess = { accessToken: got.accessToken, expiresAt: got.expiresAt };
+  } finally {
+    linking = null;
+  }
+  return connectionState();
+});
+
+handle('connections:unlink', () => {
+  unlinkGoogle();
+  return connectionState();
+});
+
+/**
+ * Makes the blank spreadsheet in GD's Google account and fills it. The id
+ * Google gives back is the only one the copy is ever written to.
+ */
+handle('sheets:create', async () => {
+  const config = connections();
+  // Only when there is none yet, or the one there was is gone from Google -
+  // what the page offers, held here too, so a page cannot fill GD's Drive
+  // with spreadsheets or leave the real one behind.
+  const current = config.sheets.spreadsheetId;
+  const last = db.getSetting('sheetsStatus', null);
+  if (current && !(last?.spreadsheetId === current && last.code === 'missing')) {
+    throw new Error('The spreadsheet is already made. Open it, or press Write now.');
+  }
+  const status = integrations.statusOf('sheets', { ...config, sheets: { ...config.sheets, spreadsheetId: '' } }, hasSecret);
+  if (status.needs !== 'spreadsheet') throw new Error(status.why);
+  const made = await sheetsCall('POST', '', sheetsMirror.createBody(SHEET_TITLE));
+  const spreadsheetId = integrations.idFrom(made?.spreadsheetId, 'spreadsheet');
+  if (!spreadsheetId) throw new Error('Google did not say which spreadsheet it made.');
+  db.setSetting('sheetsSpreadsheet', spreadsheetId);
+  try {
+    await writeSheets(true);
+  } catch {
+    // Made but not filled: the status line says why, and Write now retries.
+  }
+  return connectionState();
+});
+
+handle('sheets:write', async () => {
+  await writeSheets(true);
+  return connectionState();
+});
+
+handle('sheets:open', () => {
+  const { spreadsheetId } = connections().sheets;
+  if (!spreadsheetId) throw new Error('No spreadsheet made yet.');
+  if (!security.openExternalSafely(sheetsMirror.urlFor(spreadsheetId))) throw new Error('The browser could not be opened.');
+  return true;
 });
 
 /* standing emails - written once, offered when they fall due, sent by hand */
@@ -1980,5 +2257,9 @@ handle('app:security', () => ({
     // overstate what leaves the machine, and leaving it off after would
     // understate it.
     integrations.statusOf('gmail', connections(), hasSecret).ready ? 'smtp.gmail.com' : null,
+    ...(() => {
+      const sheets = integrations.statusOf('sheets', connections(), hasSecret);
+      return sheets.ready || sheets.needs === 'spreadsheet' ? google.HOSTS : [];
+    })(),
   ].filter(Boolean),
 }));

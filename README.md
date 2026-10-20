@@ -75,6 +75,53 @@ pricing and export. Only the render and the two AI reads are switched off.
 
 ---
 
+## Copying the database to Google Sheets
+
+Until the data moves to a proper database, the app can keep a copy of it in a
+Google spreadsheet GD can open in a browser. The app makes the spreadsheet
+itself, blank, in GD's Google account, and fills it: a tab each for clients,
+orders, payments, alterations and extras, a row per record, the columns named
+as in the database.
+
+It is a **one-way copy**. The app is where the data lives; anything changed in
+the spreadsheet is replaced by the next write. A tab deleted there is made
+again, and rows removed in the app are cleared there.
+
+**What is copied:** names, telephone numbers and email addresses; each order's
+details, dates, fabric, agreed total, comments and appointment notes; payments,
+alterations and extras with their notes. **What stays on this computer:** dates
+of birth, postal addresses, a guardian's details, measurements, the notes on the
+Client page, photographs and renders. A column added to the database later stays
+local until it is added to the list in `electron/sheetsMirror.js`.
+
+### Setting up the Google side (once)
+
+The app links to Google with an OAuth client of GD's own, so nobody else's
+project sits between GD and the data.
+
+1. In [console.cloud.google.com](https://console.cloud.google.com), make a project.
+2. **APIs & Services → Library**: enable the **Google Sheets API**.
+3. **Google Auth Platform → Audience**: choose *External*, then **Publish app**
+   so it is *In production*. An app left in *Testing* has its link expire after
+   seven days. The only permission asked for is `drive.file` (the files this
+   app makes, and no others), which Google does not class as sensitive.
+4. **Clients → Create client**, type **Desktop app**. Keep the client id and
+   secret.
+
+### In the app
+
+**Settings → Connections**: switch on sending data off this machine, open
+**Google account details**, save the client id and secret, then **Link a Google
+account**. The browser opens Google's own page; once allowed, press **Make the
+spreadsheet**. Choose when it writes: when **Write now** is pressed, or a few
+seconds after anything changes. **Open in Google Sheets** opens it.
+
+If the spreadsheet is deleted in Google, Settings says so and offers to make a
+new one. A write that fails without a connection is tried again with the next
+change, at the next launch, or on **Write now**.
+
+---
+
 ## What it does
 
 **Capture.** Front, side, back and face photos by file, drag-and-drop, paste or
@@ -436,6 +483,7 @@ npm run test:render   # drives the whole render pipeline with the network stubbe
 npm run test:tour     # boots the UI, walks every step, writes screenshots
 npm run test:feedback # GD's October notes, end to end in the running app
 npm run test:dates    # moving an order's dates from the Database screen
+npm run test:sheets   # the spreadsheet copy, against a stand-in for Google
 ```
 
 Run the suites from a plain terminal. A shell inside VS Code (or any Electron
@@ -513,6 +561,16 @@ never taken from the window. WhatsApp opens through `openExternalSafely`
 measurement figures before and after are read from the database, not taken
 from the window.
 
+**Google Sheets copy** — the account is linked in the browser on Google's own
+page (loopback on 127.0.0.1, PKCE and a random `state`), with the `drive.file`
+permission only, so the link reaches the files the app made and nothing else
+in GD's Drive. The refresh token is kept in the keychain and never crosses to
+the window, not even as a hint; a window cannot save one, cannot name the
+spreadsheet the copy goes to (only one the app made is ever written), and cannot
+reach the setting behind either. Changing the client id or secret unlinks the
+account. Cells are written `RAW`, so a client name typed as a formula stays
+text. Every write checks the consent switch again in the main process.
+
 **Spreadsheet export** — a cell beginning `=`, `+`, `-` or `@` is prefixed
 with an apostrophe, so a client name typed as a formula stays text in Excel.
 
@@ -537,6 +595,9 @@ sees a masked hint.
   recorded, and a client's file should be deleted once there is no longer a
   reason to keep it — deleting a client removes their orders, photos,
   references and renders.
+- **The Google Sheets copy sends names, contact details and orders to Google.**
+  It is off until switched on, and the same consent question as rendering
+  applies. Anyone GD shares the spreadsheet with sees all of it.
 - **Builds are signed with the project's own certificate, not an Apple
   Developer ID, and not notarised** (see *Signing*).
 - `npm audit` reports **0 vulnerabilities in what ships**. There are advisories
