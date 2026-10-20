@@ -292,6 +292,13 @@ function StandingEmails() {
                   <div className="tiny faint">
                     {d.ruleName} - due {d.dueOn}{d.overdue ? ' (overdue)' : ''}
                   </div>
+                  {d.sentBefore && (
+                    <div className="tiny faint">
+                      {d.sentBefore.for
+                        ? `Sent before, for ${d.sentBefore.for}. That date has moved, so it is due again.`
+                        : 'Sent before, when the order had no date. It has one now, so it is due again.'}
+                    </div>
+                  )}
                 </div>
                 <button
                   className="btn btn-sm btn-gold"

@@ -408,7 +408,9 @@ handle('projects:update', ({ id, patch = {} }) => {
   if (patch.form_printed !== undefined) clean.form_printed = patch.form_printed ? 1 : 0;
   if (patch.spec !== undefined) clean.spec = v.jsonBlob(patch.spec, 'spec');
   if (patch.analysis !== undefined) clean.analysis = v.jsonBlob(patch.analysis, 'analysis');
-  return db.updateProject(v.id(id), clean);
+  // A moved date also rewrites the old one in the imported notes and is
+  // written to the order's notes; see db.editProject.
+  return db.editProject(v.id(id), clean);
 });
 /**
  * Stores the agreed quote. The figures are computed in the renderer, which is
@@ -1416,6 +1418,10 @@ handle('mail:due', ({ on } = {}) => {
     const spec = { ...rule, offsetDays: rule.offset_days };
     for (const project of db.mailCandidates(rule.id)) {
       if (!rules.covers(spec, project.client_id, rule.clientIds)) continue;
+      // Sent already, for the date the order still has. Sent for a date that
+      // has since moved, it is a reminder about a different day and is due.
+      const sent = project.sent_for !== null && project.sent_for !== undefined;
+      if (sent && project.sent_for === rules.anchorDate(spec, project)) continue;
       const due = rules.dueOn(spec, project);
       // Due today or overdue. A reminder whose day has passed is still worth
       // offering - it was missed, and the client has not had it.
@@ -1429,6 +1435,7 @@ handle('mail:due', ({ on } = {}) => {
         email: project.email,
         dueOn: due,
         overdue: due < today,
+        ...(sent ? { sentBefore: { for: project.sent_for, at: project.sent_at } } : {}),
       });
     }
   }
@@ -1449,6 +1456,7 @@ handle('mail:send', async ({ ruleId, projectId }) => {
   if (!rule) throw new Error('That email no longer exists.');
   const project = db.getProject(pid);
   if (!project) throw new Error('Order not found');
+  const sentFor = rules.anchorDate(rule, project);
   // A standing email is always a draft, Gmail or not: it was built on the rule
   // that a timer decides what is due and a person sends it. It can still
   // carry the renders, the same way a quote does.
@@ -1457,7 +1465,9 @@ handle('mail:send', async ({ ruleId, projectId }) => {
     allowGmail: false,
     draftName: `${rule.name} - ${project.order_ref || project.id}`,
   });
-  db.markMailSent(id, pid);
+  // The date the draft was written for, read before it opened: if the date
+  // moved meanwhile, the reminder for the new one is still owed.
+  db.markMailSent(id, pid, sentFor);
   return { opened: true, ...result };
 });
 

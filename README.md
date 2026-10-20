@@ -210,6 +210,16 @@ the two fittings on Suit progress), so a fitting that moves is moved here
 without opening the order; it is the same date the order's Schedule card shows.
 Export writes the tab as CSV for Excel.
 
+**When a date moves.** Moving a date on an order (on its Schedule card or on
+the Database screen) is written to the order's notes on the Client page:
+"First fitting moved from 14 Nov 2026 to 21 Nov 2026." The same date corrected
+again within ten minutes stays one move. Appointment notes imported from the
+workbook ("MEASUREMENTS: … FIRST FITTING: … FINAL FITTING: …") have the date
+after the matching label rewritten, so they never contradict the order. The
+import is not a move and records nothing. A standing email remembers the date
+it was sent for: if that date moves, it is offered again, and the Emails page
+says it went before.
+
 **Export.** Writes the whole client file to a folder — JSON, every photo and
 render, and a printable HTML spec sheet with the price breakdown to send for
 sign-off.
