@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api, messageFor } from '../lib/api.js';
 import { Banner, Modal, Spinner, useToast } from './ui.jsx';
+import { updatePhase } from '../lib/updates.js';
 
 const megabytes = (bytes) => (Number(bytes || 0) / (1024 * 1024)).toFixed(1);
 
@@ -12,40 +13,30 @@ const megabytes = (bytes) => (Number(bytes || 0) / (1024 * 1024)).toFixed(1);
  * versions ago gets this on its very first launch. Each version is put to
  * him once; after Later, the flag is what stays.
  *
- * One of this app's own releases installs itself: Install, then Restart now
- * (or Later, and it goes in when he quits). Anything else - a custom update
+ * One of this app's own releases installs itself in one press: it downloads,
+ * goes in place of this copy, and the app reopens on it. Anything else - a custom update
  * address, a copy that cannot be replaced from where it is - is downloaded
  * for him to install by hand, and the prompt says exactly what that step is.
  */
-export default function UpdatePrompt({ update, platform, onClose, onReady }) {
+export default function UpdatePrompt({ update, platform, onClose }) {
   const [downloading, setDownloading] = useState(false);
   const [progress, setProgress] = useState(null);
   const [saved, setSaved] = useState(null);
-  const [ready, setReady] = useState(!!update.ready);
   const toast = useToast();
 
   useEffect(() => api.updates.onProgress(setProgress), []);
 
+  // When this resolves the app is already quitting into the new version, so
+  // the button stays busy until the window goes.
   async function install() {
     setDownloading(true);
     setProgress(null);
     try {
       await api.updates.install();
-      setReady(true);
-      onReady?.();
     } catch (err) {
       toast(messageFor(err), 'err');
-    } finally {
       setProgress(null);
       setDownloading(false);
-    }
-  }
-
-  async function restart() {
-    try {
-      await api.updates.restart();
-    } catch (err) {
-      toast(messageFor(err), 'err');
     }
   }
 
@@ -77,28 +68,25 @@ export default function UpdatePrompt({ update, platform, onClose, onReady }) {
           </div>
         )}
 
-        {progress && !saved && !ready && (
+        {progress && !saved && (
           <div>
             <div className="progress-track">
               <div
                 className="progress-fill"
-                style={{ width: `${progress.total ? Math.min(100, (progress.bytes / progress.total) * 100) : 0}%` }}
+                style={{ width: `${progress.phase ? 100 : progress.total ? Math.min(100, (progress.bytes / progress.total) * 100) : 0}%` }}
               />
             </div>
             <div className="small muted" style={{ marginTop: 6 }}>
-              {progress.phase === 'preparing'
-                ? 'Downloaded and checked - getting it ready...'
-                : `${megabytes(progress.bytes)} of ${progress.total ? megabytes(progress.total) : '?'} MB`}
+              {updatePhase(progress) ?? `${megabytes(progress.bytes)} of ${progress.total ? megabytes(progress.total) : '?'} MB`}
             </div>
           </div>
         )}
 
         {update.canInstall ? (
-          <Banner kind={ready ? 'ok' : 'info'}>
+          <Banner kind="info">
             <div>
-              {ready
-                ? 'Ready. Restart now to finish - or choose Later, and it goes in the next time you quit.'
-                : 'Install downloads the new version, checks it, and puts it in place of this copy. There is nothing else to do.'}
+              Update downloads the new version, checks it, puts it in place of this copy and reopens the app on it.
+              There is nothing else to do.
               <div className="small" style={{ marginTop: 6, opacity: .85 }}>
                 Your orders, clients, photographs and measurements are kept separately and are not touched.
                 {mac && ' After the update your Mac may ask for your password once, so the new version can read your saved keys - choose Always Allow.'}
@@ -130,13 +118,10 @@ export default function UpdatePrompt({ update, platform, onClose, onReady }) {
         )}
 
         <div className="inline">
-          {update.canInstall && !ready && (
+          {update.canInstall && (
             <button className="btn btn-gold" onClick={install} disabled={downloading}>
-              {downloading ? <><Spinner /> Installing...</> : `Install ${update.version}`}
+              {downloading ? <><Spinner /> Updating...</> : `Update to ${update.version}`}
             </button>
-          )}
-          {update.canInstall && ready && (
-            <button className="btn btn-gold" onClick={restart}>Restart now</button>
           )}
           {!update.canInstall && !saved && update.canDownload && (
             <button className="btn btn-gold" onClick={download} disabled={downloading}>

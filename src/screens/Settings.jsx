@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { api, messageFor } from '../lib/api.js';
 import { priceCatalogEntries, formatMoney } from '../lib/pricing.js';
 import { CURRENCY } from '../lib/catalog.js';
+import { updatePhase } from '../lib/updates.js';
 import { Banner, Collapsible, ConfirmButton, DebouncedInput, Modal, SecretInput, Spinner, Switch, useToast } from '../components/ui.jsx';
 
 /** Bytes as megabytes, which is the only unit an installer is ever read in. */
@@ -801,7 +802,6 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
   const [progress, setProgress] = useState(null);
   const [downloaded, setDownloaded] = useState(null);
   const [installing, setInstalling] = useState(false);
-  const [ready, setReady] = useState(false);
   const [feed, setFeed] = useState('');
   const [defaultFeed, setDefaultFeed] = useState('');
   const [autoCheck, setAutoCheck] = useState(false);
@@ -915,12 +915,10 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
       // release goes on being "available" and the button came back every
       // time - and each press saved another copy of the same file.
       setDownloaded(result.downloaded ?? null);
-      setReady(!!result.ready);
       onUpdateChanged?.(result.updateAvailable ? result : null);
       toast(
         !result.updateAvailable ? 'You are on the latest version'
-          : result.ready ? `Version ${result.version} is ready - restart to finish`
-            : result.downloaded ? `Version ${result.version} is already downloaded`
+          : result.downloaded ? `Version ${result.version} is already downloaded`
               : `Version ${result.version} is available`,
         'ok'
       );
@@ -928,35 +926,23 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
       setUpdateError(messageFor(err));
       setUpdate(null);
       setDownloaded(null);
-      setReady(false);
     } finally {
       setChecking(false);
     }
   }
 
-  // Downloads the update, checks it and makes it ready to go in. Nothing is
-  // replaced until the app restarts or quits.
+  // One press: downloads the update, checks it, puts it in place of this copy
+  // and reopens the app on it. When it resolves the app is already quitting,
+  // so the button stays busy until the window goes.
   async function installUpdate() {
     setInstalling(true);
     setProgress(null);
     try {
       await api.updates.install();
-      setReady(true);
-      onUpdateChanged?.({ ...update, ready: true });
-      toast(`Version ${update.version} is ready - restart to finish`, 'ok');
     } catch (err) {
       toast(messageFor(err), 'err');
-    } finally {
       setProgress(null);
       setInstalling(false);
-    }
-  }
-
-  async function restartToUpdate() {
-    try {
-      await api.updates.restart();
-    } catch (err) {
-      toast(messageFor(err), 'err');
     }
   }
 
@@ -1255,13 +1241,11 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
                         <div className="progress-track">
                           <div
                             className="progress-fill"
-                            style={{ width: `${progress.total ? Math.min(100, (progress.bytes / progress.total) * 100) : 0}%` }}
+                            style={{ width: `${progress.phase ? 100 : progress.total ? Math.min(100, (progress.bytes / progress.total) * 100) : 0}%` }}
                           />
                         </div>
                         <div className="small muted" style={{ marginTop: 6 }}>
-                          {progress.phase === 'preparing'
-                            ? 'Downloaded and checked - getting it ready...'
-                            : `${megabytes(progress.bytes)} of ${progress.total ? megabytes(progress.total) : '?'} MB`}
+                          {updatePhase(progress) ?? `${megabytes(progress.bytes)} of ${progress.total ? megabytes(progress.total) : '?'} MB`}
                         </div>
                       </div>
                     )}
@@ -1269,29 +1253,22 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
                     {update.canInstall ? (
                       <>
                         <div className="inline" style={{ marginTop: 14 }}>
-                          {ready ? (
-                            <button className="btn btn-gold" onClick={restartToUpdate}>Restart now</button>
-                          ) : (
-                            <button className="btn btn-gold" disabled={installing} onClick={installUpdate}>
-                              {installing ? <><Spinner /> Installing...</> : `Install ${update.version}`}
-                            </button>
-                          )}
-                          {installing && progress?.phase !== 'preparing' && (
+                          <button className="btn btn-gold" disabled={installing} onClick={installUpdate}>
+                            {installing ? <><Spinner /> Updating...</> : `Update to ${update.version}`}
+                          </button>
+                          {installing && !progress?.phase && (
                             <button className="btn" onClick={() => api.updates.cancel()}>Stop</button>
                           )}
-                          {update.pageUrl && (
+                          {update.pageUrl && !installing && (
                             <button className="btn" onClick={() => api.updates.download({ url: update.pageUrl })}>
                               Open the release page
                             </button>
                           )}
                         </div>
-                        <Banner kind={ready ? 'ok' : 'info'}>
+                        <Banner kind="info">
                           <div>
-                            {ready
-                              ? <>Version {update.version} is ready. Restart now to finish - or carry on, and it goes in
-                                  the next time you quit GD Suits Studio.</>
-                              : <>Installing downloads the new version, checks it against the release&apos;s fingerprint and
-                                  puts it in place of this copy. There is nothing else to do.</>}
+                            Updating downloads version {update.version}, checks it against the release&apos;s fingerprint,
+                            puts it in place of this copy and reopens GD Suits Studio on it. There is nothing else to do.
                             <div className="small" style={{ marginTop: 6, opacity: .85 }}>
                               Your orders, clients, photographs and measurements are kept separately and are not touched.
                               {info?.platform === 'darwin' && ' After the update your Mac may ask for your password once, so the new version can read your saved keys - choose Always Allow.'}

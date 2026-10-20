@@ -223,11 +223,12 @@ tells you once; after that a small flag in the corner reminds you, and
 there at any time with **Check for updates**, and turn off the looking on
 opening with the switch on the same page.
 
-When there is a newer version it tells you what changed. Press **Install**: it
-downloads the new version, checks it is genuine, and gets it ready. Then press
-**Restart now** and the app reopens as the new version. There is nothing else
-to do - no file to find, nothing to drag. If you are busy, carry on working:
-the update goes in the next time you quit the app.
+When there is a newer version it tells you what changed. Press **Update to**
+the new version: it downloads it, checks it is genuine, puts it in place of the
+copy you have and reopens the app on it - which then says **Updated to
+version** and the new number. That is the whole of it - no file to find,
+nothing to drag, no second button. If a render or an email is still going it
+waits for that to finish first, so nothing you started is cut off.
 
 On a Mac, the first time the new version opens it may ask for your password,
 so it can read the keys you saved in Settings. Type it and choose **Always

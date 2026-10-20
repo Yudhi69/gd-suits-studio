@@ -289,10 +289,15 @@ installed version against a release feed, shows what changed, and offers the
 download built for that machine (arm64 vs Intel vs Windows is chosen
 automatically).
 
-**Install** then **Restart now**, and the next copy that opens is the new
-version: nothing to find in Downloads, nothing to drag, no installer to click
-through. **Later** works too - an update made ready goes in the next time the
-app quits.
+One press of **Update to x.y.z** downloads it, checks it, puts it in place of
+the installed copy and reopens the app on it, which then says "Updated to
+version x.y.z": nothing to find in Downloads, nothing to drag, no installer to
+click through. A render or an email still under way is waited for first; quit
+while it waits and the update goes in as the app closes. **Later**, on the
+prompt, leaves everything as it is.
+
+Copies older than 0.1.23 predate this and can only download; they are
+installed by hand once, and update themselves after that.
 
 Electron's own updater (Squirrel / `electron-updater`) cannot do this here:
 Squirrel only accepts a replacement that meets the running copy's own signature
