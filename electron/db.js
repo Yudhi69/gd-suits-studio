@@ -2065,7 +2065,7 @@ function sheet() {
             p.fabric_name, p.fabric_code, p.supplier, p.design, p.lining, p.shirt,
             p.measurement_form_received, p.form_printed, p.form_url,
             p.appointment_notes, p.consultation_date, p.first_appointment, p.comments,
-            p.measurement_date, p.first_fitting_date, p.final_fitting_date,
+            p.measurement_date, p.first_fitting_date, p.final_fitting_date, p.review_date,
             p.quote_json, p.imported_balance, p.import_source, p.updated_at,
             p.client_id, c.name, c.surname, c.contact, c.email,
             (SELECT group_concat(s.spec_json, char(30)) FROM suits s WHERE s.project_id = p.id) AS suit_specs,

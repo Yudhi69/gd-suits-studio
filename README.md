@@ -205,9 +205,9 @@ it moves the figure back, unless someone has changed it since.
 Completed, Suit progress, Alterations, Extras) and columns, editable in place.
 DESIGN/LINING/SHIRT are worked out from the spec unless free text has been
 written over them; quoted, balance and quantity are derived and read-only.
-The measurement and fitting dates are cells too (Current orders, and the two
-fittings on Suit progress), so a fitting that moves is moved here without
-opening the order; it is the same date the order's Schedule card shows.
+The measurement, fitting and review dates are cells too (Current orders, and
+the two fittings on Suit progress), so a fitting that moves is moved here
+without opening the order; it is the same date the order's Schedule card shows.
 Export writes the tab as CSV for Excel.
 
 **Export.** Writes the whole client file to a folder — JSON, every photo and

@@ -42,7 +42,7 @@ const PROGRESS = [
  * order's Schedule card names them. Fittings are what move most, and moving
  * one should not mean opening each order in turn.
  */
-const SCHEDULE = PROCESS_DATES.filter((d) => ['measurement_date', 'first_fitting_date', 'final_fitting_date'].includes(d.key));
+const SCHEDULE = PROCESS_DATES.filter((d) => ['measurement_date', 'first_fitting_date', 'final_fitting_date', 'review_date'].includes(d.key));
 
 /** The two the progress tab carries beside its stages. */
 const FITTINGS = [
