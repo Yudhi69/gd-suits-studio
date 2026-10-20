@@ -135,6 +135,18 @@ app.whenReady().then(async () => {
   check(db.getProject(plain).appointment_notes === IMPORTED && appNotes(plain).length === 0,
     'an edit that moves no date writes no note', JSON.stringify(appNotes(plain)));
 
+  // The rewrite on its own, for notes the import could have read either way:
+  // a label with nothing after it but the next label and that label's date.
+  const { rewriteNotes } = require('../electron/dateMoves.js');
+  const unbooked = 'MEASUREMENTS: FIRST FITTING: 25/01/2025';
+  const booked = rewriteNotes(unbooked, 'consultation_date', '2025-01-19');
+  check(booked === 'MEASUREMENTS: 19/01/2025 FIRST FITTING: 25/01/2025',
+    'a label with no date of its own never takes the next label\'s date', booked);
+  const cleared = rewriteNotes(unbooked, 'consultation_date', '');
+  check(cleared === unbooked, '  and taking its date off leaves the next label\'s date alone', cleared);
+  check(rewriteNotes('Prefers Saturday mornings.', 'first_fitting_date', '2025-02-01') === 'Prefers Saturday mornings.',
+    'notes with no label are left exactly as written');
+
   log('\n=== what a hostile page gets ===');
   const forged = imported('Forged');
   const fake = await call('notes.add', { projectId: forged, step: 'client', author: 'app',
