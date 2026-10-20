@@ -21,7 +21,9 @@ import { settledMessage } from './lib/updates.js';
 function UpdateSettled() {
   const toast = useToast();
   useEffect(() => {
-    api.updates.settled()
+    // Inside the promise, so a copy without this call cannot take the window
+    // down with it - the notice is the one thing here that may be missed.
+    Promise.resolve().then(() => api.updates.settled())
       .then((settled) => {
         const message = settledMessage(settled);
         if (message) toast(message.text, message.kind);

@@ -280,7 +280,6 @@ app.on('window-all-closed', () => {
 
 /* ------------------------------------------------------------------- IPC */
 
-/** Wraps a handler so a thrown error reaches the UI as a message, not a crash. */
 /**
  * Calls that an update must not restart the app in the middle of: a render
  * the client's credits have already paid for, a read, an email half sent.
@@ -291,6 +290,7 @@ let working = 0;
 let idleWaiters = [];
 const whenIdle = () => (working === 0 ? Promise.resolve() : new Promise((resolve) => idleWaiters.push(resolve)));
 
+/** Wraps a handler so a thrown error reaches the UI as a message, not a crash. */
 function handle(channel, fn) {
   const guarded = UNINTERRUPTIBLE.has(channel);
   ipcMain.handle(channel, async (_event, payload) => {
