@@ -1,18 +1,24 @@
 /**
  * An update that installs itself.
  *
- * Install downloads the release, checks it and makes it ready; Restart now -
- * or quitting - puts it in place of the running copy. This suite builds real
- * (tiny) app bundles and disk images, signed with a throwaway certificate the
- * way releases are signed with the real one, so the unpacking, the signature
+ * One press of "Update to x.y.z" downloads the release, checks it, puts it in
+ * place of the running copy and reopens the app on it - once any render or
+ * email still under way has finished. This suite builds real (tiny) app
+ * bundles and disk images, signed with a throwaway certificate the way
+ * releases are signed with the real one, so the unpacking, the signature
  * check and the swap itself all run for real, against folders of the suite's
  * own. Nothing in Applications is touched.
  *
- * Two things are stubbed: the network (the release feed and its file) and the
- * final hand-over - the helper is recorded rather than started, then run here
- * against a stand-in process, because the real one waits for this process to
- * exit. Runs as an installed copy for its first-run prompt, via
- * GD_TEST_FIRST_RUN in its npm script.
+ * Two things are stubbed: the network (the release feed, its file and the
+ * image model) and the final hand-over - the helper is recorded rather than
+ * started, then run here against a stand-in process, because the real one
+ * waits for this process to exit. Runs as an installed copy for its first-run
+ * prompt, via GD_TEST_FIRST_RUN in its npm script.
+ *
+ * It runs as two launches. A process hands an update over once, so quitting
+ * while an update waits for a render is a short pass of its own
+ * (GD_INSTALL_PASS=quit), which opens as the launch after an update that went
+ * in. The full pass opens as the launch after one that did not.
  *
  * macOS only: the swap it tests is the Mac one. On Windows the release's own
  * installer does the work, and that cannot be run from here.
@@ -31,13 +37,16 @@ if (process.platform !== 'darwin') {
 
 const dataDir = require('./fresh.js').freshUserData(app);
 const UPDATES = path.join(dataDir, 'updates');
+const QUIT_PASS = process.env.GD_INSTALL_PASS === 'quit';
 
 const DOWNLOADS = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-install-dl-'));
 app.setPath('downloads', DOWNLOADS);
 shell.showItemInFolder = () => {};
 
 const INSTALLED = require('../package.json').version;
-const NEWER = (() => { const p = INSTALLED.split('.').map(Number); p[p.length - 1] += 1; return p.join('.'); })();
+const ahead = (by) => { const p = INSTALLED.split('.').map(Number); p[p.length - 1] += by; return p.join('.'); };
+const NEWER = ahead(1);
+const LATER = ahead(2);   // the one an earlier copy failed to put in place
 const APP_ID = require('../package.json').build.appId;
 const BUNDLE = 'GD Suits Studio.app';
 
@@ -93,6 +102,7 @@ const IMAGES = {
 const dmg = {};
 const builds = [];
 for (const [key, fill] of Object.entries(IMAGES)) {
+  if (QUIT_PASS && key !== 'good') continue;
   const src = path.join(WORK, 'src', key);
   fs.mkdirSync(src, { recursive: true });
   fill(src);
@@ -121,8 +131,25 @@ const fileUrl = (name) =>
 let served = GOOD;           // the bytes the file host hands back
 let digest = `sha256:${sha(GOOD)}`;
 let feedCalls = 0;
+// The image model, for a render still going when Update is pressed: held open
+// until the suite lets it answer.
+const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mP8z8BQz0AEYBxVSF+FAP5FDvcfRYWgAAAAAElFTkSuQmCC';
+let rendersAsked = 0;
+let held = null;
+const holdRenders = () => {
+  let release;
+  held = new Promise((resolve) => { release = resolve; });
+  return () => { held = null; release(); };
+};
 global.fetch = async (url) => {
   const u = String(url);
+  if (u.startsWith('https://generativelanguage.googleapis.com/')) {
+    rendersAsked++;
+    await held;
+    return new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: PNG } }] }, finishReason: 'STOP' }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
   if (u.startsWith('https://api.github.com/')) {
     feedCalls++;
     const names = [`GD Suits Studio-${NEWER}-arm64.dmg`, `GD Suits Studio-${NEWER}.dmg`, `GD Suits Studio Setup ${NEWER}.exe`];
@@ -179,12 +206,30 @@ ipcMain.handle = (channel, fn) => realHandle(channel, async (...args) => {
 });
 const started = Date.now();
 
+// Opens as the launch after an update was handed over: what the copy before
+// left behind, written before main opens the database. The full pass follows
+// one that could not be put in place; the quit pass, one that went in.
+const db = require('../electron/db.js');
+const SETTLED = QUIT_PASS
+  ? { version: INSTALLED, result: 'installed' }
+  : { version: LATER, result: 'failed: could not move the new copy into place' };
+{
+  const seeded = db.open(dataDir);
+  db.setSetting('updateStaged', {
+    version: SETTLED.version, platform: 'darwin', path: path.join(UPDATES, SETTLED.version, BUNDLE), sha256: '',
+    applying: Date.now() - 60 * 1000,
+  });
+  seeded.close();
+  fs.mkdirSync(UPDATES, { recursive: true });
+  fs.writeFileSync(path.join(UPDATES, 'install.result'), `${SETTLED.result}\n`);
+}
+
 const beforeMain = app.listeners('will-quit');
 require('../electron/main.js');
 const onQuit = app.listeners('will-quit').filter((l) => !beforeMain.includes(l));
 const installer = require('../electron/installer.js');
 const updater = require('../electron/updater.js');
-const db = require('../electron/db.js');
+const secrets = require('../electron/secrets.js');
 
 const log = (...a) => process.stdout.write(a.join(' ') + '\n');
 let pass = 0, fail = 0;
@@ -225,9 +270,102 @@ const OPEN_UPDATES = `
   [...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('Settings')).click(); await wait(700);
   [...document.querySelectorAll('.step-tab')].find(b => b.textContent.includes('Updates')).click(); await wait(400);
 `;
+const UN = `const un = async (p) => { const r = await p; if (!r.ok) throw new Error(r.error.message); return r.data; };`;
+
+function finish() {
+  cleanUp();
+  log(`\n${fail === 0 ? 'ALL INSTALL CHECKS PASSED' : 'FAILED'}${QUIT_PASS ? ' (quitting while it waits)' : ''} — ${pass} passed, ${fail} failed`);
+  app.exit(fail === 0 ? 0 : 1);
+}
 
 app.whenReady().then(async () => {
-  log('=== which releases may install themselves ===');
+  const win = await until(() => BrowserWindow.getAllWindows()[0]);
+  const run = (js) => win.webContents.executeJavaScript(js);
+  const call = async (js) => JSON.parse(await run(`${js}.then(JSON.stringify)`));
+  // Looked for as soon as the window opens: a notice is gone in seconds.
+  const toastSaying = (text) => until(async () => {
+    const shown = await run(`[...document.querySelectorAll('.toast')].map(t => t.textContent).join(' | ')`).catch(() => '');
+    return shown.includes(text) ? shown : null;
+  }, 15000);
+
+  /** An order with a render under way, held until the returned function lets it answer. */
+  const renderUnderWay = async () => {
+    secrets.set('gemini', 'TEST-KEY-1234');
+    const { projectId } = await call(`(async () => {
+      ${UN}
+      const clientId = await un(gd.clients.save({ name: 'Update', surname: 'Test' }));
+      return { projectId: await un(gd.projects.create({ clientId, title: 'Render under way' })) };
+    })()`);
+    const letGo = holdRenders();
+    const asked = rendersAsked;
+    await run(`window.__render = window.gd.ai.render({ projectId: ${projectId}, view: 'front', prompt: 'p', refs: [] }); true`);
+    await until(() => rendersAsked > asked);
+    const finished = async () => {
+      letGo();
+      const r = await run(`window.__render.then((r) => JSON.stringify({ ok: r.ok, error: r.error?.message }))`).then(JSON.parse);
+      return { ...r, kept: db.getProject(projectId).renders.length };
+    };
+    return finished;
+  };
+
+  if (QUIT_PASS) {
+    log('=== the launch after an update that went in ===');
+    const shown = await toastSaying(`Updated to version ${INSTALLED}`);
+    check(!!shown, 'the window says the update went in, and which version this now is', shown ?? '(no notice)');
+    check(!db.getSetting('updateStaged', null) && !fs.existsSync(UPDATES) && !db.getSetting('updateFailed', null),
+      '  what the update left behind is cleared, and nothing is marked as failed');
+
+    log('\n=== quitting while it waits for a render ===');
+    const modal = await until(async () => run(`(() => {
+      const m = document.querySelector('.modal-backdrop');
+      return m ? JSON.stringify([...m.querySelectorAll('button')].map(x => x.textContent.trim())) : null;
+    })()`).then((v) => v && JSON.parse(v)));
+    check(modal?.includes(`Update to ${NEWER}`), 'the first launch offers to update', JSON.stringify(modal));
+
+    const renderDone = await renderUnderWay();
+    await run(`window.__phases = []; window.gd.updates.onProgress((p) => p.phase && window.__phases.push(p.phase));
+      window.__install = window.gd.updates.install(); true`);
+    const phases = await until(async () => {
+      const seen = JSON.parse(await run('JSON.stringify(window.__phases)'));
+      return seen.includes('waiting') ? seen : null;
+    }, 30000);
+    const staged = db.getSetting('updateStaged', null);
+    check(!!phases && staged?.version === NEWER && handed.length === 0 && quits === 0,
+      'Update makes it ready, then waits for the render rather than quitting under it',
+      JSON.stringify({ phases, staged: staged?.version, handed: handed.length, quits }));
+
+    onQuit[0]({ preventDefault() {} });
+    const args = handed[0];
+    check(handed.length === 1 && args?.[1] === installer.MAC_HELPER && args[3] === String(process.pid)
+      && args[4] === staged?.path && args[5] === TARGET,
+      'quitting while it waits puts the update in as the app closes', JSON.stringify(args?.slice(3)));
+    check(args?.[6] === '0', '  without reopening the app - he chose to quit');
+
+    const rendered = await renderDone();
+    check(rendered.ok && rendered.kept === 1, 'the render still finishes and is kept', JSON.stringify(rendered));
+    const out = await run(`window.__install.then(JSON.stringify)`).then(JSON.parse);
+    check(out.ok && out.data?.restarting && handed.length === 1 && quits === 0,
+      '  and the update it was waiting on is not handed over a second time', JSON.stringify({ out, handed: handed.length, quits }));
+
+    const standIn = realSpawn('/bin/sleep', ['30'], { stdio: 'ignore' });
+    const swapped = runHelper(args, { pidOverride: standIn.pid });
+    standIn.kill();
+    await swapped;
+    check(versionOf(TARGET) === NEWER, 'and run, it replaces the installed copy with the new version');
+    return finish();
+  }
+
+  log('=== the launch after an update that could not be put in place ===');
+  const notice = await toastSaying(`Version ${LATER} could not be put in place`);
+  check(!!notice && notice.includes(`still version ${INSTALLED}`),
+    'the window says the update did not go in, and which version this still is', notice ?? '(no notice)');
+  check(db.getSetting('updateFailed', null)?.version === LATER,
+    '  that version is offered as a download from then on, not tried on every quit');
+  check(!db.getSetting('updateStaged', null) && !fs.existsSync(UPDATES), '  and what it left behind is cleared');
+  const again = await call(`gd.updates.settled()`);
+  check(again.ok && again.data === null, 'it is said once - asked again, there is nothing to say', JSON.stringify(again));
+
+  log('\n=== which releases may install themselves ===');
   const release = (over = {}) => ({
     feedUrl: OFFICIAL_FEED,
     downloadUrl: fileUrl(`GD Suits Studio-${NEWER}-arm64.dmg`),
@@ -398,10 +536,6 @@ app.whenReady().then(async () => {
 
   /* ------------------------------------------------------------ the app */
 
-  const win = await until(() => BrowserWindow.getAllWindows()[0]);
-  const run = (js) => win.webContents.executeJavaScript(js);
-  const call = async (js) => JSON.parse(await run(`${js}.then(JSON.stringify)`));
-
   log('\n=== the first launch finds a newer version ===');
   const beforeAsked = { staged: db.getSetting('updateStaged', null), dir: fs.existsSync(UPDATES),
     installs: calls.filter((c) => c.channel === 'updates:install').length };
@@ -413,79 +547,85 @@ app.whenReady().then(async () => {
     const b = [...m.querySelectorAll('button')].map(x => x.textContent.trim());
     return JSON.stringify({ text: m.textContent, buttons: b });
   })()`).then((v) => v && JSON.parse(v)));
-  check(modal?.buttons?.includes(`Install ${NEWER}`), 'it offers to install it',
+  check(modal?.buttons?.includes(`Update to ${NEWER}`), 'it offers to update to it',
     `${JSON.stringify(modal?.buttons)} calls=${JSON.stringify(calls)}`);
-  check(modal && !modal.buttons.some((b) => b.startsWith('Download')), 'not to download it for him to install',
-    JSON.stringify(modal?.buttons));
-  const afterInstall = await run(`(async () => {
+  check(modal && !modal.buttons.some((b) => /^(Download|Install)\b/.test(b)),
+    'as one step - not a download for him to install, nor an Install that then wants a Restart', JSON.stringify(modal?.buttons));
+  check(/nothing else to do/.test(modal?.text ?? ''), 'and says there is nothing else to do');
+
+  log('\n=== one press, with a render still going ===');
+  // A record pointing outside the app's own updates folder - which only
+  // something other than this process could have written - is not what goes in.
+  db.setSetting('updateStaged', { version: NEWER, platform: 'darwin', path: TARGET, sha256: '' });
+  const renderDone = await renderUnderWay();
+  const waiting = await run(`(async () => {
     ${PAGE}
     const m = () => document.querySelector('.modal-backdrop');
-    [...m().querySelectorAll('button')].find(b => b.textContent.trim().startsWith('Install')).click();
-    for (let i = 0; i < 150 && ![...m().querySelectorAll('button')].some(b => b.textContent.trim() === 'Restart now'); i++) await wait(200);
-    const out = { buttons: [...m().querySelectorAll('button')].map(b => b.textContent.trim()), text: m().textContent };
-    [...m().querySelectorAll('button')].find(b => b.textContent.trim() === 'Later').click(); await wait(300);
-    out.closed = !document.querySelector('.modal-backdrop');
-    out.flag = document.querySelector('.update-flag')?.textContent ?? '';
-    return JSON.stringify(out);
+    [...m().querySelectorAll('button')].find(b => b.textContent.trim().startsWith('Update to')).click();
+    for (let i = 0; i < 150 && !/Waiting for a render/.test(m().textContent); i++) await wait(200);
+    return JSON.stringify({ text: m().textContent, buttons: [...m().querySelectorAll('button')].map(b => b.textContent.trim()) });
   })()`).then(JSON.parse);
-  check(afterInstall.buttons.includes('Restart now'), 'Install makes it ready, and offers to restart', JSON.stringify(afterInstall.buttons));
-  check(/next time you quit/.test(afterInstall.text), 'and says Later still installs it - when he quits');
-  check(afterInstall.closed, 'Later closes the prompt');
-  check(/ready - restart to update/.test(afterInstall.flag), 'and the corner flag says it is ready', afterInstall.flag);
-
   const record = db.getSetting('updateStaged', null);
-  check(record?.version === NEWER && record.path.startsWith(UPDATES + path.sep), 'it is made ready inside the app\'s own data folder',
-    JSON.stringify(record));
-  check(versionOf(record?.path ?? '') === NEWER, 'as the app unpacked from the image');
-  check(fs.readdirSync(DOWNLOADS).length === 0, 'and nothing is put in his Downloads folder', fs.readdirSync(DOWNLOADS).join(', '));
-  check(!fs.readdirSync(path.join(UPDATES, NEWER)).some((f) => f.endsWith('.dmg')), 'the disk image is deleted once unpacked');
+  check(/Waiting for a render or an email/.test(waiting.text),
+    'one press downloads it and makes it ready, then waits for the render to finish', waiting.text.slice(0, 300));
+  check(handed.length === 0 && quits === 0, '  handing nothing over and quitting nothing meanwhile', `${handed.length} ${quits}`);
+  check(waiting.buttons.some((b) => b.includes('Updating')) && !waiting.buttons.some((b) => /Restart|Install/.test(b)),
+    '  with no second button to press', JSON.stringify(waiting.buttons));
+  check(record?.version === NEWER && record.path.startsWith(UPDATES + path.sep),
+    'it is made ready inside the app\'s own data folder', JSON.stringify(record));
+  check(versionOf(record?.path ?? '') === NEWER, '  as the app unpacked from the image');
+  check(fs.readdirSync(DOWNLOADS).length === 0, '  with nothing put in his Downloads folder', fs.readdirSync(DOWNLOADS).join(', '));
+  check(!fs.readdirSync(path.join(UPDATES, NEWER)).some((f) => f.endsWith('.dmg')), '  and the disk image deleted once unpacked');
   check(versionOf(TARGET) === INSTALLED, 'the installed copy is not touched yet');
 
-  log('\n=== Settings, once it is ready ===');
-  const settings = await run(`(async () => {
-    ${PAGE}
-    ${OPEN_UPDATES}
-    find('Check for updates').click(); await wait(1200);
-    return JSON.stringify({
-      restart: !!find('Restart now'), install: !!find('Install'), offering: offering(),
-      text: document.querySelector('.main').textContent,
-    });
-  })()`).then(JSON.parse);
-  check(settings.restart && !settings.install && !settings.offering, 'a check shows Restart now - not Install again, not a download',
-    JSON.stringify({ ...settings, text: undefined }));
-  check(/Always Allow/.test(settings.text), 'and warns that the Mac may ask for the keychain password once');
+  const rendered = await renderDone();
+  check(rendered.ok && rendered.kept === 1, 'the render finishes and is kept', JSON.stringify(rendered));
+  await until(() => handed.length > 0 && quits > 0);
+  const updateArgs = handed[0];
+  check(handed.length === 1 && updateArgs?.[1] === installer.MAC_HELPER && updateArgs[3] === String(process.pid)
+    && updateArgs[5] === TARGET,
+    'then it hands the update to the helper, to go in once this process has gone', JSON.stringify(updateArgs?.slice(3)));
+  check(updateArgs?.[4] === record?.path, '  the copy it made ready itself, not the one planted elsewhere', updateArgs?.[4]);
+  check(updateArgs?.[6] === '1', '  and to reopen the app on the new version');
+  check(quits === 1, 'and quits - there is nothing more to press', String(quits));
+  check(!!db.getSetting('updateStaged', null)?.applying, '  noting that it was handed over');
+  const restarting = await run(`document.querySelector('.modal-backdrop')?.textContent ?? ''`);
+  check(/Restarting on the new version/.test(restarting), 'the prompt says it is restarting', restarting.slice(0, 200));
+
+  onQuit[0]({ preventDefault() {} });
+  check(handed.length === 1, 'the quit that follows does not hand it over a second time', String(handed.length));
   let r = await call(`gd.updates.install()`);
-  check(r.ok && r.data?.already === true, 'asking to install again hands back the one already ready', JSON.stringify(r));
-
-  log('\n=== quitting installs it ===');
-  check(onQuit.length === 1, 'main listens for the app quitting', String(onQuit.length));
-  onQuit[0]({ preventDefault() {} });
-  const onQuitArgs = handed.pop();
-  check(onQuitArgs?.[1] === installer.MAC_HELPER && onQuitArgs[3] === String(process.pid) && onQuitArgs[5] === TARGET,
-    'quitting hands it to the helper, to go in once this process has gone', JSON.stringify(onQuitArgs?.slice(3)));
-  check(onQuitArgs?.[6] === '0', '  without reopening the app - he chose to quit');
-  check(!!db.getSetting('updateStaged', null)?.applying, '  and notes that it was handed over');
-
-  log('\n=== Restart now ===');
-  const beforeRestart = quits;
-  r = await call(`gd.updates.restart()`);
-  const restartArgs = handed.pop();
-  check(r.ok && restartArgs?.[6] === '1' && restartArgs[5] === TARGET, 'hands it over to go in and reopen the app',
-    JSON.stringify(r.error ?? restartArgs?.slice(3)));
-  await wait(100);
-  check(quits === beforeRestart + 1, 'and quits');
-  onQuit[0]({ preventDefault() {} });
-  check(handed.length === 0, 'the quit that follows does not hand it over a second time', String(handed.length));
+  check(r.ok && r.data?.restarting && handed.length === 1 && quits === 1,
+    'nor does pressing Update again before the app has gone', JSON.stringify({ r, handed: handed.length, quits }));
 
   // The real thing, end to end: the helper main handed over, run against a
   // stand-in for this process.
   const standIn2 = realSpawn('/bin/sleep', ['30'], { stdio: 'ignore' });
-  const swapped = runHelper(restartArgs.map((a, i) => (i === 6 ? '0' : a)), { pidOverride: standIn2.pid });
+  const swapped = runHelper(updateArgs.map((a, i) => (i === 6 ? '0' : a)), { pidOverride: standIn2.pid });
   standIn2.kill();
   await swapped;
   check(versionOf(TARGET) === NEWER, 'and run, it replaces the installed copy with the new version');
   check(leftovers(INSTALL_DIR).length === 0, '  leaving nothing beside it', leftovers(INSTALL_DIR).join(', '));
   check(fs.readFileSync(path.join(UPDATES, 'install.result'), 'utf8').trim() === 'installed', '  and reports that it went in');
+
+  log('\n=== Settings ===');
+  // Reopened, as the prompt stays busy until the window goes.
+  await new Promise((resolve) => { win.webContents.once('did-finish-load', resolve); win.webContents.reload(); });
+  await wait(1500);
+  const settings = await run(`(async () => {
+    ${PAGE}
+    ${OPEN_UPDATES}
+    find('Check for updates').click(); await wait(1200);
+    return JSON.stringify({
+      update: !!find('Update to ${NEWER}'), restart: !!find('Restart now'), install: !!find('Install'), offering: offering(),
+      text: document.querySelector('.main').textContent,
+    });
+  })()`).then(JSON.parse);
+  check(settings.update && !settings.restart && !settings.install && !settings.offering,
+    `a check offers Update to ${NEWER} - one button, not Install and Restart now, not a download`,
+    JSON.stringify({ ...settings, text: undefined }));
+  check(/nothing else to do/.test(settings.text), 'and says there is nothing else to do');
+  check(/Always Allow/.test(settings.text), 'and warns that the Mac may ask for the keychain password once');
 
   log('\n=== what a page cannot do ===');
   for (const key of ['updateStaged', 'updateFailed']) {
@@ -494,11 +634,8 @@ app.whenReady().then(async () => {
     r = await call(`gd.settings.set({ key: '${key}', value: { version: '${NEWER}', platform: 'darwin', path: '/bin' } })`);
     check(!r.ok, `or write it`);
   }
-  // A record that points anywhere but the app's own updates folder is not
-  // something to install, whoever wrote it.
-  db.setSetting('updateStaged', { version: NEWER, platform: 'darwin', path: TARGET, sha256: '' });
-  r = await call(`gd.updates.restart()`);
-  check(!r.ok && handed.length === 0, 'an update outside the app\'s own folder is never handed over', JSON.stringify(r));
+  check(await run(`typeof window.gd.updates.restart`) === 'undefined',
+    'there is no restart of its own to call - the one way in is Update, which names no file');
   db.setSetting('updateStaged', null);
 
   log('\n=== releases that fall back to the download ===');
@@ -567,8 +704,5 @@ app.whenReady().then(async () => {
   // quit handlers. The record is cleared all the same.
   db.setSetting('updateStaged', null);
   app.quit = realQuit;
-
-  cleanUp();
-  log(`\n${fail === 0 ? 'ALL INSTALL CHECKS PASSED' : 'FAILED'} — ${pass} passed, ${fail} failed`);
-  app.exit(fail === 0 ? 0 : 1);
+  finish();
 }).catch((e) => { log('HARNESS FAIL', e.stack); cleanUp(); app.exit(1); });

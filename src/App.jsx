@@ -3,7 +3,7 @@ import { api } from './lib/api.js';
 import { useTheme, THEMES } from './lib/useTheme.js';
 import { useCatalog } from './lib/useCatalog.js';
 import brandLogo from './assets/logo-light.png';
-import { ToastProvider } from './components/ui.jsx';
+import { ToastProvider, useToast } from './components/ui.jsx';
 import Dashboard from './screens/Dashboard.jsx';
 import Analytics from './screens/Analytics.jsx';
 import Database from './screens/Database.jsx';
@@ -11,6 +11,27 @@ import ProjectView from './screens/ProjectView.jsx';
 import ClientFile from './screens/ClientFile.jsx';
 import Settings from './screens/Settings.jsx';
 import UpdatePrompt from './components/UpdatePrompt.jsx';
+import { settledMessage } from './lib/updates.js';
+
+/**
+ * Says once, as the window opens, whether the update handed over before the
+ * last quit went in - so "Updated to version 0.1.27" is the first thing seen
+ * after pressing Update, and a swap that failed is not mistaken for none.
+ */
+function UpdateSettled() {
+  const toast = useToast();
+  useEffect(() => {
+    // Inside the promise, so a copy without this call cannot take the window
+    // down with it - the notice is the one thing here that may be missed.
+    Promise.resolve().then(() => api.updates.settled())
+      .then((settled) => {
+        const message = settledMessage(settled);
+        if (message) toast(message.text, message.kind);
+      })
+      .catch(() => {});
+  }, [toast]);
+  return null;
+}
 
 export default function App() {
   const [route, setRoute] = useState({ name: 'dashboard' });
@@ -71,12 +92,12 @@ export default function App() {
 
   return (
     <ToastProvider>
+      <UpdateSettled />
       {launchUpdate && (
         <UpdatePrompt
           update={launchUpdate}
           platform={platform}
           onClose={() => setLaunchUpdate(null)}
-          onReady={() => setUpdateReady((cur) => (cur ? { ...cur, ready: true } : cur))}
         />
       )}
       <div className="app">
@@ -114,7 +135,7 @@ export default function App() {
             {updateReady && (
               <button className="update-flag" onClick={() => setRoute({ name: 'settings', tab: 'updates', at: Date.now() })}>
                 Version {updateReady.version}{' '}
-                {updateReady.ready ? 'ready - restart to update'
+                {updateReady.ready ? 'ready to install'
                   : updateReady.downloaded ? 'downloaded - ready to install' : 'available'}
               </button>
             )}

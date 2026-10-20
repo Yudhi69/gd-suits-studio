@@ -280,9 +280,21 @@ app.on('window-all-closed', () => {
 
 /* ------------------------------------------------------------------- IPC */
 
+/**
+ * Calls that an update must not restart the app in the middle of: a render
+ * the client's credits have already paid for, a read, an email half sent.
+ * Updating waits for every one of these to finish before it restarts.
+ */
+const UNINTERRUPTIBLE = new Set(['ai:render', 'ai:analyse', 'quote:email', 'informal:send', 'mail:send']);
+let working = 0;
+let idleWaiters = [];
+const whenIdle = () => (working === 0 ? Promise.resolve() : new Promise((resolve) => idleWaiters.push(resolve)));
+
 /** Wraps a handler so a thrown error reaches the UI as a message, not a crash. */
 function handle(channel, fn) {
+  const guarded = UNINTERRUPTIBLE.has(channel);
   ipcMain.handle(channel, async (_event, payload) => {
+    if (guarded) working++;
     try {
       return { ok: true, data: await fn(payload ?? {}) };
     } catch (err) {
@@ -290,6 +302,12 @@ function handle(channel, fn) {
         ok: false,
         error: { message: err?.message ?? String(err), code: err?.code ?? null, retryable: !!err?.retryable },
       };
+    } finally {
+      if (guarded && --working === 0) {
+        const waiting = idleWaiters;
+        idleWaiters = [];
+        for (const resolve of waiting) resolve();
+      }
     }
   });
 }
@@ -341,14 +359,32 @@ handle('projects:create', (p) => db.createProject({
   eventDate: v.str(p.eventDate, 'eventDate', 40),
   deliveryDate: v.str(p.deliveryDate, 'deliveryDate', 40),
 }));
+/**
+ * Every field a page may change on an order. Anything else is refused by
+ * name rather than dropped: "Measurements taken" and the review date were
+ * left off this gate when their columns were added, and every click and date
+ * was thrown away without a word - the switch simply sprang back.
+ */
+const PROJECT_FIELDS = new Set([
+  'title', 'event_type', 'event_other', 'event_date', 'delivery_date',
+  'consultation_date', 'measurement_date', 'first_fitting_date', 'final_fitting_date', 'review_date',
+  'status', 'quantity', 'fabric_name', 'fabric_code', 'supplier',
+  'first_appointment', 'appointment_notes', 'comments', 'lining', 'design', 'shirt', 'balance_note',
+  'form_url', 'imported_balance', 'measurements_done', 'measurement_form_received', 'form_printed',
+  'spec', 'analysis',
+]);
+
 handle('projects:update', ({ id, patch = {} }) => {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new v.ValidationError('An update needs a set of fields');
+  const unknown = Object.keys(patch).find((key) => !PROJECT_FIELDS.has(key));
+  if (unknown !== undefined) throw new v.ValidationError(`An order has no field "${String(unknown).slice(0, 40)}" to change`);
   const clean = {};
   if (patch.title !== undefined) clean.title = v.str(patch.title, 'title', 160);
   if (patch.event_type !== undefined) clean.event_type = v.str(patch.event_type, 'event type', 40);
   if (patch.event_other !== undefined) clean.event_other = v.str(patch.event_other, 'event detail', 200);
   if (patch.event_date !== undefined) clean.event_date = v.str(patch.event_date, 'event date', 40);
   if (patch.delivery_date !== undefined) clean.delivery_date = v.str(patch.delivery_date, 'delivery date', 40);
-  for (const key of ['consultation_date', 'measurement_date', 'first_fitting_date', 'final_fitting_date']) {
+  for (const key of ['consultation_date', 'measurement_date', 'first_fitting_date', 'final_fitting_date', 'review_date']) {
     if (patch[key] !== undefined) clean[key] = v.str(patch[key], key.replace(/_/g, ' '), 40);
   }
   if (patch.status !== undefined) clean.status = v.oneOf(patch.status, v.PROJECT_STATUSES, 'status');
@@ -367,6 +403,7 @@ handle('projects:update', ({ id, patch = {} }) => {
   if (patch.imported_balance !== undefined) {
     clean.imported_balance = v.num(patch.imported_balance, 'balance', { min: 0, max: 1e7 }) ?? 0;
   }
+  if (patch.measurements_done !== undefined) clean.measurements_done = patch.measurements_done ? 1 : 0;
   if (patch.measurement_form_received !== undefined) clean.measurement_form_received = patch.measurement_form_received ? 1 : 0;
   if (patch.form_printed !== undefined) clean.form_printed = patch.form_printed ? 1 : 0;
   if (patch.spec !== undefined) clean.spec = v.jsonBlob(patch.spec, 'spec');
@@ -1688,12 +1725,16 @@ handle('updates:defaultFeed', () => DEFAULT_FEED);
 /**
  * Installing in place.
  *
- * `updates:install` downloads the release into the app's own data folder -
- * not Downloads, there is nothing there for the tailor to do - and makes it
- * ready: on a Mac the app is unpacked from the disk image and checked; on
- * Windows the installer is kept as downloaded. `updates:restart` then quits
- * and puts it in place. If he quits instead, it goes in then, the way most
- * apps finish an update.
+ * One press does all of it. `updates:install` downloads the release into the
+ * app's own data folder - not Downloads, there is nothing there for the
+ * tailor to do - and makes it ready: on a Mac the app is unpacked from the
+ * disk image and checked; on Windows the installer is kept as downloaded.
+ * Then it hands it over, quits, and the new version opens in its place.
+ * It used to stop at "ready" and wait for a second press of Restart now,
+ * which read as the update not having happened.
+ *
+ * A render or an email still under way is waited for first. If he quits
+ * while it waits, the update goes in then.
  *
  * As with the download, the page only ever asks for "the update". The file,
  * where it comes from and where it goes are decided here, from the release
@@ -1753,19 +1794,9 @@ function stagedUpdate() {
   return record;
 }
 
-handle('updates:install', async () => {
-  if (!lastRelease) throw new Error('Check for updates first.');
-  if (!lastRelease.updateAvailable) throw new Error('There is no newer version to install.');
-  const blocked = installBlocked(lastRelease);
-  if (blocked) throw new Error(blocked);
-  if (downloading) throw new Error('The update is already being downloaded.');
-  if (stagedUpdate()?.version === lastRelease.version) return { version: lastRelease.version, ready: true, already: true };
-
-  const release = lastRelease;
+/** Downloads `release`, checks it, and makes it ready to go in. */
+async function makeReady(release, progress) {
   const dir = path.join(updatesDir(), release.version);
-  const progress = (p) => {
-    if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('updates:progress', p);
-  };
   // Whatever an earlier version left here is of no use now.
   fs.rmSync(updatesDir(), { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -1797,13 +1828,47 @@ handle('updates:install', async () => {
       path: ready,
       sha256: saved.sha256,
     });
-    return { version: release.version, ready: true };
+    return stagedUpdate();
   } catch (err) {
     fs.rmSync(dir, { recursive: true, force: true });
     logLine(`update ${release.version} not made ready: ${err?.code ?? ''} ${err?.detail ?? err?.message ?? err}`);
     throw err;
   } finally {
     downloading = null;
+  }
+}
+
+let updating = false;
+handle('updates:install', async () => {
+  if (!lastRelease) throw new Error('Check for updates first.');
+  if (!lastRelease.updateAvailable) throw new Error('There is no newer version to install.');
+  const blocked = installBlocked(lastRelease);
+  if (blocked) throw new Error(blocked);
+  if (updating || downloading) throw new Error('The update is already under way.');
+
+  const release = lastRelease;
+  const progress = (p) => {
+    if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('updates:progress', p);
+  };
+  updating = true;
+  try {
+    // Made ready earlier - by a version of the app that stopped there, or a
+    // restart that could not happen - it is not downloaded a second time.
+    if (stagedUpdate()?.version !== release.version) await makeReady(release, progress);
+    if (working > 0) {
+      progress({ phase: 'waiting' });
+      await whenIdle();
+    }
+    // He quit while it waited, and quitting has put it in already.
+    if (handedOver) return { version: release.version, restarting: true };
+    const staged = stagedUpdate();
+    if (staged?.version !== release.version) throw new Error('The update is no longer ready. Check for updates again.');
+    progress({ phase: 'restarting' });
+    handOver(staged, true);
+    setImmediate(() => app.quit());
+    return { version: release.version, restarting: true };
+  } finally {
+    updating = false;
   }
 });
 
@@ -1830,16 +1895,9 @@ function handOver(staged, relaunch) {
   db.setSetting('updateStaged', { ...staged, applying: Date.now() });
 }
 
-handle('updates:restart', () => {
-  const staged = stagedUpdate();
-  if (!staged) throw new Error('No update is ready to install.');
-  handOver(staged, true);
-  setImmediate(() => app.quit());
-  return { restarting: true, version: staged.version };
-});
-
-// An update made ready and not yet put in place goes in as the app quits, so
-// "Later" never means "never". A failure here must not stop the app quitting.
+// An update made ready and not yet put in place goes in as the app quits - one
+// that was waiting for a render to finish, or that could not restart the app.
+// A failure here must not stop the app quitting.
 app.on('will-quit', () => {
   if (handedOver || !started) return;
   try {
@@ -1848,6 +1906,19 @@ app.on('will-quit', () => {
   } catch (err) {
     logLine(`update not installed on quit: ${err?.message ?? err}`);
   }
+});
+
+/**
+ * What became of the update this copy handed over before it last quit, said
+ * once, as the window opens: the new version is running, or it could not be
+ * put in place and this is still the old one. Without it a failed swap looked
+ * exactly like no update at all.
+ */
+let settled = null;
+handle('updates:settled', () => {
+  const out = settled;
+  settled = null;
+  return out;
 });
 
 /**
@@ -1863,6 +1934,7 @@ function settleUpdate() {
     record, current: updater.currentVersion(), result, compare: updater.compareVersions,
   });
   if (outcome === 'installed' || outcome === 'failed') {
+    settled = { outcome, version: record.version, current: updater.currentVersion() };
     if (outcome === 'failed') {
       db.setSetting('updateFailed', { version: record.version, at: new Date().toISOString(), detail: result ?? '' });
     }

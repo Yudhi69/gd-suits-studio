@@ -49,7 +49,7 @@
     "test:installnote": "node scripts/test-install-note.js",
     "test:feedback": "cross-env DATA_DIR=.testdata/feedback electron scripts/test-feedback.js",
     "test:informal": "cross-env DATA_DIR=.testdata/informal electron scripts/test-informal.js",
-    "test:install": "cross-env DATA_DIR=.testdata/install GD_TEST_FIRST_RUN=1 electron scripts/test-install.js",
+    "test:install": "cross-env DATA_DIR=.testdata/install GD_TEST_FIRST_RUN=1 electron scripts/test-install.js && cross-env DATA_DIR=.testdata/install-quit GD_TEST_FIRST_RUN=1 GD_INSTALL_PASS=quit electron scripts/test-install.js",
     "test:placement": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-placement.js",
     "test:signing": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-signing.js"
   },
