@@ -327,9 +327,10 @@ app.whenReady().then(async () => {
   await js(`(async () => {
     const row = [...document.querySelectorAll('.db-table tbody tr')].find(r => r.textContent.includes('Sipho'));
     const cells = [...row.querySelectorAll('td')];
-    const comments = cells[17].querySelector('.db-cell');
-    comments.click(); await T.wait(200);
-    const box = cells[17].querySelector('textarea');
+    // By heading, not position: the sheet gains columns.
+    const at = [...document.querySelectorAll('.db-table thead th')].findIndex(t => t.textContent.trim() === 'Comments');
+    cells[at].querySelector('.db-cell').click(); await T.wait(200);
+    const box = cells[at].querySelector('textarea');
     T.type(box, 'Collect on Friday');
     box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }));
     await T.wait(1200);
