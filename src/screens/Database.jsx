@@ -5,7 +5,7 @@ import { quotedTotal, agreedQuote, isDraft, suitsOf } from '../lib/quote.js';
 import { sheetSummaries } from '../lib/sheet.js';
 import { prettyDate } from '../lib/informalQuote.js';
 import {
-  PROJECT_STATUSES, ALTERATION_STATUSES, EXTRA_STATUSES, isOpenStatus, statusLabel, statusPill, MEASUREMENTS,
+  PROJECT_STATUSES, ALTERATION_STATUSES, EXTRA_STATUSES, isOpenStatus, statusLabel, statusPill, MEASUREMENTS, PROCESS_DATES,
 } from '../lib/catalog.js';
 import { Spinner, useToast } from '../components/ui.jsx';
 import { toDisplay, unitShort } from '../lib/units.js';
@@ -35,6 +35,19 @@ const PROGRESS = [
   { key: 'ready_first_fitting', label: 'First fitting' },
   { key: 'alterations', label: 'Alterations' },
   { key: 'ready_final_fit', label: 'Final fitting' },
+];
+
+/**
+ * The dates an order runs to after the first appointment, named as the
+ * order's Schedule card names them. Fittings are what move most, and moving
+ * one should not mean opening each order in turn.
+ */
+const SCHEDULE = PROCESS_DATES.filter((d) => ['measurement_date', 'first_fitting_date', 'final_fitting_date'].includes(d.key));
+
+/** The two the progress tab carries beside its stages. */
+const FITTINGS = [
+  { key: 'first_fitting_date', label: 'First fitting date' },
+  { key: 'final_fitting_date', label: 'Final fitting date' },
 ];
 
 const PAGE = 200;
@@ -118,19 +131,20 @@ export default function Database({ steps, overrides, onOpenProject, unit = 'cm' 
       return [
         ['REF', 'CLIENT', 'EVENT DATE', 'FABRIC', 'CODE / COLOUR', 'DESIGN', 'LINING', 'QUANTITY', 'SHIRT', 'BALANCE DUE',
           'MEASUREMENT FORM', 'FORM PRINTED', 'QUOTED', 'CONTACT DETAILS', 'EMAIL', 'APPOINTMENT NOTES', 'FIRST APPOINTMENT',
-          'COMMENTS', 'STATUS'],
+          ...SCHEDULE.map((d) => d.label.toUpperCase()), 'COMMENTS', 'STATUS'],
         ...shownOrders.map((o) => [
           o.order_ref, o.client, o.event_date, o.fabric_name, o.fabric_code, o.designShown, o.liningShown, o.suit_count,
           o.shirtShown, o.balance, o.measurement_form_received ? 'YES' : '', o.form_printed ? 'YES' : '', o.quoted,
-          o.contact, o.email, o.appointment_notes, o.firstAppointment, o.comments, statusLabel(o.status),
+          o.contact, o.email, o.appointment_notes, o.firstAppointment, ...SCHEDULE.map((d) => o[d.key]), o.comments,
+          statusLabel(o.status),
         ]),
       ];
     }
     if (tab === 'progress') {
       return [
-        ['CLIENT', 'QUANTITY', ...PROGRESS.map((p) => p.label.toUpperCase())],
+        ['CLIENT', 'QUANTITY', ...PROGRESS.map((p) => p.label.toUpperCase()), ...FITTINGS.map((d) => d.label.toUpperCase())],
         ...orders.filter((o) => isOpenStatus(o.status)).filter((o) => hit(o.client, o.order_ref))
-          .map((o) => [o.client, o.suit_count, ...PROGRESS.map((p) => (o.status === p.key ? 'X' : ''))]),
+          .map((o) => [o.client, o.suit_count, ...PROGRESS.map((p) => (o.status === p.key ? 'X' : '')), ...FITTINGS.map((d) => o[d.key])]),
       ];
     }
     if (tab === 'alterations') {
@@ -194,7 +208,8 @@ export default function Database({ steps, overrides, onOpenProject, unit = 'cm' 
           ))}
         </div>
         <p className="tiny faint" style={{ margin: '0 0 12px' }}>
-          Click any cell to change it - it changes the order itself. Grey text is worked out from the order&apos;s
+          Click any cell to change it - it changes the order itself, so a fitting date moved here is moved on the
+          order&apos;s Schedule too. Clear a date to take it off. Grey text is worked out from the order&apos;s
           specification; typing over it keeps your own words instead. Quoted, balance and quantity are worked out
           from the order and are changed there.
         </p>
@@ -208,7 +223,9 @@ export default function Database({ steps, overrides, onOpenProject, unit = 'cm' 
                     <th>Ref</th><th>Client</th><th>Event date</th><th>Fabric</th><th>Code / colour</th><th>Design</th>
                     <th>Lining</th><th>Qty</th><th>Shirt</th><th className="num">Balance due</th><th>Form</th>
                     <th>Printed</th><th className="num">Quoted</th><th>Contact</th><th>Email</th>
-                    <th>Appointment notes</th><th>First appointment</th><th>Comments</th><th>Status</th>
+                    <th>Appointment notes</th><th>First appointment</th>
+                    {SCHEDULE.map((d) => <th key={d.key}>{d.label}</th>)}
+                    <th>Comments</th><th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -233,6 +250,9 @@ export default function Database({ steps, overrides, onOpenProject, unit = 'cm' 
                       <td><Cell value={o.email} onSave={(v) => patchClient(o, { email: v })} /></td>
                       <td className="wide-cell"><Cell value={o.appointment_notes} multiline onSave={(v) => patchProject(o, { appointment_notes: v })} /></td>
                       <td><Cell value={o.firstAppointment} type="date" onSave={(v) => patchProject(o, { consultation_date: v })} /></td>
+                      {SCHEDULE.map((d) => (
+                        <td key={d.key}><Cell value={o[d.key]} type="date" onSave={(v) => patchProject(o, { [d.key]: v })} /></td>
+                      ))}
                       <td className="wide-cell"><Cell value={o.comments} multiline onSave={(v) => patchProject(o, { comments: v })} /></td>
                       <td>
                         <select className="select select-sm" value={o.status} aria-label="Status" onChange={(e) => setStatus(o, e.target.value)}>
@@ -248,7 +268,8 @@ export default function Database({ steps, overrides, onOpenProject, unit = 'cm' 
             {tab === 'progress' && (
               <table className="table db-table">
                 <thead>
-                  <tr><th>Client</th><th className="num">Qty</th>{PROGRESS.map((p) => <th key={p.key} className="center-cell">{p.label}</th>)}<th>Now</th></tr>
+                  <tr><th>Client</th><th className="num">Qty</th>{PROGRESS.map((p) => <th key={p.key} className="center-cell">{p.label}</th>)}<th>Now</th>
+                    {FITTINGS.map((d) => <th key={d.key}>{d.label}</th>)}</tr>
                 </thead>
                 <tbody>
                   {orders.filter((o) => isOpenStatus(o.status)).filter((o) => hit(o.client, o.order_ref)).slice(0, limit).map((o) => (
@@ -268,6 +289,9 @@ export default function Database({ steps, overrides, onOpenProject, unit = 'cm' 
                         </td>
                       ))}
                       <td><span className={`pill ${statusPill(o.status)}`}>{statusLabel(o.status)}</span></td>
+                      {FITTINGS.map((d) => (
+                        <td key={d.key}><Cell value={o[d.key]} type="date" onSave={(v) => patchProject(o, { [d.key]: v })} /></td>
+                      ))}
                     </tr>
                   ))}
                 </tbody>

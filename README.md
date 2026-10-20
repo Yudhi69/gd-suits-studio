@@ -205,6 +205,9 @@ it moves the figure back, unless someone has changed it since.
 Completed, Suit progress, Alterations, Extras) and columns, editable in place.
 DESIGN/LINING/SHIRT are worked out from the spec unless free text has been
 written over them; quoted, balance and quantity are derived and read-only.
+The measurement and fitting dates are cells too (Current orders, and the two
+fittings on Suit progress), so a fitting that moves is moved here without
+opening the order; it is the same date the order's Schedule card shows.
 Export writes the tab as CSV for Excel.
 
 **Export.** Writes the whole client file to a folder — JSON, every photo and
@@ -422,6 +425,7 @@ npm run test:migrations # every historical schema version upgrades without data 
 npm run test:render   # drives the whole render pipeline with the network stubbed
 npm run test:tour     # boots the UI, walks every step, writes screenshots
 npm run test:feedback # GD's October notes, end to end in the running app
+npm run test:dates    # moving an order's dates from the Database screen
 ```
 
 Run the suites from a plain terminal. A shell inside VS Code (or any Electron
