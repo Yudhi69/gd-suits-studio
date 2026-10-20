@@ -3,10 +3,10 @@
  *
  * Fittings are the dates that move most, and GD should not have to open the
  * database itself to move one. The workbook's Current orders and Suit
- * progress tabs carry the measurement and fitting dates as cells; changing
- * one changes the order, which its own Schedule card and the export then
- * show. Nothing leaves the machine: the save dialog writes into a temporary
- * folder.
+ * progress tabs carry the measurement, fitting and review dates as cells;
+ * changing one changes the order, which its own Schedule card and the export
+ * then show. Nothing leaves the machine: the save dialog writes into a
+ * temporary folder.
  */
 const { app, BrowserWindow, dialog } = require('electron');
 const fs = require('fs');
@@ -74,7 +74,7 @@ app.whenReady().then(async () => {
   });
   db.updateProject(sipho, {
     consultation_date: '2026-10-01', measurement_date: '2026-10-08',
-    first_fitting_date: '2026-11-14', final_fitting_date: '2027-01-16', comments: 'Navy',
+    first_fitting_date: '2026-11-14', final_fitting_date: '2027-01-16', review_date: '2027-02-13', comments: 'Navy',
   });
   const thabo = db.createProject({
     clientId: db.upsertClient({ name: 'Thabo', surname: 'Mokoena', contact: '', email: '' }),
@@ -90,15 +90,16 @@ app.whenReady().then(async () => {
     await T.sheet();
     return JSON.stringify({
       heads: T.heads(),
-      shown: ['Measurement date', 'First fitting', 'Final fitting & delivery'].map(h => T.shows('Sipho', h)),
+      shown: ['Measurement date', 'First fitting', 'Final fitting & delivery', 'Review date'].map(h => T.shows('Sipho', h)),
     });
   `));
   const at = (h) => sheet.heads.indexOf(h);
   check(sheet.heads.includes('Comments') && at('Measurement date') === at('First appointment') + 1
-    && at('First fitting') === at('First appointment') + 2 && at('Final fitting & delivery') === at('First appointment') + 3,
-  'the sheet has the measurement and fitting dates, after the first appointment, named as the order\'s Schedule names them',
+    && at('First fitting') === at('First appointment') + 2 && at('Final fitting & delivery') === at('First appointment') + 3
+    && at('Review date') === at('First appointment') + 4,
+  'the sheet has the measurement, fitting and review dates, after the first appointment, named as the order\'s Schedule names them',
   sheet.heads.join(' | '));
-  check(JSON.stringify(sheet.shown) === JSON.stringify(['8 Oct 2026', '14 Nov 2026', '16 Jan 2027']),
+  check(JSON.stringify(sheet.shown) === JSON.stringify(['8 Oct 2026', '14 Nov 2026', '16 Jan 2027', '13 Feb 2027']),
     'and shows the dates the order holds', JSON.stringify(sheet.shown));
 
   const moved = await page(`return T.set('Sipho', 'First fitting', '2026-11-21');`);
@@ -107,7 +108,8 @@ app.whenReady().then(async () => {
     JSON.stringify({ moved, stored: afterMove.first_fitting_date }));
   check(await page(`return T.shows('Sipho', 'First fitting');`) === '21 Nov 2026', '  and the sheet reads it back');
   check(afterMove.final_fitting_date === '2027-01-16' && afterMove.measurement_date === '2026-10-08'
-    && afterMove.consultation_date === '2026-10-01' && afterMove.comments === 'Navy' && afterMove.status === siphoBefore.status,
+    && afterMove.consultation_date === '2026-10-01' && afterMove.review_date === '2027-02-13'
+    && afterMove.comments === 'Navy' && afterMove.status === siphoBefore.status,
   '  and nothing else on the order changes', JSON.stringify(afterMove));
   const thaboNow = db.getProject(thabo);
   check(thaboNow.first_fitting_date === '2026-12-05' && thaboNow.final_fitting_date === '2026-12-19'
@@ -121,6 +123,13 @@ app.whenReady().then(async () => {
   check(db.getProject(sipho).final_fitting_date === '2027-01-16', 'Escape leaves the date as it was',
     db.getProject(sipho).final_fitting_date);
 
+  // The review date goes through the same gate as the others; until the gate
+  // listed it, it was dropped on the way to the database.
+  await page(`return T.set('Sipho', 'Review date', '2027-02-20');`);
+  check(db.getProject(sipho).review_date === '2027-02-20', 'the review date moves from the sheet too',
+    JSON.stringify(db.getProject(sipho).review_date));
+  check(await page(`return T.shows('Sipho', 'Review date');`) === '20 Feb 2027', '  and the sheet reads it back');
+
   log('\n=== the order shows the date that was moved ===');
   await reload();
   const schedule = JSON.parse(await page(`
@@ -129,9 +138,10 @@ app.whenReady().then(async () => {
     [...document.querySelectorAll('.step-tab')].find(t => t.textContent.includes('Client')).click(); await T.wait(900);
     const card = [...document.querySelectorAll('.card')].find(c => c.querySelector('h3')?.textContent === 'Schedule');
     const value = (name) => [...(card?.querySelectorAll('.field') ?? [])].find(f => f.querySelector('label')?.textContent === name)?.querySelector('input')?.value ?? null;
-    return JSON.stringify({ first: value('First fitting'), measured: value('Measurement date'), last: value('Final fitting & delivery') });
+    return JSON.stringify({ first: value('First fitting'), measured: value('Measurement date'), last: value('Final fitting & delivery'), review: value('Review date') });
   `));
-  check(schedule.first === '2026-11-21' && schedule.measured === '' && schedule.last === '2027-01-16',
+  check(schedule.first === '2026-11-21' && schedule.measured === '' && schedule.last === '2027-01-16'
+    && schedule.review === '2027-02-20',
     'the order\'s Schedule card has the dates as the sheet left them', JSON.stringify(schedule));
 
   log('\n=== Suit progress ===');
@@ -165,10 +175,10 @@ app.whenReady().then(async () => {
     return files.length === 1 ? fs.readFileSync(path.join(OUT, files[0]), 'utf8').replace(/^﻿/, '').split(/\r?\n/) : [];
   };
   const current = await exported('Current orders');
-  check(/,FIRST APPOINTMENT,MEASUREMENT DATE,FIRST FITTING,FINAL FITTING & DELIVERY,COMMENTS,/.test(current[0] ?? ''),
+  check(/,FIRST APPOINTMENT,MEASUREMENT DATE,FIRST FITTING,FINAL FITTING & DELIVERY,REVIEW DATE,COMMENTS,/.test(current[0] ?? ''),
     'the Current orders export has the dates under their own headings', current[0]);
   const siphoLine = current.find((l) => l.includes('Sipho')) ?? '';
-  check(/,2026-10-01,,2026-11-21,2027-01-16,Navy,/.test(siphoLine), '  as the order now stands', siphoLine);
+  check(/,2026-10-01,,2026-11-21,2027-01-16,2027-02-20,Navy,/.test(siphoLine), '  as the order now stands', siphoLine);
   const progressRows = await exported('Suit progress');
   check(/,FIRST FITTING DATE,FINAL FITTING DATE$/.test(progressRows[0] ?? ''), 'and so does the Suit progress export',
     progressRows[0]);
