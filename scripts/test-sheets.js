@@ -71,6 +71,7 @@ const fake = {
   books: new Map(),
   valueInputs: [],
   requests: [],         // the structural requests of every :batchUpdate
+  duringRead: null,     // run once while Google answers a read of the tabs
 };
 
 const json = (status, body) => new Response(JSON.stringify(body), {
@@ -129,7 +130,12 @@ function sheetsEndpoint(method, path, body) {
   if (!book) return json(404, { error: { code: 404, message: 'Requested entity was not found.' } });
   const find = (title) => book.tabs.find((t) => t.title === title);
 
-  if (method === 'GET' && !m[2]) return json(200, { sheets: book.tabs.map(tabMeta) });
+  if (method === 'GET' && !m[2]) {
+    const during = fake.duringRead;
+    fake.duringRead = null;
+    during?.();
+    return json(200, { sheets: book.tabs.map(tabMeta) });
+  }
 
   if (m[2] === ':batchUpdate') {
     fake.requests.push(...body.requests);
@@ -412,6 +418,17 @@ app.whenReady().then(async () => {
     && rowsOf('Clients').length === 42, '  which is made, kept and filled', JSON.stringify(r.error));
 
   log('\n=== switched off, nothing goes ===');
+  // GD switches sending off while a write is under way: the read has gone,
+  // the rows have not, and they do not go after it.
+  fake.duringRead = () => {
+    const stored = db.getSetting('integrations', {});
+    db.setSetting('integrations', { ...stored, consent: false });
+  };
+  before = fake.calls.length;
+  r = await call('sheets.write');
+  const halfway = fake.calls.slice(before).map((c) => `${c.method} ${c.path.replace(/^\/v4\/spreadsheets\/[^/:]+/, '')}`);
+  check(/switched off/.test(r.error ?? '') && halfway.length === 1 && halfway[0] === 'GET ',
+    'switched off half way through a write, the rest is not sent', JSON.stringify({ error: r.error, halfway }));
   await call('connections.set', { consent: false });
   before = fake.calls.length;
   await call('clients.patch', { id: thabo, patch: { name: 'Thabo5' } });
