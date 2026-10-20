@@ -134,7 +134,11 @@ app.whenReady().then(async () => {
     'mail',
     'measurements', 'media', 'mediaUrl', 'members', 'notes', 'payments', 'photos',
     'projectMedia', 'project', 'projects', 'quote', 'references', 'renders',
-    'secrets', 'settings', 'suits', 'updates',
+    'secrets', 'settings',
+    // The Google spreadsheet copy: make, write and open the one the app made.
+    // The page names no spreadsheet and never sees the account token.
+    'sheets',
+    'suits', 'updates',
   ].sort();
   const extra = results.bridge.filter((k) => !DECLARED.includes(k));
   const missing = DECLARED.filter((k) => !results.bridge.includes(k));
