@@ -4,6 +4,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const Database = require('better-sqlite3');
+const dateMoves = require('./dateMoves');
 
 let db = null;
 
@@ -689,6 +690,39 @@ const MIGRATIONS = [
       ALTER TABLE projects ADD COLUMN informal_quote_json TEXT NOT NULL DEFAULT '';
     `);
   },
+
+  /* v20 - when a date moves.
+
+     A reminder was recorded per rule and order, so once GD had opened it, it
+     was never offered again - even after the fitting it was about had moved
+     to another day. Each record now keeps the date it was sent for. Nothing
+     recorded before this kept one, so those are taken to have been sent for
+     the date the order holds now: the nearest thing to what was sent, and
+     it offers nothing again that is not already offered today.
+
+     And a note the app writes itself - "First fitting moved from ... to ..."
+     - keeps what it says in a form the app can read back, so a date nudged
+     twice in a minute reads as one move rather than two. */
+  (d) => {
+    d.exec(`
+      ALTER TABLE mail_sent ADD COLUMN anchor_date TEXT NOT NULL DEFAULT '';
+      UPDATE mail_sent SET anchor_date = COALESCE((
+        SELECT substr(CASE r.anchor
+                        WHEN 'event_date'         THEN p.event_date
+                        WHEN 'consultation_date'  THEN p.consultation_date
+                        WHEN 'measurement_date'   THEN p.measurement_date
+                        WHEN 'first_fitting_date' THEN p.first_fitting_date
+                        WHEN 'final_fitting_date' THEN p.final_fitting_date
+                        WHEN 'delivery_date'      THEN p.delivery_date
+                        WHEN 'review_date'        THEN p.review_date
+                      END, 1, 10)
+          FROM mail_rules r, projects p
+         WHERE r.id = mail_sent.rule_id AND p.id = mail_sent.project_id
+      ), '');
+
+      ALTER TABLE notes ADD COLUMN meta_json TEXT NOT NULL DEFAULT '';
+    `);
+  },
 ];
 
 function open(userDataPath) {
@@ -1155,6 +1189,64 @@ function updateProject(id, patch) {
   d.prepare(`UPDATE projects SET ${sets.join(', ')}, updated_at = @updated_at WHERE id = @id`).run(params);
 }
 
+// How long a date can keep being corrected and still count as one move.
+const MOVE_WINDOW = '-10 minutes';
+
+/**
+ * An edit to an order from one of its pages.
+ *
+ * The same as updateProject, except that a date which moves is followed
+ * through: the old date in the imported appointment notes is rewritten, and
+ * the move is written to the order's notes. In one transaction, so the order
+ * never says one date while its notes say another. The workbook import calls
+ * updateProject directly and records nothing - it is not a move.
+ */
+function editProject(id, patch) {
+  return tx(() => {
+    const before = get().prepare('SELECT * FROM projects WHERE id = ?').get(id);
+    if (!before) return updateProject(id, patch);
+    const planned = dateMoves.plan(before, patch);
+    updateProject(id, planned.patch);
+    for (const change of planned.changes) recordMove(id, change);
+  });
+}
+
+/**
+ * Writes one move to the order's notes.
+ *
+ * A date set for the first time is not a move. A date corrected again within
+ * a few minutes is the same move finishing, not a second one: the note is
+ * rewritten to run from where the date started, and dropped if it ends up
+ * back there.
+ */
+function recordMove(projectId, move) {
+  const d = get();
+  const earlier = d
+    .prepare(
+      `SELECT id, meta_json FROM notes
+        WHERE project_id = ? AND author = 'app' AND created_at >= datetime('now', '${MOVE_WINDOW}')
+        ORDER BY id DESC`
+    )
+    .all(projectId)
+    .map((n) => {
+      try { return { id: n.id, meta: n.meta_json ? JSON.parse(n.meta_json) : null }; } catch { return { id: n.id, meta: null }; }
+    })
+    .find((n) => n.meta?.date === move.key);
+  const from = earlier ? String(earlier.meta.from ?? '') : move.from;
+  if (from === move.to || !from) {
+    if (earlier) d.prepare('DELETE FROM notes WHERE id = ?').run(earlier.id);
+    return;
+  }
+  const body = dateMoves.describe({ ...move, from });
+  const meta = JSON.stringify({ date: move.key, from, to: move.to });
+  if (earlier) {
+    d.prepare('UPDATE notes SET body = ?, meta_json = ? WHERE id = ?').run(body, meta, earlier.id);
+  } else {
+    d.prepare(`INSERT INTO notes (project_id, step, body, author, meta_json) VALUES (?, 'client', ?, 'app', ?)`)
+      .run(projectId, body, meta);
+  }
+}
+
 /**
  * Freezes the agreed figures onto the order. Passing null clears them, which
  * is what happens when a tailor deliberately re-quotes.
@@ -1319,15 +1411,20 @@ function deleteMailRule(id) {
   get().prepare('DELETE FROM mail_rules WHERE id = ?').run(id);
 }
 
-function markMailSent(ruleId, projectId) {
+/** Records a reminder as sent, and the date it was sent for. */
+function markMailSent(ruleId, projectId, anchorDate = '') {
   get()
-    .prepare(`INSERT OR REPLACE INTO mail_sent (rule_id, project_id, sent_at) VALUES (?, ?, datetime('now'))`)
-    .run(ruleId, projectId);
+    .prepare(
+      `INSERT OR REPLACE INTO mail_sent (rule_id, project_id, anchor_date, sent_at)
+       VALUES (?, ?, ?, datetime('now'))`
+    )
+    .run(ruleId, projectId, String(anchorDate ?? ''));
 }
 
 /**
- * The orders a rule could apply to: open, with an email address, and not
- * already sent this rule.
+ * The orders a rule could apply to: open, with an email address. Each says
+ * whether this rule was already sent for it, and for which date (`sent_for`,
+ * null if never) - one sent for a date that has since moved is due again.
  *
  * Whether each is actually *due* is decided against the dates by mailRules,
  * which is where the arithmetic lives. This only narrows the field, and it
@@ -1339,12 +1436,13 @@ function mailCandidates(ruleId) {
       `SELECT p.id, p.order_ref, p.client_id, p.status, p.event_date, p.delivery_date,
               p.consultation_date, p.measurement_date, p.first_fitting_date,
               p.final_fitting_date, p.review_date,
-              c.name, c.surname, c.email
+              c.name, c.surname, c.email,
+              m.anchor_date AS sent_for, m.sent_at
          FROM projects p
          JOIN clients  c ON c.id = p.client_id
+         LEFT JOIN mail_sent m ON m.rule_id = ? AND m.project_id = p.id
         WHERE p.status NOT IN ${DONE_SQL}
           AND COALESCE(c.email, '') <> ''
-          AND NOT EXISTS (SELECT 1 FROM mail_sent m WHERE m.rule_id = ? AND m.project_id = p.id)
         ORDER BY p.event_date`
     )
     .all(ruleId);
@@ -2099,7 +2197,7 @@ module.exports = {
   addReference, listReferences, getReference, updateReference, deleteReference,
   linkRenderRefs, styleHistory,
   saveClientMeasurement, listClientMeasurements, seedMeasurementsFromClient,
-  listProjects, getProject, createProject, updateProject, deleteProject, setQuote, setInformalQuote,
+  listProjects, getProject, createProject, updateProject, editProject, deleteProject, setQuote, setInformalQuote,
   addPayment, updatePayment, deletePayment,
   addAlteration, updateAlteration, deleteAlteration,
   addOrderExtra, updateOrderExtra, deleteOrderExtra,

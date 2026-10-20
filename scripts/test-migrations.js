@@ -137,6 +137,35 @@ log('\n=== v19 moves the order page\'s first appointment into the schedule ===')
   db.open(dir);
 }
 
+// ---- v20: a reminder knows the date it was sent for ----
+log('\n=== v20 records the date each sent reminder was for ===');
+{
+  const vdir = path.join(root, 'v20-reminders');
+  const raw = makeDbAt(19, vdir);
+  seedV1(raw);
+  raw.prepare("UPDATE projects SET first_fitting_date = '2026-11-21' WHERE id = 1").run();
+  raw.prepare("INSERT INTO projects (client_id, title, event_date) VALUES (1, 'No fitting yet', '2027-03-06')").run();
+  raw.prepare("INSERT INTO mail_rules (id, name, anchor, offset_days) VALUES (1, 'Fitting', 'first_fitting_date', -7)").run();
+  raw.prepare("INSERT INTO mail_rules (id, name, anchor, offset_days) VALUES (2, 'Event', 'event_date', -7)").run();
+  for (const [rule, project] of [[1, 1], [2, 1], [1, 2]]) {
+    raw.prepare('INSERT INTO mail_sent (rule_id, project_id) VALUES (?, ?)').run(rule, project);
+  }
+  raw.close();
+  db.open(vdir);
+  const probe = new Database(path.join(vdir, 'data', 'gdsuits.db'));
+  const sentFor = (rule, project) => probe.prepare('SELECT anchor_date d FROM mail_sent WHERE rule_id = ? AND project_id = ?').get(rule, project)?.d;
+  check(sentFor(1, 1) === '2026-11-21' && sentFor(2, 1) === '2026-11-14',
+    'a reminder sent before is taken as sent for the date its rule counts from now',
+    JSON.stringify([sentFor(1, 1), sentFor(2, 1)]));
+  check(sentFor(1, 2) === '', 'and one whose order has no such date records none', JSON.stringify(sentFor(1, 2)));
+  check(probe.prepare('SELECT COUNT(*) n FROM mail_sent').get().n === 3, 'no record is lost');
+  check(probe.prepare('PRAGMA table_info(notes)').all().some((c) => c.name === 'meta_json')
+    && probe.prepare("SELECT meta_json m FROM notes WHERE body = 'Bolder peak lapel.'").get()?.m === '',
+  'notes can carry what the app wrote them for, and a tailor\'s note carries nothing');
+  probe.close();
+  db.open(dir);
+}
+
 // ---- re-opening is a no-op ----
 log('\n=== re-opening an up-to-date database changes nothing ===');
 const before = fs.statSync(path.join(dir, 'data', 'gdsuits.db')).size;

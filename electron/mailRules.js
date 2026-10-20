@@ -88,15 +88,25 @@ function describe(rule) {
   return `${unit} ${r.offsetDays < 0 ? 'before' : 'after'} ${anchor}`;
 }
 
+/**
+ * The order's date a rule counts from, as stored, or ''.
+ *
+ * This is also what a sent reminder records it was sent for: when the date
+ * moves, the reminder is about a different day and is offered again.
+ */
+function anchorDate(rule, project) {
+  return String(project?.[normalise(rule).anchor] ?? '').slice(0, 10);
+}
+
 /** The day a rule falls due for an order, as YYYY-MM-DD, or null. */
 function dueOn(rule, project) {
   const r = normalise(rule);
-  const anchorDate = String(project?.[r.anchor] ?? '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(anchorDate)) return null;
+  const from = anchorDate(r, project);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) return null;
   // Built in UTC on purpose. A date on an order is a day, not a moment, and
   // constructing it locally would slide it either side of midnight depending
   // on where the machine thinks it is.
-  const at = new Date(`${anchorDate}T00:00:00Z`);
+  const at = new Date(`${from}T00:00:00Z`);
   if (Number.isNaN(at.getTime())) return null;
   at.setUTCDate(at.getUTCDate() + r.offsetDays);
   return at.toISOString().slice(0, 10);
@@ -119,5 +129,5 @@ function covers(rule, clientId, picked = []) {
 module.exports = {
   ANCHORS, ANCHOR_KEYS, AUDIENCES, AUDIENCE_KEYS,
   DEFAULT_BODY, DEFAULT_SUBJECT, MAX_OFFSET_DAYS,
-  normalise, describe, dueOn, covers,
+  normalise, describe, anchorDate, dueOn, covers,
 };
