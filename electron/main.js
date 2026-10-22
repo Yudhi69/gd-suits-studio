@@ -1319,7 +1319,8 @@ function recordSent(project, { via, to, sent, pictures = 0 }) {
 handle('informal:send', async ({ projectId, via, text, subject, lines, basis, pictures }) => {
   const project = orderFor(projectId);
   const channel = v.oneOf(via, ['whatsapp', 'email'], 'how to send');
-  const body = v.str(text, 'message', 12000).trim();
+  // Long enough for a wedding party's figures and every suit's choices.
+  const body = v.str(text, 'message', 32000).trim();
   if (!body) throw new v.ValidationError('There is nothing to send yet.');
   const sent = informal.figures(lines, basis);
   const who = informal.recipientOf(project);
@@ -1329,8 +1330,13 @@ handle('informal:send', async ({ projectId, via, text, subject, lines, basis, pi
     // No usable number on file still works: WhatsApp opens and asks who to
     // send it to, with the message already written.
     const number = informal.whatsappNumber(who.phone, shop().whatsappCountryCode);
-    if (!security.openExternalSafely(informal.whatsappUrl(number, body))) throw new Error('Could not open WhatsApp.');
-    result = { via: 'whatsapp', to: number ? `+${number}` : '', opened: true, attached: 0 };
+    // A message too long to travel in a link goes on the clipboard instead,
+    // and WhatsApp opens on the chat for it to be pasted.
+    const url = informal.whatsappUrl(number, body);
+    const copied = url.length > informal.WHATSAPP_URL_MAX;
+    if (copied) clipboard.writeText(body);
+    if (!security.openExternalSafely(copied ? informal.whatsappUrl(number, '') : url)) throw new Error('Could not open WhatsApp.');
+    result = { via: 'whatsapp', to: number ? `+${number}` : '', opened: true, attached: 0, copied };
   } else {
     if (!who.email) {
       throw new Error(who.guardian
@@ -1371,7 +1377,7 @@ handle('informal:send', async ({ projectId, via, text, subject, lines, basis, pi
 handle('informal:copy', ({ projectId, text, lines, basis }) => {
   const project = orderFor(projectId);
   const sent = informal.figures(lines, basis);
-  clipboard.writeText(v.str(text, 'message', 12000));
+  clipboard.writeText(v.str(text, 'message', 32000));
   recordSent(project, { via: 'copied', to: '', sent });
   return { copied: true, total: sent.total };
 });

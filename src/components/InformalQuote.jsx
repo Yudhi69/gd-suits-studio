@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api, messageFor, projectMedia } from '../lib/api.js';
-import { formatMoney } from '../lib/pricing.js';
+import { formatMoney, priceGrid } from '../lib/pricing.js';
 import { orderBreakdown, basisOf, sentFigures, suitsOf } from '../lib/quote.js';
 import {
-  informalQuote, quoteMessage, quoteSubject, prettyDate, startingFigures, figuresFrom,
+  informalQuote, quoteMessage, quoteSubject, prettyDate, startingFigures, figuresFrom, alternativeFor, isAdded,
 } from '../lib/informalQuote.js';
 import { Banner, Modal, Spinner, useToast } from './ui.jsx';
 
@@ -28,6 +28,7 @@ export function InformalQuoteModal({ project, overrides, steps, business, custom
   const [amounts, setAmounts] = useState(start.amounts);
   const [added, setAdded] = useState(start.added);
   const [attach, setAttach] = useState(true);
+  const [compare, setCompare] = useState([]);
 
   useEffect(() => {
     api.informal.preview({ projectId: project.id }).then(setPreview).catch(() => setPreview({ pictures: [] }));
@@ -35,7 +36,13 @@ export function InformalQuoteModal({ project, overrides, steps, business, custom
   }, [project.id]);
 
   const figures = figuresFrom(list, amounts, added);
-  const payload = informalQuote({ order: project, figures, business: shop ?? {}, customOptions });
+  const addedTotal = figures.lines.filter(isAdded).reduce((t, l) => t + l.amount, 0);
+  const options = useMemo(() => comparisons(project, overrides, steps), [project, overrides, steps]);
+  const alternatives = options
+    .filter((o) => compare.includes(o.id))
+    .map((o) => ({ label: o.label, total: alternativeFor(project, o.change, overrides, steps, addedTotal).total }));
+  const payload = informalQuote({ order: project, figures, business: shop ?? {}, customOptions, steps, alternatives });
+  const unpriced = list.lines.filter((l) => l.unpriced);
   const pictures = preview?.pictures ?? [];
   const withPictures = attach && pictures.length > 0;
   const emailText = quoteMessage(payload, { renders: withPictures ? preview.rendersLine : '' });
@@ -77,7 +84,9 @@ export function InformalQuoteModal({ project, overrides, steps, business, custom
 
   const sendWhatsapp = () => run('whatsapp', () => api.informal.send({
     projectId: project.id, via: 'whatsapp', text: plainText, subject, ...figuresArg,
-  }), () => 'WhatsApp opened with the message - press send there');
+  }), (r) => (r.copied
+    ? 'WhatsApp opened - the message is too long for a link, so it is copied: paste it there and send'
+    : 'WhatsApp opened with the message - press send there'));
 
   const copy = () => run('copy', () => api.informal.copy({ projectId: project.id, text: plainText, ...figuresArg }),
     () => 'Message copied - paste it wherever you like');
@@ -120,6 +129,12 @@ export function InformalQuoteModal({ project, overrides, steps, business, custom
         </div>
 
         {empty && <Banner kind="warn">Nothing is chosen for this order yet - pick the base garment first.</Banner>}
+        {unpriced.length > 0 && (
+          <Banner kind="warn">
+            {[...new Set(unpriced.map((l) => l.label))].join(', ')}: this quality has no price for this suit type yet, so it is
+            shown at the suit type&apos;s own price. Set it in Settings &gt; Price list, or change the figure below.
+          </Banner>
+        )}
 
         {!empty && (
           <div className="informal-figures">
@@ -195,6 +210,15 @@ export function InformalQuoteModal({ project, overrides, steps, business, custom
           </div>
         )}
 
+        {!empty && options.length > 0 && (
+          <Compare
+            options={options}
+            chosen={compare}
+            onChange={setCompare}
+            totalOf={(o) => alternativeFor(project, o.change, overrides, steps, addedTotal)}
+          />
+        )}
+
         <div>
           <div className="price-line"><span className="muted">Subject</span><span className="small">{subject}</span></div>
           <div className="note informal-message">{emailText}</div>
@@ -203,7 +227,7 @@ export function InformalQuoteModal({ project, overrides, steps, business, custom
         {pictures.length > 0 ? (
           <div>
             <label className="inline small" style={{ cursor: 'pointer' }}>
-              <input type="checkbox" checked={attach} onChange={(e) => setAttach(e.target.checked)} />
+              <input type="checkbox" className="informal-attach" checked={attach} onChange={(e) => setAttach(e.target.checked)} />
               Attach the renders - {pictures.length} picture{pictures.length === 1 ? '' : 's'}, with the GD Suits badge
             </label>
             {attach && (
@@ -246,9 +270,85 @@ export function InformalQuoteModal({ project, overrides, steps, business, custom
   );
 }
 
+/**
+ * The other qualities and suit types the order could be priced in, for a
+ * client weighing them up. A party's suits are not all one type, so there it
+ * is each suit as chosen in another quality; one suit can change type too.
+ */
+function comparisons(project, overrides, steps) {
+  const grid = priceGrid(steps, overrides);
+  if (!grid) return [];
+  const suits = suitsOf(project);
+  const qualityKey = grid.field.id;
+  const one = suits.length === 1 ? suits[0].spec ?? {} : null;
+  const out = [];
+  for (const { quality } of grid.rows) {
+    if (one) {
+      for (const suit of grid.suits) {
+        if (one[qualityKey] === quality.key && one.suitType === suit.key) continue;
+        out.push({
+          id: `${quality.key}|${suit.key}`, quality, suit,
+          label: `${quality.label} ${suit.label}`, change: { [qualityKey]: quality.key, suitType: suit.key },
+        });
+      }
+    } else if (!suits.every((s) => s.spec?.[qualityKey] === quality.key)) {
+      out.push({ id: `${quality.key}|`, quality, suit: null, label: `Every suit in ${quality.label}`, change: { [qualityKey]: quality.key } });
+    }
+  }
+  return out;
+}
+
+/** Ticking the options to put beside the quote. */
+function Compare({ options, chosen, onChange, totalOf }) {
+  const suits = [...new Map(options.filter((o) => o.suit).map((o) => [o.suit.key, o.suit])).values()];
+  const qualities = [...new Map(options.map((o) => [o.quality.key, o.quality])).values()];
+  const toggle = (id) => onChange(chosen.includes(id) ? chosen.filter((c) => c !== id) : [...chosen, id]);
+  const cell = (o) => {
+    if (!o) return <td key="none" className="faint tiny">This quote</td>;
+    const { total, unpriced } = totalOf(o);
+    return (
+      <td key={o.id}>
+        {unpriced ? <span className="tiny faint">No price yet</span> : (
+          <label className="inline small" style={{ cursor: 'pointer' }}>
+            <input type="checkbox" checked={chosen.includes(o.id)} onChange={() => toggle(o.id)} aria-label={o.label} />
+            <span className="mono">{formatMoney(total)}</span>
+          </label>
+        )}
+      </td>
+    );
+  };
+
+  return (
+    <div className="informal-compare">
+      <div className="inline">
+        <strong>Compare</strong>
+        <span className="tiny faint">Tick any to list them under the total - the same choices in another quality or suit.</span>
+      </div>
+      <table className="compare-grid">
+        <thead>
+          <tr>
+            <th />
+            {suits.length ? suits.map((s) => <th key={s.key}>{s.label}</th>) : <th>Every suit</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {qualities.map((q) => (
+            <tr key={q.key}>
+              <th>{q.label}</th>
+              {suits.length
+                ? suits.map((s) => cell(options.find((o) => o.quality.key === q.key && o.suit?.key === s.key)))
+                : [cell(options.find((o) => o.quality.key === q.key))]}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 const VIA = { whatsapp: 'WhatsApp', email: 'email', copied: 'a copied message' };
 
-/** Where the informal quote stands, on the order page. */
+/** Where the informal quote stands, on the summary page. */
 export function InformalQuoteCard({ project, overrides, steps, onOpen, onFormal, reload }) {
   const iq = project.informalQuote;
   const toast = useToast();
@@ -283,9 +383,9 @@ export function InformalQuoteCard({ project, overrides, steps, onOpen, onFormal,
       <div className="card-pad">
         {!iq ? (
           <p className="small muted" style={{ marginTop: 0 }}>
-            A summary of the order, emailed with the client&apos;s renders before anything is agreed. You see every
-            figure first and can change any of them. The client confirms or asks for changes, and the formal quote
-            follows.
+            The whole consultation - every style choice and its cost - sent to the client with their renders before
+            anything is agreed. You see every figure first and can change any of them, and can put other qualities
+            beside it to compare. The client confirms or asks for changes, and the formal quote follows.
           </p>
         ) : (
           <div className="small" style={{ marginBottom: 10 }}>
@@ -310,7 +410,7 @@ export function InformalQuoteCard({ project, overrides, steps, onOpen, onFormal,
           {iq && iq.status === 'sent' && (
             <button className="btn btn-sm btn-ghost" onClick={() => mark('changes')}>Asked for changes</button>
           )}
-          {iq?.status === 'confirmed' && (
+          {iq?.status === 'confirmed' && onFormal && (
             <button className="btn btn-sm btn-primary" onClick={onFormal}>Make the formal quote</button>
           )}
         </div>

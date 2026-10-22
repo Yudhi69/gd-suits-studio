@@ -247,20 +247,24 @@ export default function ClientStep({ ctx, customOptions = [], onCatalogChanged }
 
             {/* These sit with the dates because that is when they are ticked. */}
             <div className="row" style={{ marginTop: 14 }}>
-              <div className="toggle-row">
+              {/* The whole row is the switch, words and all: the switch alone is
+                  a small target, and pressing the words did nothing. */}
+              <label className="toggle-row toggle-row-click" htmlFor="measurements-done">
                 <span className="small">Measurements taken</span>
                 <Switch
+                  id="measurements-done"
                   checked={!!project.measurements_done}
                   onChange={(val) => updateProject({ measurements_done: val })}
                 />
-              </div>
-              <div className="toggle-row">
+              </label>
+              <label className="toggle-row toggle-row-click" htmlFor="measurement-form">
                 <span className="small">Measurement form completed</span>
                 <Switch
+                  id="measurement-form"
                   checked={!!project.measurement_form_received}
                   onChange={(val) => updateProject({ measurement_form_received: val })}
                 />
-              </div>
+              </label>
             </div>
 
             <div className="field">

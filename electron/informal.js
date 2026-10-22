@@ -54,8 +54,14 @@ function recipientOf(project) {
 
 /** The address that opens WhatsApp with the message written and the chat chosen. */
 function whatsappUrl(number, text) {
-  return `https://wa.me/${number || ''}?text=${encodeURIComponent(text)}`;
+  return `https://wa.me/${number || ''}${text ? `?text=${encodeURIComponent(text)}` : ''}`;
 }
+
+/**
+ * The longest link the message is sent in. Web servers commonly refuse a
+ * request line much past 8KB, and the link passes through wa.me's.
+ */
+const WHATSAPP_URL_MAX = 8000;
 
 const STATUSES = ['sent', 'confirmed', 'changes'];
 const VIAS = ['whatsapp', 'email', 'copied'];
@@ -114,4 +120,4 @@ function record(previous, patch) {
   };
 }
 
-module.exports = { whatsappNumber, recipientOf, whatsappUrl, figures, record, STATUSES, VIAS };
+module.exports = { whatsappNumber, recipientOf, whatsappUrl, WHATSAPP_URL_MAX, figures, record, STATUSES, VIAS };

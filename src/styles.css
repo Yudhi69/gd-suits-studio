@@ -383,6 +383,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .option.selected .sketch { color: var(--gold-deep); }
 .sketch-lapel { fill: currentColor; fill-opacity: .15; }
 .sketch-collar { fill: currentColor; fill-opacity: .32; }
+.sketch-button { fill: currentColor; stroke: none; }
+/* The same drawings beside a switch - the third pocket. */
+.toggle-row .sketch { width: 64px; margin: 0 14px 0 0; flex: none; }
+.toggle-row-click { cursor: pointer; }
+.toggle-row.on .sketch { color: var(--gold-deep); }
 
 .option-label { font-weight: 600; font-size: 13.5px; padding-right: 46px; }
 .option-desc { font-size: 12px; color: var(--text-faint); margin-top: 2px; padding-right: 46px; }
@@ -406,6 +411,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
   border-bottom: 1px dotted currentColor; cursor: pointer;
 }
 .option-edit:hover { color: var(--gold-deep); }
+.recalled {
+  border-left: 3px solid var(--line); padding: 2px 0 2px 14px; margin-bottom: 14px;
+}
+.recalled .field:last-child { margin-bottom: 0; }
+.option-edit-inline { position: static; margin: 0 14px 0 8px; }
 
 .toggle-row {
   display: flex; align-items: center; justify-content: space-between;
@@ -564,6 +574,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .note + .note { margin-top: 8px; }
 /* The informal quote exactly as it will be sent - line breaks and all. */
+.informal-compare { border-top: 1px solid var(--line); padding-top: 12px; }
+.compare-grid { border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+.compare-grid th, .compare-grid td { padding: 5px 14px 5px 0; text-align: left; }
+.compare-grid thead th { font-size: 12px; color: var(--text-soft); font-weight: 600; }
+.compare-grid tbody th { font-weight: 500; }
 .informal-message { white-space: pre-wrap; max-height: 320px; overflow-y: auto; font-size: 13px; line-height: 1.5; }
 /* GD's figures, each one editable, before the informal quote goes. */
 .informal-line { align-items: center; padding: 3px 0; }

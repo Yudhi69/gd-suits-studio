@@ -59,7 +59,8 @@ app.whenReady().then(async () => {
   let ui = await read([]);
   check(ui.tabs.includes('Waistcoat') && ui.tabs.includes('Pants'), 'a 3-piece shows waistcoat and pants', ui.tabs.join(' > '));
   check(ui.tabs.indexOf('Waistcoat') < ui.tabs.indexOf('Pants'), 'waistcoat before pants, as GD lists them');
-  check(ui.tabs.indexOf('Lining & Stitching') < ui.tabs.indexOf('Jacket'), 'lining sits with the cloth, before the jacket');
+  // GD's review of 20 October: the lining is chosen once the jacket is.
+  check(ui.tabs.indexOf('Lining & Stitching') === ui.tabs.indexOf('Jacket') + 1, 'lining comes straight after the jacket', ui.tabs.join(' > '));
 
   setSpec({ suitType: 'blazer_only' });
   await open();
@@ -266,7 +267,11 @@ app.whenReady().then(async () => {
   const e = ui.Extras.labels.join(' | ');
   const eo = ui.Extras.options.join(' | ');
   check(/Shirt Material Code/.test(e), 'the shirt keeps its material code', e);
-  check(!/Shirt colour/.test(e), 'its colour is not asked a second time - it was typed on the base page', e);
+  // GD's review of 20 October: the extras page shows what was chosen on the
+  // base page - the same answer, shown again, not a second question.
+  const shirtColour = JSON.parse(await js(`JSON.stringify([...document.querySelectorAll('.field > label')]
+    .filter(l => l.textContent.trim() === 'Shirt colour').map(l => !!l.closest('.recalled')))`));
+  check(shirtColour.length === 1 && shirtColour[0], 'its colour is the one typed on the base page, shown as chosen earlier', JSON.stringify(shirtColour));
   check(['Standard', 'Cutaway', 'Pointed', 'Button Down', 'Wing Tip', 'Chinese', 'Custom'].every((o) => eo.includes(o)),
     'the collars GD listed', eo);
   check(/Single Hybrid/.test(eo) && /Button and cuff/.test(eo) && /Double Cuff \(French\)/.test(eo), 'the two cuffs GD listed');

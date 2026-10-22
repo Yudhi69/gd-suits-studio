@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { isVisible, statusLabel, statusPill } from '../lib/catalog.js';
+import { isVisible, statusLabel, statusPill, isOpenStatus } from '../lib/catalog.js';
+import { completeOrder } from '../lib/complete.js';
 import { useProject } from '../lib/useProject.js';
 import SuitStrip from '../components/SuitStrip.jsx';
 import { agreedQuote, isDraft } from '../lib/quote.js';
-import { api } from '../lib/api.js';
+import { api, messageFor } from '../lib/api.js';
 import PriceBar from '../components/PriceBar.jsx';
 import Stepper from '../components/Stepper.jsx';
-import { Spinner, Banner } from '../components/ui.jsx';
+import { Spinner, Banner, ConfirmButton, useToast } from '../components/ui.jsx';
 
 import ClientStep from './project/ClientStep.jsx';
 import OrderStep from './project/OrderStep.jsx';
@@ -25,10 +26,11 @@ import { InformalQuoteModal } from '../components/InformalQuote.jsx';
  * asks for it to feel like a game, one decision at a time, with the running
  * price always in view.
  */
-export default function ProjectView({ projectId, onBack, overrides, business, hasKey, steps: catalogSteps, unit, onUnitChange, customOptions, onCatalogChanged }) {
+export default function ProjectView({ projectId, onBack, overrides, business, hasKey, steps: catalogSteps, unit, onUnitChange, customOptions, onCatalogChanged, onOverridesChanged }) {
   const ctx = useProject(projectId);
   const [stepKey, setStepKey] = useState('client');
   const [informalOpen, setInformalOpen] = useState(false);
+  const toast = useToast();
   const { project, loading, error } = ctx;
 
   const steps = useMemo(() => {
@@ -46,6 +48,9 @@ export default function ProjectView({ projectId, onBack, overrides, business, ha
         catalog: s,
         done: s.fields.filter((f) => f.required && isVisible(f, spec)).every((f) => spec[f.id] !== undefined),
       })),
+      // Measured once the suit is designed and before anything is rendered,
+      // where GD takes them: the tape comes out before the camera.
+      { key: 'measurements', title: 'Measurements', done: project.measurements.some((m) => m.value !== null) },
       // The photographs and the cloth are one page: both are the camera coming
       // out, in the same few minutes, to feed the render.
       {
@@ -53,7 +58,6 @@ export default function ProjectView({ projectId, onBack, overrides, business, ha
         title: 'Photos & Cloth',
         done: project.photos.some((p) => ['front', 'side', 'back', 'face', 'fabric'].includes(p.slot)) || !!project.analysis?.fabricColour,
       },
-      { key: 'measurements', title: 'Measurements', done: project.measurements.some((m) => m.value !== null) },
       { key: 'preview', title: 'Preview', done: project.renders.length > 0 },
       { key: 'fitting', title: 'Fitting', done: project.fittings.length > 0 },
       { key: 'summary', title: 'Summary', done: project.renders.some((r) => r.approved) },
@@ -90,23 +94,39 @@ export default function ProjectView({ projectId, onBack, overrides, business, ha
     );
   }
 
+  // Off the current list and onto the completed one; the status says
+  // whether the balance is still to come in.
+  async function complete() {
+    try {
+      const status = await completeOrder(project.id, overrides, catalogSteps);
+      await ctx.reload();
+      toast(`Moved to completed - ${statusLabel(status).toLowerCase()}`, 'ok');
+    } catch (err) {
+      toast(messageFor(err), 'err');
+    }
+  }
+
   const current = steps.find((s) => s.key === stepKey) ?? steps[0];
   const index = steps.indexOf(current);
 
   function body() {
-    if (current.catalog) return <BuilderStep ctx={ctx} step={current.catalog} overrides={overrides} onCatalogChanged={onCatalogChanged} />;
+    if (current.catalog) {
+      return (
+        <BuilderStep
+          ctx={ctx}
+          step={current.catalog}
+          steps={catalogSteps}
+          overrides={overrides}
+          onCatalogChanged={onCatalogChanged}
+          onOverridesChanged={onOverridesChanged}
+        />
+      );
+    }
     switch (current.key) {
       case 'client': return <ClientStep ctx={ctx} customOptions={customOptions} onCatalogChanged={onCatalogChanged} />;
       case 'order':
         return (
-          <OrderStep
-            ctx={ctx}
-            business={business}
-            overrides={overrides}
-            steps={catalogSteps}
-            onInformal={() => setInformalOpen(true)}
-            onFormal={() => setStepKey('summary')}
-          />
+          <OrderStep ctx={ctx} business={business} />
         );
       case 'capture': return <PhotosStep ctx={ctx} />;
       case 'measurements': return <MeasureStep ctx={ctx} unit={unit} onUnitChange={onUnitChange} business={business} />;
@@ -121,6 +141,7 @@ export default function ProjectView({ projectId, onBack, overrides, business, ha
             unit={unit}
             business={business}
             customOptions={customOptions}
+            onInformal={() => setInformalOpen(true)}
           />
         );
       default: return null;
@@ -136,6 +157,11 @@ export default function ProjectView({ projectId, onBack, overrides, business, ha
           <div className="tiny faint">{project.title}</div>
         </div>
         <div className="spacer" />
+        {isOpenStatus(project.status) && (
+          <ConfirmButton className="btn btn-sm" confirmLabel="Mark completed?" onConfirm={complete}>
+            Completed
+          </ConfirmButton>
+        )}
         <span className={`pill ${statusPill(project.status)}`}>{statusLabel(project.status)}</span>
       </div>
 

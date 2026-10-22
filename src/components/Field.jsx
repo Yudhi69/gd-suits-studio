@@ -1,11 +1,11 @@
 import React, { useRef, useState } from 'react';
 import { Switch, DebouncedInput } from './ui.jsx';
-import { AddOptionTile, OptionEditor } from './AddOption.jsx';
+import { AddOptionTile, OptionEditor, BuiltInEditor } from './AddOption.jsx';
 import { fileToDataUrl } from '../lib/image.js';
 import { useToast, ConfirmButton } from './ui.jsx';
 import DownloadButton from './DownloadButton.jsx';
 import PhotoSlot from './PhotoSlot.jsx';
-import { formatMoney } from '../lib/pricing.js';
+import { formatMoney, suitPrice } from '../lib/pricing.js';
 import { sketchFor } from './sketches.jsx';
 import { colourWords } from '../lib/catalog.js';
 
@@ -21,8 +21,8 @@ const offered = (options = [], value) =>
  * Renders one catalog field. Every control in the builder comes through here,
  * so adding an option to `catalog.js` is all it takes to extend the flow.
  */
-export default function Field({ field, spec, overrides = {}, onChange, onCatalogChanged, media }) {
-  const [editingOption, setEditingOption] = useState(null);
+export default function Field({ field, spec, overrides = {}, onChange, onCatalogChanged, onOverridesChanged, media, quality = null, suitOpt = null }) {
+  const [editing, setEditing] = useState(null);
   const value = spec[field.id];
 
   const priceFor = (opt) => {
@@ -32,14 +32,58 @@ export default function Field({ field, spec, overrides = {}, onChange, onCatalog
     return amount;
   };
 
+  // Every preset can be reworded where it is chosen. One added in the builder
+  // is edited as it was added; a built-in one keeps its key and gets GD's own
+  // words over it. A whole item made in Settings is edited there, with its
+  // options, so it has no button here.
+  const editable = (opt) => !!onCatalogChanged && (opt?.custom || !field.custom);
+  const EditButton = ({ opt = null, inline = false }) => (
+    <span
+      className={`option-edit ${inline ? 'option-edit-inline' : ''}`}
+      role="button"
+      tabIndex={0}
+      title={opt ? 'Edit this option' : 'Edit this switch'}
+      aria-label={`Edit ${(opt ?? field).label}`}
+      onClick={(e) => { e.stopPropagation(); setEditing({ opt }); }}
+      onKeyDown={(e) => e.key === 'Enter' && (e.stopPropagation(), e.preventDefault(), setEditing({ opt }))}
+    >
+      edit
+    </span>
+  );
+
+  const editor = editing && (editing.opt?.custom ? (
+    <OptionEditor
+      fieldId={field.id}
+      fieldLabel={field.label}
+      existing={{
+        id: editing.opt.optionId,
+        label: editing.opt.label,
+        price: editing.opt.price,
+        description: editing.opt.desc,
+        prompt: editing.opt.promptText,
+      }}
+      onClose={() => setEditing(null)}
+      onSaved={() => { setEditing(null); onCatalogChanged?.(); }}
+    />
+  ) : (
+    <BuiltInEditor
+      field={field}
+      option={editing.opt}
+      overrides={overrides}
+      onClose={() => setEditing(null)}
+      onSaved={() => { setEditing(null); onCatalogChanged?.(); }}
+      onPricesChanged={onOverridesChanged}
+    />
+  ));
+
   if (field.type === 'choice') {
     return (
       <div className="field">
         <label>{field.label}</label>
         <div className="options">
           {offered(field.options, value).map((opt) => {
-            const amount = priceFor(opt);
             const Sketch = sketchFor(field.id, opt.key);
+            const price = tilePrice(field, opt, { quality, suitOpt, overrides, amount: priceFor(opt) });
             return (
               <button
                 key={opt.key}
@@ -47,28 +91,13 @@ export default function Field({ field, spec, overrides = {}, onChange, onCatalog
                 className={`option ${value === opt.key ? 'selected' : ''}`}
                 onClick={() => onChange(field.id, value === opt.key && !field.required ? undefined : opt.key)}
               >
-                {Sketch && <Sketch />}
+                {Sketch && <Sketch spec={spec} />}
                 <div className="option-label">{opt.label}</div>
                 {opt.retired
                   ? <div className="option-desc">No longer offered</div>
                   : opt.desc && <div className="option-desc">{opt.desc}</div>}
-                {amount > 0 && (
-                  <div className="option-price">
-                    {typeof opt.basePrice === 'number' ? '' : '+'}{formatMoney(amount)}
-                  </div>
-                )}
-                {opt.custom && (
-                  <span
-                    className="option-edit"
-                    role="button"
-                    tabIndex={0}
-                    title="Edit this option"
-                    onClick={(e) => { e.stopPropagation(); setEditingOption(opt); }}
-                    onKeyDown={(e) => e.key === 'Enter' && (e.stopPropagation(), setEditingOption(opt))}
-                  >
-                    edit
-                  </span>
-                )}
+                {price}
+                {editable(opt) && <EditButton opt={opt} />}
               </button>
             );
           })}
@@ -76,36 +105,27 @@ export default function Field({ field, spec, overrides = {}, onChange, onCatalog
             <AddOptionTile fieldId={field.id} fieldLabel={field.label} onAdded={onCatalogChanged} />
           )}
         </div>
-
-        {editingOption && (
-          <OptionEditor
-            fieldId={field.id}
-            fieldLabel={field.label}
-            existing={{
-              id: editingOption.optionId,
-              label: editingOption.label,
-              price: editingOption.price,
-              description: editingOption.desc,
-              prompt: editingOption.promptText,
-            }}
-            onClose={() => setEditingOption(null)}
-            onSaved={() => { setEditingOption(null); onCatalogChanged?.(); }}
-          />
-        )}
+        {editor}
       </div>
     );
   }
 
   if (field.type === 'toggle') {
+    const Sketch = sketchFor(field.id);
     return (
       <div className="field">
-        <div className="toggle-row">
-          <div>
-            <div style={{ fontWeight: 600 }}>{field.label}</div>
+        <div className={`toggle-row ${value ? 'on' : ''}`}>
+          {Sketch && <Sketch spec={spec} />}
+          <div style={{ flex: 1 }}>
+            {/* The words switch it too, not only the small switch beside them. */}
+            <label htmlFor={`toggle-${field.id}`} style={{ fontWeight: 600, cursor: 'pointer', margin: 0 }}>{field.label}</label>
+            {field.desc && <div className="tiny faint">{field.desc}</div>}
             {field.price > 0 && <div className="tiny faint">+{formatMoney(overrides[field.id] ?? field.price)}</div>}
           </div>
-          <Switch checked={!!value} onChange={(v) => onChange(field.id, v)} />
+          {editable(null) && <EditButton inline />}
+          <Switch id={`toggle-${field.id}`} checked={!!value} onChange={(v) => onChange(field.id, v)} />
         </div>
+        {editor}
       </div>
     );
   }
@@ -137,9 +157,11 @@ export default function Field({ field, spec, overrides = {}, onChange, onCatalog
               <div className="option-label">{opt.label}</div>
               {opt.desc && <div className="option-desc">{opt.desc}</div>}
               {opt.price > 0 && <div className="option-price">+{formatMoney(overrides[`${field.id}:${opt.key}`] ?? opt.price)}</div>}
+              {editable(opt) && <EditButton opt={opt} />}
             </button>
           ))}
         </div>
+        {editor}
       </div>
     );
   }
@@ -226,6 +248,37 @@ export default function Field({ field, spec, overrides = {}, onChange, onCatalog
   );
 }
 
+
+/**
+ * The figure on a choice tile.
+ *
+ * A suit type is shown at its price in the quality chosen; a quality at the
+ * price of the suit type chosen, since that is what picking it would cost.
+ * A pair GD has not priced yet says so rather than showing a figure the
+ * client could take as agreed.
+ */
+function tilePrice(field, opt, { quality, suitOpt, overrides, amount }) {
+  if (typeof opt.basePrice === 'number' && field.id === 'suitType') {
+    const price = suitPrice(opt, quality, overrides);
+    return (
+      <div className="option-price">
+        {formatMoney(price.amount)}{price.unpriced && <span className="faint"> - price to confirm</span>}
+      </div>
+    );
+  }
+  if (field.priceGrid) {
+    if (!suitOpt) return null;
+    const price = suitPrice(suitOpt, opt, overrides);
+    return (
+      <div className="option-price">
+        {price.unpriced ? <span className="faint">Price to confirm</span> : `${suitOpt.label} ${formatMoney(price.amount)}`}
+        {amount > 0 && ` +${formatMoney(amount)}`}
+      </div>
+    );
+  }
+  if (!(amount > 0)) return null;
+  return <div className="option-price">{typeof opt.basePrice === 'number' ? '' : '+'}{formatMoney(amount)}</div>;
+}
 
 /**
  * A set of images attached to the order rather than a value on the spec - the

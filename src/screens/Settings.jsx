@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api, messageFor } from '../lib/api.js';
-import { priceCatalogEntries, formatMoney } from '../lib/pricing.js';
+import { priceCatalogEntries, priceGrid, formatMoney } from '../lib/pricing.js';
 import { CURRENCY } from '../lib/catalog.js';
 import { updatePhase } from '../lib/updates.js';
 import { Banner, Collapsible, ConfirmButton, DebouncedInput, Modal, SecretInput, Spinner, Switch, useToast } from '../components/ui.jsx';
@@ -1170,6 +1170,8 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
                 on the quote and on the spec sheet alongside the built-in options.
               </p>
 
+              <QualityPrices grid={priceGrid(catalog.steps, overrides)} onSave={saveOverride} />
+
               {catalog.steps.map((step) => {
                 const rows = grouped[step.key] ?? [];
                 const changed = rows.filter((r) => typeof overrides[r.key] === 'number').length;
@@ -1581,6 +1583,62 @@ export default function Settings({ catalog, overrides, onOverridesChanged, keySt
  * not offered - Claude reads photographs but cannot draw a suit, so it is
  * absent from the image list rather than present and failing.
  */
+/**
+ * What a garment costs in each material quality, by suit type - the grid GD
+ * prices from. A figure here is the garment's whole price, in place of the
+ * suit type's own, not an extra on top of it. A quality with no figure yet is
+ * charged at the suit type's own price, and every quote says it is still to
+ * be confirmed.
+ */
+function QualityPrices({ grid, onSave }) {
+  if (!grid || !grid.rows.length) return null;
+  const open = grid.rows.reduce((n, r) => n + r.cells.filter((c) => c.own === null && c.shipped === null).length, 0);
+  return (
+    <Collapsible
+      title={grid.field.label}
+      defaultOpen
+      summary={[`${grid.rows.length} qualities`, open ? `${open} still to price` : 'all priced'].join(' · ')}
+    >
+      <p className="tiny faint" style={{ marginTop: 10 }}>
+        The whole garment&apos;s price in each quality, in place of the suit type&apos;s own price below. A box
+        marked &quot;to price&quot; has no figure yet: an order in that quality is charged the suit type&apos;s
+        own price, and its quote says the price is still to confirm.
+      </p>
+      <div className="table-scroll">
+        <table className="compare-grid quality-grid">
+          <thead>
+            <tr>
+              <th />
+              {grid.suits.map((s) => <th key={s.key}>{s.label}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {grid.rows.map(({ quality, cells }) => (
+              <tr key={quality.key}>
+                <th>{quality.label}{quality.custom && <span className="pill pill-quiet" style={{ marginLeft: 6 }}>yours</span>}</th>
+                {cells.map((c) => (
+                  <td key={c.key}>
+                    <DebouncedInput
+                      type="number"
+                      min="0"
+                      className="input measure-input"
+                      style={{ width: 104 }}
+                      aria-label={`${quality.label}, ${c.suit.label}`}
+                      placeholder={c.shipped === null ? 'to price' : String(c.shipped)}
+                      value={c.own ?? ''}
+                      onCommit={(val) => onSave(c.key, val)}
+                    />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Collapsible>
+  );
+}
+
 /**
  * GD's own words for a built-in option.
  *

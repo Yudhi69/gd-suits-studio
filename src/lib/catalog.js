@@ -46,6 +46,32 @@ export const BASE_PRICES = {
   pants_only: 1700,
 };
 
+/**
+ * The cloth's quality, in the order GD lists them. The quality sets the price
+ * of the garment, so it is priced by suit type, in MATERIAL_PRICES.
+ */
+export const MATERIALS = [
+  { key: 'standard_wool', label: 'Standard Wool Blend' },
+  { key: 'premium_wool', label: 'Premium Wool Blend' },
+  { key: 'super_fine', label: 'Super Fine Wool' },
+  { key: 'italian', label: 'Italian Wool' },
+  { key: 'premium_italian', label: 'Premium Italian Wool' },
+  { key: 'luxury', label: 'Luxury Wool' },
+  { key: 'linen', label: 'Linen' },
+];
+
+/**
+ * What each quality costs, by suit type. GD's figures (20 Oct 2026) cover the
+ * two wool blends as a 2-piece and a 3-piece; the rest are to follow. A cell
+ * with no figure is charged at the suit type's own price until GD sets one
+ * in Settings, and is flagged wherever it is shown, so a guess never passes
+ * for a price.
+ */
+export const MATERIAL_PRICES = {
+  standard_wool: { two_piece: 3950, three_piece: 4950 },
+  premium_wool: { two_piece: 4950, three_piece: 5950 },
+};
+
 /** Which garments a base choice actually includes. */
 export const SUIT_PARTS = {
   two_piece: ['jacket', 'pants'],
@@ -56,6 +82,36 @@ export const SUIT_PARTS = {
 };
 export const includesPart = (suitType, part) =>
   (SUIT_PARTS[suitType] ?? SUIT_PARTS.two_piece).includes(part);
+
+export const PART_LABELS = { jacket: 'Jacket', waistcoat: 'Waistcoat', pants: 'Pants' };
+
+/**
+ * A two- or three-tone suit: each piece cut from its own cloth, with its own
+ * colour, code and supplier - `{ part, colour, code, supplier }` per piece the
+ * suit type has. Null for a suit in one cloth, and for a suit type with only
+ * one piece, which cannot be in two.
+ */
+export function clothsOf(spec = {}) {
+  if (!spec.multiTone) return null;
+  const parts = SUIT_PARTS[spec.suitType] ?? SUIT_PARTS.two_piece;
+  if (parts.length < 2) return null;
+  return parts.map((part) => ({ part, ...(spec.cloths?.[part] ?? {}) }));
+}
+
+/**
+ * The cloths in the suit's own three columns - "Jacket B-2241 · Pants B-2250"
+ * - which is what the order list, the database sheet and the emails already
+ * show. A value every piece shares is said once.
+ */
+export function clothColumns(cloths) {
+  const column = (key) => {
+    const filled = cloths.filter((c) => String(c[key] ?? '').trim());
+    const values = [...new Set(filled.map((c) => String(c[key]).trim()))];
+    if (values.length === 1 && filled.length === cloths.length) return values[0].slice(0, 160);
+    return filled.map((c) => `${PART_LABELS[c.part] ?? c.part} ${String(c[key]).trim()}`).join(' · ').slice(0, 160);
+  };
+  return { fabric_name: column('colour'), fabric_code: column('code'), supplier: column('supplier') };
+}
 
 /**
  * Photo slots captured in the Capture step. `role` feeds the AI prompt builder:
@@ -117,6 +173,18 @@ export const STEPS = [
           { key: 'waistcoat_only', label: 'Single Waistcoat', desc: 'Waistcoat alone', price: 0, basePrice: BASE_PRICES.waistcoat_only },
         ],
       },
+      {
+        // Sets the price of the suit rather than adding to it, so its options
+        // carry no price of their own: the figure for each quality and suit
+        // type is in MATERIAL_PRICES, and in a grid in Settings. Left unset,
+        // the suit type's own price stands, as it did before qualities.
+        id: 'material',
+        label: 'Material Quality',
+        type: 'choice',
+        priceGrid: true,
+        prompt: () => null, // the swatch shows the cloth; its grade does not change the picture
+        options: MATERIALS.map((m) => ({ ...m, price: 0 })),
+      },
 
       // What goes with the suit. Chosen here, with its colour, so the base
       // page alone prices the whole order; the Extras page only asks for the
@@ -149,60 +217,6 @@ export const STEPS = [
       // Settings > Price list.
       { id: 'tiePin', label: 'Tie Pin', type: 'toggle', price: 180, prompt: (v) => (v ? 'a tie pin' : null) },
       { id: 'cufflinks', label: 'Cuff Links', type: 'toggle', price: 250, prompt: (v) => (v ? 'cufflinks' : null) },
-    ],
-  },
-
-  {
-    key: 'lining',
-    title: 'Lining & Stitching',
-    blurb: 'Chosen with the cloth, not buried in the detail page.',
-    fields: [
-      {
-        id: 'liningMode',
-        label: 'Lining',
-        type: 'choice',
-        prompt: () => null, // described in its own paragraph of the render prompt
-        // The keys are from when these read "choose a colour" and "upload a
-        // pattern". Kept, so the orders already filed under them keep their
-        // choice and their price.
-        options: [
-          { key: 'colour', label: 'Standard', desc: 'From the lining range', price: 0 },
-          { key: 'pattern', label: 'Custom', desc: 'Printed from artwork', price: 450 },
-        ],
-      },
-      // Typed, not picked off a colour wheel: a lining is matched from stock
-      // by eye and code, and a wheel promised a shade nobody could guarantee.
-      { id: 'liningColour', label: 'Lining colour', type: 'text', colourText: true,
-        placeholder: 'Burgundy, navy paisley...', prompt: () => null },
-      { id: 'liningCode', label: 'Lining Material Code', type: 'text', mono: true, placeholder: 'e.g. LN 1116', prompt: () => null },
-      { id: 'liningCollage', label: 'Custom lining - upload collage', type: 'images', slot: 'lining_collage',
-        showIf: (s) => s.liningMode === 'pattern',
-        hint: 'The artwork the lining is printed from. Several images can be added.',
-        prompt: () => null },
-      {
-        // Was on the detail page, beside a second "custom lining" switch that
-        // charged for the same thing twice.
-        id: 'customLiningScope',
-        label: 'Custom lining goes in',
-        type: 'choice',
-        showIf: (s) => s.liningMode === 'pattern' && includesPart(s.suitType ?? 'two_piece', 'waistcoat'),
-        prompt: (v) => (v === 'jacket_waistcoat' ? 'custom lining in the jacket and the waistcoat' : 'custom lining in the jacket only'),
-        options: [
-          { key: 'jacket', label: 'Jacket only', price: 0 },
-          { key: 'jacket_waistcoat', label: 'Jacket and waistcoat', price: 250 },
-        ],
-      },
-      {
-        id: 'stitching',
-        label: 'Stitching & Piping',
-        type: 'choice',
-        // White and black only. GD was explicit: these are the only choices.
-        prompt: (v) => `${v} contrast stitching and piping`,
-        options: [
-          { key: 'white', label: 'White', price: 0 },
-          { key: 'black', label: 'Black', price: 0 },
-        ],
-      },
     ],
   },
 
@@ -363,7 +377,9 @@ export const STEPS = [
         label: 'Pockets',
         type: 'choice',
         required: true,
-        prompt: (v) => `${v} pockets`,
+        prompt: (v) => (v === 'slanted'
+          ? 'slanted (hacking) hip pockets, each sloping down from its front edge toward the side seam'
+          : `${v} pockets`),
         options: [
           { key: 'flap', label: 'Flap', desc: 'Standard', price: 0 },
           { key: 'patch', label: 'Patch', desc: 'Softer, casual', price: 150 },
@@ -387,6 +403,62 @@ export const STEPS = [
           { key: 'none', label: 'None', desc: 'Clean back', price: 0 },
           { key: 'single', label: 'Single', price: 0 },
           { key: 'double', label: 'Double', desc: 'Side vents', price: 120 },
+        ],
+      },
+    ],
+  },
+
+  {
+    // After the jacket, where GD wants it: the lining is chosen once the
+    // jacket it goes in has been designed.
+    key: 'lining',
+    title: 'Lining & Stitching',
+    blurb: 'Chosen with the cloth, not buried in the detail page.',
+    fields: [
+      {
+        id: 'liningMode',
+        label: 'Lining',
+        type: 'choice',
+        prompt: () => null, // described in its own paragraph of the render prompt
+        // The keys are from when these read "choose a colour" and "upload a
+        // pattern". Kept, so the orders already filed under them keep their
+        // choice and their price.
+        options: [
+          { key: 'colour', label: 'Standard', desc: 'From the lining range', price: 0 },
+          { key: 'pattern', label: 'Custom', desc: 'Printed from artwork', price: 450 },
+        ],
+      },
+      // Typed, not picked off a colour wheel: a lining is matched from stock
+      // by eye and code, and a wheel promised a shade nobody could guarantee.
+      { id: 'liningColour', label: 'Lining colour', type: 'text', colourText: true,
+        placeholder: 'Burgundy, navy paisley...', prompt: () => null },
+      { id: 'liningCode', label: 'Lining Material Code', type: 'text', mono: true, placeholder: 'e.g. LN 1116', prompt: () => null },
+      { id: 'liningCollage', label: 'Custom lining - upload collage', type: 'images', slot: 'lining_collage',
+        showIf: (s) => s.liningMode === 'pattern',
+        hint: 'The artwork the lining is printed from. Several images can be added.',
+        prompt: () => null },
+      {
+        // Was on the detail page, beside a second "custom lining" switch that
+        // charged for the same thing twice.
+        id: 'customLiningScope',
+        label: 'Custom lining goes in',
+        type: 'choice',
+        showIf: (s) => s.liningMode === 'pattern' && includesPart(s.suitType ?? 'two_piece', 'waistcoat'),
+        prompt: (v) => (v === 'jacket_waistcoat' ? 'custom lining in the jacket and the waistcoat' : 'custom lining in the jacket only'),
+        options: [
+          { key: 'jacket', label: 'Jacket only', price: 0 },
+          { key: 'jacket_waistcoat', label: 'Jacket and waistcoat', price: 250 },
+        ],
+      },
+      {
+        id: 'stitching',
+        label: 'Stitching & Piping',
+        type: 'choice',
+        // White and black only. GD was explicit: these are the only choices.
+        prompt: (v) => `${v} contrast stitching and piping`,
+        options: [
+          { key: 'white', label: 'White', price: 0 },
+          { key: 'black', label: 'Black', price: 0 },
         ],
       },
     ],
@@ -609,8 +681,11 @@ export const STEPS = [
     blurb: 'The detail of the shirt, tie and pins chosen on the base garment page.',
     empty: 'Nothing to detail yet - tick a shirt, a tie or a lapel pin on the Base Garment page.',
     fields: [
+      // `recall` draws the answers already given on the base garment page
+      // above the field, filled in and editable here too - the same answer,
+      // not a second copy of it, so it is charged and printed once.
       { id: 'shirtCode', label: 'Shirt Material Code', type: 'text', mono: true, showIf: (s) => s.shirt,
-        section: 'Shirt', placeholder: 'e.g. MPT 1747', prompt: () => null },
+        section: 'Shirt', recall: ['shirtColour'], placeholder: 'e.g. MPT 1747', prompt: () => null },
       {
         id: 'shirtCollar',
         label: 'Collar Type',
@@ -688,8 +763,8 @@ export const STEPS = [
         placeholder: 'Contrast collar, placket detail, hidden buttons...', prompt: (v) => `shirt detail: ${v}` },
 
       { id: 'tieReference', label: 'Tie photo', type: 'images', slot: 'tie_reference',
-        showIf: (s) => s.neckwear, section: 'Tie',
-        hint: 'A picture of the tie, or the cloth it is made from. The colour is typed on the Base Garment page.',
+        showIf: (s) => s.neckwear, section: 'Tie', recall: ['neckwearType', 'neckwearColour'],
+        hint: 'A picture of the tie, or the cloth it is made from.',
         prompt: () => null },
       {
         id: 'pocketSquare',
@@ -709,7 +784,8 @@ export const STEPS = [
       { id: 'pocketSquareColour', label: 'Pocket Square Colour', type: 'text', colourText: true,
         showIf: (s) => s.neckwear && s.pocketSquare === 'different', placeholder: 'White, gold paisley...', prompt: () => null },
       { id: 'pocketSquareReference', label: 'Pocket square photo', type: 'images', slot: 'pocket_square_reference',
-        showIf: (s) => s.neckwear && (s.pocketSquare === 'same' || s.pocketSquare === 'different'),
+        // Not for one in the tie's cloth: the tie photo already shows it.
+        showIf: (s) => s.neckwear && s.pocketSquare === 'different',
         hint: 'A picture of the pocket square, or its cloth.',
         prompt: () => null },
 
@@ -1014,7 +1090,10 @@ export function eventTypesWith(customOptions = []) {
  */
 export function withLabels(field, labels = {}) {
   const own = labels[field.id];
-  const named = own?.label ? { ...field, label: own.label, renamed: true } : field;
+  // A switch has a note under its name too, edited the way an option's is.
+  const named = own?.label || own?.desc !== undefined
+    ? { ...field, label: own.label || field.label, ...(own.desc !== undefined ? { desc: own.desc } : {}), renamed: true }
+    : field;
   if (!Array.isArray(named.options)) return named;
   return {
     ...named,

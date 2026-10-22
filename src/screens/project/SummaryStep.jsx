@@ -5,6 +5,7 @@ import { formatMoney } from '../../lib/pricing.js';
 import { agreedQuote, quoteFromOrder, quoteDrift, isDraft, suitsOf, suitName } from '../../lib/quote.js';
 import { prettyDate } from '../../lib/informalQuote.js';
 import { ConfirmButton } from '../../components/ui.jsx';
+import { InformalQuoteCard } from '../../components/InformalQuote.jsx';
 import {
   eventTypesWith, MEASUREMENTS, measureRows, measuredGarments, statusLabel, PROCESS_DATES, STEPS,
 } from '../../lib/catalog.js';
@@ -40,7 +41,7 @@ const PAGE_NAMES = {
  * every suit on it, with its own cloth, design and measurements - plus the
  * formal quote and the export that writes the client file out to a folder.
  */
-export default function SummaryStep({ ctx, overrides, steps, unit = 'cm', business, customOptions = [] }) {
+export default function SummaryStep({ ctx, overrides, steps, unit = 'cm', business, customOptions = [], onInformal }) {
   const { project } = ctx;
   const [exporting, setExporting] = useState(false);
   const [mailing, setMailing] = useState(false);
@@ -435,6 +436,12 @@ ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c"
       </div>
 
       <div className="stack" style={{ flex: 1, minWidth: 300 }}>
+        {/* At the end of the consultation, where GD wants it: every choice has
+            been made by now, so what goes to the client is the whole of it. */}
+        {onInformal && (
+          <InformalQuoteCard project={project} overrides={overrides} steps={steps} onOpen={onInformal} reload={ctx.reload} />
+        )}
+
         {/* The dates the order runs to, where the order is signed off. */}
         {PROCESS_DATES.some(({ key }) => project[key]) && (
           <div className="card">
@@ -475,6 +482,13 @@ ${project.quote ? `<p style="font-family:system-ui;font-size:12px;color:#5d574c"
                     </ConfirmButton>
                   </div>
                 </div>
+              </Banner>
+            )}
+            {!project.quote && lines.some((l) => l.unpriced) && (
+              <Banner kind="warn">
+                {[...new Set(lines.filter((l) => l.unpriced).map((l) => l.label))].join(', ')}: this quality has
+                no price for this suit type yet, so it is charged at the suit type's own price. Set it in Settings
+                &gt; Price list before the formal quote goes.
               </Banner>
             )}
             {!project.quote && (

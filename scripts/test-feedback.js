@@ -143,7 +143,8 @@ app.whenReady().then(async () => {
   check(!orderPage.labels.includes('First appointment'), 'the first appointment is not asked again here', orderPage.labels.join(' | '));
   check(!orderPage.labels.includes('Number of suits'), 'nor a number of suits that could disagree with the suits');
   check(orderPage.fabricBoxes === 2, 'each suit has its own cloth details', String(orderPage.fabricBoxes));
-  check(orderPage.informal, 'and the informal quote sits on the order page');
+  // GD's review of 20 October moved it to the summary, beside the formal one.
+  check(!orderPage.informal, 'the informal quote is not on the order page');
   const near = (a, b) => Math.abs(a - b) < 2;
   check(orderPage.role && orderPage.suit && near(orderPage.suit.left, orderPage.role.left),
     'the "Suit" line starts under "Role", in the label column', JSON.stringify([orderPage.role?.left, orderPage.suit?.left]));
@@ -184,7 +185,7 @@ app.whenReady().then(async () => {
 
   log('\n=== the informal quote ===');
   db.setSetting('business', { whatsappCountryCode: '27' });
-  await openOrder('Sipho', 'Order');
+  await openOrder('Sipho', 'Summary');
   const modal = JSON.parse(await js(`(async () => {
     T.byText('button', 'Send informal quote').click(); await T.wait(1200);
     const m = document.querySelector('.modal');
@@ -205,13 +206,16 @@ app.whenReady().then(async () => {
     && record?.lines?.length > 0 && record?.basis?.length === record?.lines?.length,
     'it is recorded on the order: when, how, for how much, and the figures', JSON.stringify(record).slice(0, 200));
 
-  // The answer, and the step to the formal quote.
-  await openOrder('Sipho', 'Order');
+  // The answer, and the formal quote on the same page.
+  await openOrder('Sipho', 'Summary');
   await js(`(async () => { T.byText('button', 'Client confirmed').click(); await T.wait(1000); return true; })()`);
   check(db.getProject(order).informalQuote?.status === 'confirmed', 'GD marks it confirmed');
-  const toSummary = await js(`(async () => { T.byText('button', 'Make the formal quote').click(); await T.wait(1000);
-    return document.querySelector('.step-tab.active')?.textContent ?? ''; })()`);
-  check(/Summary/.test(toSummary), 'and goes straight on to the formal quote', toSummary);
+  const formalHere = await js(`JSON.stringify({
+    formal: !!T.byText('button', 'Email the formal quote'),
+    detour: !!T.byText('button', 'Make the formal quote'),
+  })`).then(JSON.parse);
+  check(formalHere.formal && !formalHere.detour, 'and the formal quote is on the same page, with no button to go to it',
+    JSON.stringify(formalHere));
 
   // Who it goes to is decided from the order, not the window.
   const minor = db.upsertClient({ name: 'Lwazi', surname: 'Dube', contact: '071 000 0000', isMinor: true,
