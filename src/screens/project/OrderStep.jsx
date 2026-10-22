@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
 import { api, messageFor } from '../../lib/api.js';
 import { formatMoney } from '../../lib/pricing.js';
-import { PAYMENT_KINDS } from '../../lib/catalog.js';
+import { PAYMENT_KINDS, PART_LABELS, SUIT_PARTS, clothsOf, clothColumns } from '../../lib/catalog.js';
 import { ConfirmButton, DebouncedInput, Empty, Switch, useToast } from '../../components/ui.jsx';
 import PartyPanel from '../../components/PartyPanel.jsx';
-import { InformalQuoteCard } from '../../components/InformalQuote.jsx';
 import { suitName } from '../../lib/quote.js';
 
 /**
@@ -16,7 +15,7 @@ import { suitName } from '../../lib/quote.js';
  * them on the order means the money and the work can never drift apart from
  * the suit they belong to.
  */
-export default function OrderStep({ ctx, business, overrides, steps, onInformal, onFormal }) {
+export default function OrderStep({ ctx, business }) {
   const { project, updateProject, reload } = ctx;
   const toast = useToast();
   const suits = project.suits ?? [];
@@ -69,23 +68,7 @@ export default function OrderStep({ ctx, business, overrides, steps, onInformal,
                       </ConfirmButton>
                     </div>
                   )}
-                  <div className="grid grid-3">
-                    <div className="field">
-                      <label>Fabric colour</label>
-                      <DebouncedInput className="input" placeholder="Midnight blue" value={suit.fabric_name}
-                        onCommit={(v) => run(() => api.suits.update({ id: suit.id, patch: { fabric_name: v } }))} />
-                    </div>
-                    <div className="field">
-                      <label>Material code</label>
-                      <DebouncedInput className="input mono" placeholder="e.g. B-2241" value={suit.fabric_code}
-                        onCommit={(v) => run(() => api.suits.update({ id: suit.id, patch: { fabric_code: v } }))} />
-                    </div>
-                    <div className="field">
-                      <label>Supplier</label>
-                      <DebouncedInput className="input" value={suit.supplier}
-                        onCommit={(v) => run(() => api.suits.update({ id: suit.id, patch: { supplier: v } }))} />
-                    </div>
-                  </div>
+                  <SuitCloth suit={suit} projectId={project.id} run={run} />
                 </div>
               ))}
               <button
@@ -118,14 +101,6 @@ export default function OrderStep({ ctx, business, overrides, steps, onInformal,
 
         {/* --------------------------------------------------- the money --- */}
         <div className="stack" style={{ flex: 1, minWidth: 320 }}>
-          <InformalQuoteCard
-            project={project}
-            overrides={overrides}
-            steps={steps}
-            onOpen={onInformal}
-            onFormal={onFormal}
-            reload={reload}
-          />
           <div className="card">
             <div className="card-head">
               <h3>Money</h3>
@@ -265,3 +240,107 @@ function AddPayment({ projectId, suggested, onAdded, reload }) {
   );
 }
 
+
+/**
+ * What one suit is cut from. Usually one cloth; a two- or three-tone suit
+ * has a cloth per piece - a navy jacket over grey pants - each with its own
+ * code and supplier. The pieces are kept on the suit's spec, and said in the
+ * suit's own three columns too, so every list, sheet and email that shows the
+ * cloth shows all of them without knowing about tones.
+ */
+// One write at a time for each suit. Leaving the page with two boxes still
+// typed commits both at once, and two writes of the whole spec, each read
+// before the other landed, would each undo the other.
+const queues = new Map();
+function inTurn(id, fn) {
+  const next = (queues.get(id) ?? Promise.resolve()).then(fn);
+  queues.set(id, next.catch(() => {}));
+  return next;
+}
+
+function SuitCloth({ suit, projectId, run }) {
+  const spec = suit.spec ?? {};
+  const parts = SUIT_PARTS[spec.suitType] ?? SUIT_PARTS.two_piece;
+  const cloths = clothsOf(spec);
+
+  // Against the freshest copy of the suit, the way the builder writes its
+  // spec, so a choice made on another page meanwhile is not undone.
+  const write = (change) => inTurn(suit.id, () => run(async () => {
+    const current = await api.projects.get({ id: projectId });
+    const fresh = (current.suits ?? []).find((s) => s.id === suit.id) ?? suit;
+    const next = change({ ...(fresh.spec ?? {}) }, fresh);
+    const pieces = clothsOf(next);
+    const columns = pieces
+      ? clothColumns(pieces)
+      : { fabric_name: next.cloths?.[parts[0]]?.colour ?? fresh.fabric_name ?? '',
+          fabric_code: next.cloths?.[parts[0]]?.code ?? fresh.fabric_code ?? '',
+          supplier: next.cloths?.[parts[0]]?.supplier ?? fresh.supplier ?? '' };
+    await api.suits.update({ id: suit.id, patch: { spec: next, ...columns } });
+  }));
+
+  // Every piece starts in the cloth already on the suit, so only the one that
+  // differs needs filling in.
+  const setTones = (on) => write((s, fresh) => {
+    const cloths = { ...(s.cloths ?? {}) };
+    if (on) {
+      for (const part of parts) {
+        cloths[part] ??= { colour: fresh.fabric_name ?? '', code: fresh.fabric_code ?? '', supplier: fresh.supplier ?? '' };
+      }
+    }
+    return { ...s, multiTone: on, cloths };
+  });
+  const setPiece = (part, key, value) => write((s) => ({
+    ...s,
+    cloths: { ...(s.cloths ?? {}), [part]: { ...(s.cloths?.[part] ?? {}), [key]: value } },
+  }));
+
+  return (
+    <>
+      {cloths ? cloths.map((c) => (
+        <div className="grid grid-3" key={c.part}>
+          <div className="field">
+            <label>{PART_LABELS[c.part]} colour</label>
+            <DebouncedInput className="input" maxLength={40} value={c.colour ?? ''}
+              onCommit={(v) => setPiece(c.part, 'colour', v)} />
+          </div>
+          <div className="field">
+            <label>{PART_LABELS[c.part]} material code</label>
+            <DebouncedInput className="input mono" maxLength={40} value={c.code ?? ''}
+              onCommit={(v) => setPiece(c.part, 'code', v)} />
+          </div>
+          <div className="field">
+            <label>{PART_LABELS[c.part]} supplier</label>
+            <DebouncedInput className="input" maxLength={40} value={c.supplier ?? ''}
+              onCommit={(v) => setPiece(c.part, 'supplier', v)} />
+          </div>
+        </div>
+      )) : (
+        <div className="grid grid-3">
+          <div className="field">
+            <label>Fabric colour</label>
+            <DebouncedInput className="input" placeholder="Midnight blue" value={suit.fabric_name}
+              onCommit={(v) => run(() => api.suits.update({ id: suit.id, patch: { fabric_name: v } }))} />
+          </div>
+          <div className="field">
+            <label>Material code</label>
+            <DebouncedInput className="input mono" placeholder="e.g. B-2241" value={suit.fabric_code}
+              onCommit={(v) => run(() => api.suits.update({ id: suit.id, patch: { fabric_code: v } }))} />
+          </div>
+          <div className="field">
+            <label>Supplier</label>
+            <DebouncedInput className="input" value={suit.supplier}
+              onCommit={(v) => run(() => api.suits.update({ id: suit.id, patch: { supplier: v } }))} />
+          </div>
+        </div>
+      )}
+      {parts.length > 1 && (
+        <div className="inline" style={{ marginBottom: 12 }}>
+          <Switch id={`tones-${suit.id}`} checked={!!cloths} onChange={setTones} />
+          <label htmlFor={`tones-${suit.id}`} className="small" style={{ cursor: 'pointer' }}>
+            {parts.length === 3 ? 'Two- or three-tone' : 'Two-tone'} - each piece in its own cloth
+          </label>
+        </div>
+      )}
+    </>
+  );
+}

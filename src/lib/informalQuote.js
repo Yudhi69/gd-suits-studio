@@ -1,6 +1,7 @@
 import { formatMoney } from './pricing.js';
-import { suitsOf, sentFigures } from './quote.js';
+import { suitsOf, sentFigures, orderBreakdown } from './quote.js';
 import { eventTypesWith } from './catalog.js';
+import { buildSpecSheet } from './promptBuilder.js';
 
 /**
  * The informal quote: what the client is shown before anything is agreed.
@@ -81,11 +82,50 @@ export function figuresFrom(list, amounts = {}, added = []) {
 }
 
 /**
+ * What was chosen for one suit, a line per page - "Jacket: Lapel: Peak ·
+ * Lapel width: Standard". The client's own choices, so the shop's cloth and
+ * lining codes stay off it, the way they stay off the client's copy of the
+ * formal quote.
+ */
+export function choicesOf(spec = {}, steps = []) {
+  const shop = new Set(steps.flatMap((s) => s.fields).filter((f) => f.mono).map((f) => f.label));
+  return buildSpecSheet(spec, steps).map((section) => [
+    clip(section.title, 60),
+    clip(section.rows
+      .filter((r) => !shop.has(r.label))
+      .map((r) => (r.value === 'Yes' ? r.label : `${r.label}: ${clip(r.value, 80)}`))
+      .join(' · '), 600),
+  ]).filter(([, text]) => text);
+}
+
+/**
+ * The same order in another quality, another suit type, or both - the client
+ * asking what it would be in the premium wool, or as a 2-piece. Every suit on
+ * the order is changed alike; `suitType` left out keeps each suit's own.
+ *
+ * Priced from the price list, as the quote's own lines start; the shop's own
+ * lines (a discount, a rush fee) apply to the order whichever cloth it is in,
+ * so they are carried across.
+ */
+export function alternativeFor(order, change, overrides, steps, addedTotal = 0) {
+  const suits = suitsOf(order).map((s) => ({ ...s, spec: { ...(s.spec ?? {}), ...change } }));
+  const list = orderBreakdown({ ...order, suits }, overrides, steps);
+  return {
+    total: cents(list.total + (Number(addedTotal) || 0)),
+    unpriced: list.lines.some((l) => l.unpriced),
+  };
+}
+
+/**
  * The summary, as plain data, from the figures GD has settled on. Only what
  * the client needs: first names, never a phone number, address or
  * measurement.
+ *
+ * With `steps` it also carries what was chosen, page by page, so the client
+ * has the whole consultation in writing; `alternatives` are the other options
+ * priced for comparison, each `{ label, total }`.
  */
-export function informalQuote({ order, figures, business = {}, customOptions = [], today = new Date() }) {
+export function informalQuote({ order, figures, business = {}, customOptions = [], today = new Date(), steps = null, alternatives = [] }) {
   const suits = suitsOf(order);
   const multi = suits.length > 1;
   const days = business.informalValidDays ?? 14;
@@ -99,9 +139,14 @@ export function informalQuote({ order, figures, business = {}, customOptions = [
     ? suits.map((suit, i) => {
       const mine = priced.filter((l) => String(l.key).startsWith(`${suit.id ?? i}/`));
       const who = [first(suit.name ?? order.name), suit.label || suit.fabric_name || ''].filter(Boolean).join(' - ');
-      return { t: clip(who || `Suit ${i + 1}`, 80), l: mine.map(pair), st: cents(mine.reduce((t, l) => t + l.amount, 0)) };
+      return {
+        t: clip(who || `Suit ${i + 1}`, 80),
+        l: mine.map(pair),
+        st: cents(mine.reduce((t, l) => t + l.amount, 0)),
+        c: steps ? choicesOf(suit.spec, steps) : [],
+      };
     })
-    : [{ t: '', l: priced.map(pair), st: cents(priced.reduce((t, l) => t + l.amount, 0)) }];
+    : [{ t: '', l: priced.map(pair), st: cents(priced.reduce((t, l) => t + l.amount, 0)), c: steps ? choicesOf(suits[0]?.spec, steps) : [] }];
   const event = eventTypesWith(customOptions).find((e) => e.key === order.event_type);
 
   return {
@@ -115,6 +160,7 @@ export function informalQuote({ order, figures, business = {}, customOptions = [
     shop: { n: business.businessName || 'GD Suits', p: business.phone || '' },
     s: sections,
     x: figures.lines.filter(isAdded).map(pair),
+    alt: alternatives.slice(0, 24).map((a) => [clip(a.label, 80), cents(Number(a.total) || 0)]),
     tot: figures.total,
     dep: cents(figures.total * fraction),
     depPct: Math.round(fraction * 100),
@@ -139,6 +185,18 @@ export function quoteMessage(payload, { renders = '' } = {}) {
     ...(payload.s.length > 1 ? [`Subtotal: ${formatMoney(suit.st)}`] : []),
     '',
   ]);
+  // The style chosen, after the money: the figures are what the client reads
+  // first, the choices what they check them against.
+  const chose = payload.s.some((suit) => suit.c?.length)
+    ? ['Your choices', '', ...payload.s.flatMap((suit) => (suit.c?.length ? [
+      ...(suit.t ? [suit.t] : []),
+      ...suit.c.map(([title, text]) => `${title} - ${text}`),
+      '',
+    ] : []))]
+    : [];
+  const others = payload.alt?.length
+    ? ['Other options, everything else as above', ...payload.alt.map(([label, total]) => `${label}: ${formatMoney(total)}`), '']
+    : [];
   const added = payload.x.length ? [...payload.x.map(([label, amount]) => `${label}: ${formatMoney(amount)}`), ''] : [];
   const totals = [
     `Total: ${formatMoney(payload.tot)}`,
@@ -152,6 +210,8 @@ export function quoteMessage(payload, { renders = '' } = {}) {
   return [
     intro, '', `Informal quote${ref}`, '',
     ...body, ...added, ...totals, '',
+    ...others,
+    ...chose,
     ...(renders ? [renders, ''] : []),
     ...close,
   ].join('\n');

@@ -1,4 +1,4 @@
-import { STEPS, CURRENCY, isVisible, allFieldsOf } from './catalog.js';
+import { STEPS, CURRENCY, MATERIAL_PRICES, isVisible, allFieldsOf } from './catalog.js';
 
 /**
  * Price overrides are stored as a flat map so the tailor can retune the price
@@ -18,6 +18,36 @@ export function priceKeyForField(fieldId) {
 function resolve(overrides, key, fallback) {
   const v = overrides?.[key];
   return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+}
+
+/** The field whose options set the garment's price - the material quality. */
+const gridFieldOf = (steps) => allFieldsOf(steps).find((f) => f.priceGrid) ?? null;
+
+/** "suitType:two_piece@premium_wool" - a suit type's price in one quality. */
+export function gridPriceKey(suitKey, qualityKey) {
+  return `${priceKeyForOption('suitType', suitKey)}@${qualityKey}`;
+}
+
+/**
+ * The price of a suit type, in the quality chosen if there is one.
+ *
+ * A quality GD has not priced for that suit type yet is charged at the suit
+ * type's own price and comes back `unpriced`, so every screen that shows it
+ * can say so. With no quality chosen this is exactly the price it always was.
+ */
+export function suitPrice(suitOpt, quality, overrides = {}) {
+  const own = resolve(overrides, priceKeyForOption('suitType', suitOpt.key), suitOpt.basePrice);
+  if (!quality) return { amount: own, key: priceKeyForOption('suitType', suitOpt.key), unpriced: false };
+  const key = gridPriceKey(suitOpt.key, quality.key);
+  const listed = resolve(overrides, key, MATERIAL_PRICES[quality.key]?.[suitOpt.key] ?? null);
+  return listed === null ? { amount: own, key, unpriced: true } : { amount: listed, key, unpriced: false };
+}
+
+/** The quality chosen on this spec, as its option, or null. */
+export function qualityOf(spec = {}, steps = STEPS) {
+  const field = gridFieldOf(steps);
+  if (!field || !spec[field.id] || !isVisible(field, spec)) return null;
+  return field.options?.find((o) => o.key === spec[field.id]) ?? null;
 }
 
 /**
@@ -46,11 +76,14 @@ export function buildBreakdown(spec = {}, overrides = {}, steps = STEPS) {
         const key = priceKeyForOption(field.id, opt.key);
 
         if (typeof opt.basePrice === 'number') {
+          const quality = qualityOf(spec, steps);
+          const price = suitPrice(opt, quality, overrides);
           lines.push({
             group: 'Base',
-            label: `${opt.label} suit`,
-            amount: resolve(overrides, key, opt.basePrice),
-            key,
+            label: quality ? `${opt.label} suit - ${quality.label}` : `${opt.label} suit`,
+            amount: price.amount,
+            key: price.key,
+            ...(price.unpriced ? { unpriced: true } : {}),
           });
           continue;
         }
@@ -102,6 +135,8 @@ export function formatMoney(amount) {
 export function priceCatalogEntries(steps = STEPS) {
   const entries = [];
   for (const field of allFieldsOf(steps)) {
+    // Priced in its own grid - see priceGrid below.
+    if (field.priceGrid) continue;
     if (field.type === 'choice' || field.type === 'multi') {
       for (const opt of field.options ?? []) {
         // An option taken off the list is not offered, so it is not priced
@@ -139,4 +174,35 @@ export function priceCatalogEntries(steps = STEPS) {
     }
   }
   return entries;
+}
+
+/**
+ * The quality prices as a grid, for Settings: a row per quality, a column per
+ * suit type, each cell its key, GD's own figure (if one is set), the figure
+ * shipped with the app (if there is one), and what it falls back to.
+ */
+export function priceGrid(steps = STEPS, overrides = {}) {
+  const field = gridFieldOf(steps);
+  const suitField = allFieldsOf(steps).find((f) => f.id === 'suitType');
+  if (!field || !suitField) return null;
+  const suits = (suitField.options ?? []).filter((o) => typeof o.basePrice === 'number' && !o.retired);
+  const qualities = (field.options ?? []).filter((o) => !o.retired);
+  return {
+    field,
+    suits,
+    rows: qualities.map((quality) => ({
+      quality,
+      cells: suits.map((suit) => {
+        const key = gridPriceKey(suit.key, quality.key);
+        const shipped = MATERIAL_PRICES[quality.key]?.[suit.key] ?? null;
+        return {
+          key,
+          suit,
+          shipped,
+          own: typeof overrides[key] === 'number' ? overrides[key] : null,
+          fallback: resolve(overrides, priceKeyForOption('suitType', suit.key), suit.basePrice),
+        };
+      }),
+    })),
+  };
 }

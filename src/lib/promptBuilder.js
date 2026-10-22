@@ -1,4 +1,4 @@
-import { STEPS, SUIT_PARTS, isVisible, valueOf, colourWords } from './catalog.js';
+import { STEPS, SUIT_PARTS, isVisible, valueOf, colourWords, clothsOf } from './catalog.js';
 import { clothDistance, hexToRgb, nameColour, rgbToLab } from './colour.js';
 
 export const VIEWS = [
@@ -123,7 +123,10 @@ function clothColours({ palette = [], sampled } = {}) {
  * and so is the plain fact the model kept forgetting - the trousers are the
  * same cloth as the jacket.
  */
-export function describeCloth({ spec = {}, cloth = {} } = {}) {
+export function describeCloth({ spec = {}, cloth = {}, swatch = true } = {}) {
+  const tones = toneLine(spec, swatch);
+  if (tones) return `${tones} Light and shade change how bright each cloth looks, never its colours.`;
+  if (!swatch) return null;
   const pieces = piecesOf(spec);
   const lines = [
     pieces.length > 1
@@ -156,6 +159,26 @@ export function describeCloth({ spec = {}, cloth = {} } = {}) {
   }
   lines.push('Light and shade change how bright the cloth looks, never its colours.');
   return lines.join(' ');
+}
+
+/**
+ * A two- or three-tone suit, said piece by piece - "the jacket in navy, the
+ * trousers in charcoal grey". The colours measured from the one swatch are of
+ * one cloth, so they are not set against every piece; the swatch is offered
+ * for the weave and the finish. Null for a suit in one cloth, or when fewer
+ * than two pieces have a colour to say.
+ */
+function toneLine(spec, swatch) {
+  const cloths = clothsOf(spec);
+  const said = (cloths ?? []).filter((c) => String(c.colour ?? '').trim());
+  if (!cloths || said.length < 2) return null;
+  const each = cloths.map((c) => {
+    const name = PIECE_NAMES[c.part] ?? c.part;
+    return String(c.colour ?? '').trim() ? `the ${name} in ${colourWords(c.colour)}` : `the ${name} in the swatch's cloth`;
+  });
+  return `The cloth: this is a ${cloths.length === 3 ? 'three' : 'two'}-tone outfit - each piece is cut from its own cloth: ${listed(each)}. Keep every piece in its own colour, from every angle; never blend them or give one piece another's colour.${
+    swatch ? ' The fabric swatch is one of these cloths: take the weave, texture and finish from it.' : ''
+  }`;
 }
 
 /**
@@ -214,7 +237,11 @@ export function buildRenderPrompt({ spec = {}, client = {}, analysis = {}, view 
 
   parts.push(`Garment specification - every detail is mandatory and must be visible and correct:\n- ${clauses.join('\n- ')}`);
 
-  if (hasSwatch) parts.push(describeCloth({ spec, cloth }));
+  // A suit in more than one cloth is described with or without a swatch: the
+  // colours of its pieces are in words, and are the one thing that cannot be
+  // left to the picture.
+  const clothLine = describeCloth({ spec, cloth, swatch: hasSwatch });
+  if (clothLine) parts.push(clothLine);
 
   // The lining is described on its own, because it is only glimpsed. It is
   // typed in words now; an order from the colour-wheel days still carries a

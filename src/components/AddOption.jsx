@@ -119,3 +119,122 @@ export function OptionEditor({ fieldId, fieldLabel, existing, onClose, onSaved }
     </Modal>
   );
 }
+
+/**
+ * GD's own words - and price - for a built-in option or switch, edited where
+ * it is chosen rather than in Settings.
+ *
+ * It writes the same two lists the Settings price list does, under the same
+ * keys, so a change made here shows there too. Only the words and the figure
+ * change: the option's key, and so every order that already chose it, stays
+ * as it was, and an agreed quote keeps its figures. Both lists are read fresh
+ * before they are written, so an edit made in Settings meanwhile is not lost.
+ */
+export function BuiltInEditor({ field, option = null, overrides = {}, onClose, onSaved, onPricesChanged }) {
+  const key = option ? `${field.id}:${option.key}` : field.id;
+  const shown = option ?? field;
+  const isBase = typeof option?.basePrice === 'number';
+  const defaultPrice = option ? (isBase ? option.basePrice : option.price ?? 0) : field.price ?? 0;
+  // A quality is priced by suit type, in its own grid in Settings; a switch
+  // that costs nothing has no price to edit.
+  const priced = !field.priceGrid && (!!option || field.price > 0);
+  const [form, setForm] = useState({
+    label: shown.label ?? '',
+    desc: shown.desc ?? '',
+    price: typeof overrides[key] === 'number' ? String(overrides[key]) : '',
+  });
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+
+  async function write(change) {
+    setBusy(true);
+    try {
+      await change();
+      onSaved();
+    } catch (err) {
+      toast(messageFor(err), 'err');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const save = () => write(async () => {
+    const label = form.label.trim();
+    const desc = form.desc.trim();
+    const price = String(form.price).trim();
+    if (price !== '' && !(Number.isFinite(Number(price)) && Number(price) >= 0)) {
+      throw new Error('The price has to be a number of rand, 0 or more.');
+    }
+    if (label !== (shown.label ?? '') || desc !== (shown.desc ?? '')) {
+      const labels = { ...((await api.settings.get({ key: 'labelOverrides', fallback: {} })) ?? {}) };
+      if (!label) delete labels[key];
+      else labels[key] = { label, desc };
+      await api.settings.set({ key: 'labelOverrides', value: labels });
+    }
+    const was = typeof overrides[key] === 'number' ? String(overrides[key]) : '';
+    if (priced && price !== was) {
+      const prices = { ...((await api.settings.get({ key: 'priceOverrides', fallback: {} })) ?? {}) };
+      if (price === '') delete prices[key];
+      else prices[key] = Number(price);
+      await api.settings.set({ key: 'priceOverrides', value: prices });
+      onPricesChanged?.(prices);
+    }
+  });
+
+  const restore = () => write(async () => {
+    const labels = { ...((await api.settings.get({ key: 'labelOverrides', fallback: {} })) ?? {}) };
+    delete labels[key];
+    await api.settings.set({ key: 'labelOverrides', value: labels });
+  });
+
+  return (
+    <Modal
+      title={`Edit "${shown.label}"`}
+      onClose={onClose}
+      footer={
+        <>
+          {shown.renamed && (
+            <button className="btn btn-ghost" onClick={restore} disabled={busy}>Use the built-in wording</button>
+          )}
+          <div className="spacer" />
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn btn-gold" onClick={save} disabled={busy}>{busy ? 'Saving...' : 'Save'}</button>
+        </>
+      }
+    >
+      <div className="field">
+        <label htmlFor="builtin-name">Name</label>
+        <input id="builtin-name" className="input" autoFocus value={form.label} maxLength={120}
+          onChange={(e) => setForm({ ...form, label: e.target.value })} />
+      </div>
+
+      <div className="field">
+        <label htmlFor="builtin-note">Short note <span className="faint" style={{ fontWeight: 400 }}>(optional)</span></label>
+        <input id="builtin-note" className="input" value={form.desc} maxLength={200} placeholder="Shown under the name"
+          onChange={(e) => setForm({ ...form, desc: e.target.value })} />
+      </div>
+
+      {priced ? (
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label htmlFor="builtin-price">{isBase ? 'Price' : 'Extra cost'} ({CURRENCY})</label>
+          <input id="builtin-price" type="number" min="0" className="input" style={{ maxWidth: 180 }}
+            value={form.price} placeholder={String(defaultPrice)}
+            onChange={(e) => setForm({ ...form, price: e.target.value })} />
+          <div className="hint">
+            Leave blank for the built-in {CURRENCY}{defaultPrice}. The same figure as in Settings &gt; Price list:
+            every order not yet agreed is re-priced; an agreed quote keeps its figures.
+            {isBase && ' This is the price with no material quality chosen - each quality has its own, in the grid there.'}
+          </div>
+        </div>
+      ) : field.priceGrid && (
+        <p className="hint" style={{ marginBottom: 0 }}>
+          A quality is priced by suit type, in Settings &gt; Price list.
+        </p>
+      )}
+
+      <p className="tiny faint" style={{ marginBottom: 0 }}>
+        Only the words change - every order that already chose this keeps it.
+      </p>
+    </Modal>
+  );
+}

@@ -103,7 +103,7 @@ app.whenReady().then(async () => {
           message: m?.querySelector('.informal-message')?.textContent ?? '',
           amounts: [...(m?.querySelectorAll('.informal-amount') ?? [])].map(i => i.value),
           thumbs: m?.querySelectorAll('.informal-renders img').length ?? 0,
-          box: !!m?.querySelector('input[type=checkbox]'),
+          box: !!m?.querySelector('input.informal-attach'),
           buttons: [...(m?.querySelectorAll('button') ?? [])].map(b => b.textContent.trim()),
         });
       },
@@ -120,7 +120,7 @@ app.whenReady().then(async () => {
     })()`);
   };
   const openModal = async (name) => {
-    await openOrder(name, 'Order');
+    await openOrder(name, 'Summary');
     return JSON.parse(await js(`(async () => {
       (T.byText('button', 'Send informal quote') || T.byText('button', 'Send again')).click(); await T.wait(1200);
       return T.modal();
@@ -224,7 +224,7 @@ app.whenReady().then(async () => {
 
   log('\n=== untick the renders and none go ===');
   m = await openModal('Sipho');
-  m = JSON.parse(await js(`(async () => { document.querySelector('.modal input[type=checkbox]').click(); await T.wait(300); return T.modal(); })()`));
+  m = JSON.parse(await js(`(async () => { document.querySelector('.modal input.informal-attach').click(); await T.wait(300); return T.modal(); })()`));
   check(m.thumbs === 0 && !/I have attached/.test(m.message), 'the pictures and the sentence about them go', m.message.slice(-260));
   await press('Send to sipho@example.com', 2500);
   const bare = parse(sentMessages[sentMessages.length - 1]);
@@ -233,7 +233,7 @@ app.whenReady().then(async () => {
 
   await call('connections.set', { consent: false });
   m = await openModal('Sipho');
-  await js(`(async () => { document.querySelector('.modal input[type=checkbox]').click(); await T.wait(300); return true; })()`);
+  await js(`(async () => { document.querySelector('.modal input.informal-attach').click(); await T.wait(300); return true; })()`);
   const beforeMailto = opened.length;
   await press('Open the email to send', 1500);
   check(opened.length === beforeMailto + 1 && opened[opened.length - 1].kind === 'url' && lastUrl().startsWith('mailto:'),
@@ -241,7 +241,7 @@ app.whenReady().then(async () => {
 
   log('\n=== the order changes, and his figures no longer describe it ===');
   db.updateSuit(suit, { spec: { suitType: 'three_piece', lapel: 'notch' } });
-  await openOrder('Sipho', 'Order');
+  await openOrder('Sipho', 'Summary');
   const card = await js(`[...document.querySelectorAll('.card')].find(c => c.querySelector('h3')?.textContent === 'Informal quote')?.innerText ?? ''`);
   check(/The order has changed since/.test(card), 'the card says the order has moved on', card);
   m = await openModal('Sipho');
@@ -252,7 +252,7 @@ app.whenReady().then(async () => {
   check(/This total follows the price list until the formal quote is sent/.test(summary), 'as does the formal quote');
 
   db.updateSuit(suit, { spec: { suitType: 'three_piece', lapel: 'peak' } });
-  await openOrder('Sipho', 'Order');
+  await openOrder('Sipho', 'Summary');
   const back = await js(`[...document.querySelectorAll('.card')].find(c => c.querySelector('h3')?.textContent === 'Informal quote')?.innerText ?? ''`);
   check(!/The order has changed since/.test(back), 'put it back as it was, and his figures stand again', back);
 
@@ -335,7 +335,7 @@ app.whenReady().then(async () => {
     ['a line with no description', { lines: [line(10, { label: '   ' })] }],
     ['no price list behind the figures', { lines: [line(10)], basis: undefined }],
     ['a basis that is not pairs', { lines: [line(10)], basis: [['only-a-key']] }],
-    ['an essay of a message', { lines: [line(10)], text: 'x'.repeat(12001) }],
+    ['an essay of a message', { lines: [line(10)], text: 'x'.repeat(32001) }],
   ];
   for (const [what, patch] of refused) {
     const r = await call('informal.send', { ...good, ...patch });

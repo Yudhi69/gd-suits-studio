@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { api } from '../lib/api.js';
-import { eventTypesWith, statusLabel, statusPill, PROJECT_STATUSES, isCompleted } from '../lib/catalog.js';
+import { api, messageFor } from '../lib/api.js';
+import { eventTypesWith, statusLabel, statusPill, PROJECT_STATUSES, isCompleted, isOpenStatus } from '../lib/catalog.js';
+import { completeOrder } from '../lib/complete.js';
 import { formatMoney } from '../lib/pricing.js';
 import { quotedTotal } from '../lib/quote.js';
 import { ConfirmButton, Empty, Modal, useToast } from '../components/ui.jsx';
@@ -13,6 +14,9 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
   // Most recently worked on first - the order you had open yesterday is the
   // one you want this morning.
   const [sort, setSort] = useState({ key: 'updated', dir: 'desc' });
+  // The work in hand, and apart from it the finished orders - the same split
+  // the database sheet makes.
+  const [tab, setTab] = useState('current');
   const toast = useToast();
 
   async function load() {
@@ -32,10 +36,23 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
   const valueOf = (p) => totals.get(p.id) ?? 0;
 
   const q = query.trim().toLowerCase();
+  const current = projects.filter((p) => isOpenStatus(p.status));
+  const completed = projects.filter((p) => !isOpenStatus(p.status));
+  const listed = tab === 'completed' ? completed : current;
   const found = q
-    ? projects.filter((p) =>
+    ? listed.filter((p) =>
         `${p.name} ${p.surname} ${p.title} ${p.event_type} ${p.order_ref}`.toLowerCase().includes(q))
-    : projects;
+    : listed;
+
+  async function complete(p) {
+    try {
+      const status = await completeOrder(p.id, overrides, steps);
+      toast(`${p.name || 'The order'} moved to completed - ${statusLabel(status).toLowerCase()}`, 'ok');
+    } catch (err) {
+      toast(messageFor(err), 'err');
+    }
+    load();
+  }
 
   /**
    * What each column sorts on. Status sorts by where it sits in the pipeline
@@ -98,9 +115,20 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
           />
         </div>
 
+        <div className="inline" style={{ marginBottom: 12 }}>
+          <button className={`step-tab ${tab === 'current' ? 'active' : ''}`} onClick={() => setTab('current')}>
+            Current <span className="faint">{current.length}</span>
+          </button>
+          <button className={`step-tab ${tab === 'completed' ? 'active' : ''}`} onClick={() => setTab('completed')}>
+            Completed <span className="faint">{completed.length}</span>
+          </button>
+        </div>
+
         {shown.length === 0 ? (
           <Empty
-            title={projects.length ? 'Nothing matches that search' : 'No consultations yet'}
+            title={q ? 'Nothing matches that search'
+              : projects.length ? (tab === 'completed' ? 'No completed orders yet' : 'No orders in progress')
+                : 'No consultations yet'}
             action={!projects.length && <button className="btn btn-gold" onClick={() => setCreating(true)}>Start the first one</button>}
           >
             {!projects.length && 'Start a consultation to capture the client, their photos and the suit they want.'}
@@ -134,6 +162,11 @@ export default function Dashboard({ onOpenProject, onOpenClient, steps, override
                       <td className="mono" style={{ textAlign: 'right' }}>{formatMoney(valueOf(p))}</td>
                       <td className="muted mono tiny">{(p.updated_at || '').slice(0, 10) || '-'}</td>
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
+                        {isOpenStatus(p.status) && (
+                          <ConfirmButton className="btn btn-sm btn-ghost" confirmLabel="Mark completed?" onConfirm={() => complete(p)}>
+                            Completed
+                          </ConfirmButton>
+                        )}
                         <button className="btn btn-sm btn-ghost" onClick={() => onOpenClient(p.client_id)}>Client file</button>
                         <ConfirmButton
                           className="btn btn-sm btn-ghost btn-danger"

@@ -137,9 +137,13 @@ app.whenReady().then(async () => {
   const list = JSON.parse(await js(`(async () => {
     const wait = ms => new Promise(r => setTimeout(r, ms));
     [...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('Orders')).click(); await wait(900);
-    const pills = [...document.querySelectorAll('.table tbody td .pill')].map(p => ({
+    const read = () => [...document.querySelectorAll('.table tbody td .pill')].map(p => ({
       text: p.textContent.trim(), h: Math.round(p.getBoundingClientRect().height),
     }));
+    // A completed order is on the Completed list, not the current one.
+    const pills = read();
+    [...document.querySelectorAll('.step-tab')].find(t => t.textContent.trim().startsWith('Completed')).click(); await wait(600);
+    pills.push(...read());
     const card = document.querySelector('.table').closest('.card');
     return JSON.stringify({ pills, overflowX: getComputedStyle(card).overflowX,
       scrolls: card.scrollWidth > card.clientWidth });

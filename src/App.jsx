@@ -169,6 +169,7 @@ export default function App() {
               onUnitChange={async (u) => { setUnit(u); await api.settings.set({ key: 'measureUnit', value: u }); }}
               customOptions={catalog.options}
               onCatalogChanged={catalog.reload}
+              onOverridesChanged={setOverrides}
               hasKey={!!keyState?.present}
               onBack={() => setRoute({ name: 'dashboard' })}
             />

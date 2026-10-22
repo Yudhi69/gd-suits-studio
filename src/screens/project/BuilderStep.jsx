@@ -1,11 +1,12 @@
 import React from 'react';
-import { isVisible } from '../../lib/catalog.js';
+import { isVisible, allFieldsOf } from '../../lib/catalog.js';
+import { qualityOf } from '../../lib/pricing.js';
 import Field from '../../components/Field.jsx';
 import { projectMedia } from '../../lib/api.js';
 import NotesPanel from '../../components/NotesPanel.jsx';
 
 /** Renders any catalog step. All the builder screens are this one component. */
-export default function BuilderStep({ ctx, step, overrides, onCatalogChanged }) {
+export default function BuilderStep({ ctx, step, steps = [step], overrides, onCatalogChanged, onOverridesChanged }) {
   const { project, updateSpec, addNote, deleteNote, savePhoto, deletePhoto, photoBySlot } = ctx;
   const spec = ctx.spec ?? project.spec ?? {};
 
@@ -26,6 +27,19 @@ export default function BuilderStep({ ctx, step, overrides, onCatalogChanged }) 
   };
 
   const fields = step.fields.filter((f) => isVisible(f, spec));
+  const everyField = allFieldsOf(steps);
+  const byId = (id) => everyField.find((f) => f.id === id && f.step !== step.key);
+  const suitField = everyField.find((f) => f.id === 'suitType');
+  const shared = {
+    spec,
+    overrides,
+    onChange: updateSpec,
+    onCatalogChanged,
+    onOverridesChanged,
+    media,
+    quality: qualityOf(spec, steps),
+    suitOpt: suitField?.options?.find((o) => o.key === spec.suitType) ?? null,
+  };
 
   return (
     <div className="row" style={{ alignItems: 'flex-start' }}>
@@ -42,14 +56,8 @@ export default function BuilderStep({ ctx, step, overrides, onCatalogChanged }) 
             {fields.map((field) => (
               <React.Fragment key={field.id}>
                 {field.section && <div className="price-group-title field-section">{field.section}</div>}
-                <Field
-                  field={field}
-                  spec={spec}
-                  overrides={overrides}
-                  onChange={updateSpec}
-                  onCatalogChanged={onCatalogChanged}
-                  media={media}
-                />
+                <Recalled fields={(field.recall ?? []).map(byId).filter((f) => f && isVisible(f, spec))} shared={shared} />
+                <Field field={field} {...shared} />
               </React.Fragment>
             ))}
           </div>
@@ -64,6 +72,22 @@ export default function BuilderStep({ ctx, step, overrides, onCatalogChanged }) 
           onDelete={deleteNote}
         />
       </div>
+    </div>
+  );
+}
+
+/**
+ * Answers given on an earlier page, shown again where they matter - the shirt
+ * colour above the shirt code. They are the same answers, not copies: a change
+ * here changes the earlier page, so the order is never charged or printed
+ * twice for one choice.
+ */
+function Recalled({ fields, shared }) {
+  if (!fields.length) return null;
+  return (
+    <div className="recalled">
+      <div className="tiny faint" style={{ marginBottom: 8 }}>Chosen earlier - change it here or there</div>
+      {fields.map((f) => <Field key={f.id} field={f} {...shared} />)}
     </div>
   );
 }
