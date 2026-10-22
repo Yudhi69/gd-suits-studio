@@ -231,7 +231,7 @@ app.whenReady().then(async () => {
     const sent = await call('informal.send', { projectId: order, via: 'whatsapp', text: long, lines: line, basis: [] });
     check(sent.data?.copied === true && copied.at(-1) === long, 'the whole message is put on the clipboard', JSON.stringify(sent).slice(0, 160));
     check(opened.slice(beforeLong).length === 1 && opened.at(-1) === 'https://wa.me/27825556666',
-      'and WhatsApp opens on the client\'s chat, empty, to paste it into', JSON.stringify(opened.slice(beforeLong)));
+      'and WhatsApp opens on the client\'s chat, empty, to paste it into', JSON.stringify(opened.slice(beforeLong)).slice(0, 160));
     const short = await call('informal.send', { projectId: order, via: 'whatsapp', text: 'hello', lines: line, basis: [] });
     check(!short.data?.copied && opened.at(-1) === 'https://wa.me/27825556666?text=hello', 'a short one is still written into the link',
       JSON.stringify(short) + ' ' + opened.at(-1));
