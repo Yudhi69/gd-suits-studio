@@ -1,0 +1,7 @@
+node_modules/
+dist/
+release/
+.testdata/
+*.tmp.js
+.DS_Store
+electron/preload.build.js

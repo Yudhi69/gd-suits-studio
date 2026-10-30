@@ -1,0 +1,2265 @@
+'use strict';
+
+const path = require('node:path');
+const { randomUUID } = require('node:crypto');
+const fs = require('node:fs');
+const Database = require('better-sqlite3');
+const dateMoves = require('./dateMoves');
+
+let db = null;
+
+/**
+ * Schema is applied idempotently on every launch. `user_version` tracks
+ * migrations so an existing tailor's database is upgraded in place rather than
+ * rebuilt - client files must survive an app update.
+ */
+const MIGRATIONS = [
+  // v1 - initial schema
+  (d) => {
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS clients (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        name         TEXT NOT NULL,
+        surname      TEXT NOT NULL DEFAULT '',
+        contact      TEXT NOT NULL DEFAULT '',
+        email        TEXT NOT NULL DEFAULT '',
+        created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS projects (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id     INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        title         TEXT NOT NULL DEFAULT 'New suit',
+        event_type    TEXT NOT NULL DEFAULT '',
+        event_other   TEXT NOT NULL DEFAULT '',
+        event_date    TEXT NOT NULL DEFAULT '',
+        delivery_date TEXT NOT NULL DEFAULT '',
+        status        TEXT NOT NULL DEFAULT 'draft',
+        spec_json     TEXT NOT NULL DEFAULT '{}',
+        analysis_json TEXT NOT NULL DEFAULT '{}',
+        created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_projects_client ON projects(client_id);
+
+      CREATE TABLE IF NOT EXISTS photos (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        fitting_id INTEGER REFERENCES fittings(id) ON DELETE CASCADE,
+        slot       TEXT NOT NULL,
+        garment    TEXT NOT NULL DEFAULT '',
+        filename   TEXT NOT NULL,
+        mime       TEXT NOT NULL DEFAULT 'image/jpeg',
+        meta_json  TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_photos_project ON photos(project_id);
+
+      CREATE TABLE IF NOT EXISTS notes (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        step       TEXT NOT NULL DEFAULT 'general',
+        body       TEXT NOT NULL,
+        author     TEXT NOT NULL DEFAULT 'tailor',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_notes_project ON notes(project_id, step);
+
+      CREATE TABLE IF NOT EXISTS measurements (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        garment    TEXT NOT NULL,
+        field_id   TEXT NOT NULL,
+        value      REAL,
+        unit       TEXT NOT NULL DEFAULT 'cm',
+        source     TEXT NOT NULL DEFAULT 'measured',
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(project_id, garment, field_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS renders (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        parent_id   INTEGER REFERENCES renders(id) ON DELETE SET NULL,
+        view        TEXT NOT NULL DEFAULT 'front',
+        provider    TEXT NOT NULL DEFAULT 'gemini',
+        model       TEXT NOT NULL DEFAULT '',
+        prompt      TEXT NOT NULL DEFAULT '',
+        instruction TEXT NOT NULL DEFAULT '',
+        filename    TEXT NOT NULL,
+        approved    INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_renders_project ON renders(project_id);
+
+      CREATE TABLE IF NOT EXISTS fittings (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        session_no  INTEGER NOT NULL DEFAULT 1,
+        tailor_notes TEXT NOT NULL DEFAULT '',
+        client_notes TEXT NOT NULL DEFAULT '',
+        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_fittings_project ON fittings(project_id);
+
+      CREATE TABLE IF NOT EXISTS settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+    `);
+  },
+
+  // v2 - split client-level identity from order-level detail, and add the
+  // reusable style-reference library that follows a client across orders.
+  (d) => {
+    d.exec(`
+      ALTER TABLE clients ADD COLUMN profile_json TEXT NOT NULL DEFAULT '{}';
+
+      CREATE TABLE IF NOT EXISTS client_references (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id  INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+        filename   TEXT NOT NULL,
+        mime       TEXT NOT NULL DEFAULT 'image/jpeg',
+        kind       TEXT NOT NULL DEFAULT 'style',
+        title      TEXT NOT NULL DEFAULT '',
+        notes      TEXT NOT NULL DEFAULT '',
+        tags       TEXT NOT NULL DEFAULT '',
+        favourite  INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_refs_client ON client_references(client_id);
+
+      -- Which references actually fed a given render, so the style history is
+      -- evidence-backed rather than guessed at later.
+      CREATE TABLE IF NOT EXISTS render_refs (
+        render_id    INTEGER NOT NULL REFERENCES renders(id) ON DELETE CASCADE,
+        reference_id INTEGER NOT NULL REFERENCES client_references(id) ON DELETE CASCADE,
+        PRIMARY KEY (render_id, reference_id)
+      );
+
+      -- The client's body as last measured. A new order seeds from here so a
+      -- returning client is adjusted, not re-measured from scratch.
+      CREATE TABLE IF NOT EXISTS client_measurements (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id  INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        garment    TEXT NOT NULL,
+        field_id   TEXT NOT NULL,
+        value      REAL,
+        unit       TEXT NOT NULL DEFAULT 'cm',
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(client_id, garment, field_id)
+      );
+    `);
+  },
+
+  // v3 - the tailor's own catalog. Shops offer things the built-in list does
+  // not, so categories and priced items can be added at runtime and flow
+  // through the builder, the quote, the spec sheet and the render prompt
+  // exactly as the built-in ones do.
+  (d) => {
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS catalog_categories (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        key        TEXT NOT NULL UNIQUE,
+        title      TEXT NOT NULL,
+        blurb      TEXT NOT NULL DEFAULT '',
+        sort       INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS catalog_items (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        field_id     TEXT NOT NULL UNIQUE,
+        category     TEXT NOT NULL,
+        label        TEXT NOT NULL,
+        kind         TEXT NOT NULL DEFAULT 'toggle',
+        price        REAL NOT NULL DEFAULT 0,
+        options_json TEXT NOT NULL DEFAULT '[]',
+        description  TEXT NOT NULL DEFAULT '',
+        prompt       TEXT NOT NULL DEFAULT '',
+        sort         INTEGER NOT NULL DEFAULT 0,
+        active       INTEGER NOT NULL DEFAULT 1,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_items_category ON catalog_items(category);
+    `);
+  },
+
+  // v4 - a fitting is either the first or the final one, and the order status
+  // says which stage it is at. Existing rows are mapped rather than reset:
+  // the earliest session on an order becomes the first fitting.
+  (d) => {
+    d.exec(`
+      ALTER TABLE fittings ADD COLUMN kind TEXT NOT NULL DEFAULT 'first';
+      UPDATE fittings SET kind = 'first' WHERE session_no = 1;
+      UPDATE fittings SET kind = 'final' WHERE session_no > 1;
+      UPDATE projects SET status = 'first_fitting' WHERE status = 'fitting';
+    `);
+  },
+
+  // v5 - options the shop adds to a selector that already exists. Distinct
+  // from catalog_items, which add a whole new field: these extend the choices
+  // on a built-in one (another lapel shape, another event type).
+  (d) => {
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS catalog_options (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        field_id    TEXT NOT NULL,
+        option_key  TEXT NOT NULL,
+        label       TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        price       REAL NOT NULL DEFAULT 0,
+        prompt      TEXT NOT NULL DEFAULT '',
+        sort        INTEGER NOT NULL DEFAULT 0,
+        active      INTEGER NOT NULL DEFAULT 1,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(field_id, option_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_options_field ON catalog_options(field_id);
+    `);
+  },
+
+  // v6 - a guardian for under-age clients, and the dates the process actually
+  // runs to. Matric ball clients are usually minors, so the person who signs
+  // and pays is not the person being measured.
+  (d) => {
+    d.exec(`
+      ALTER TABLE clients ADD COLUMN is_minor INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE clients ADD COLUMN secondary_name TEXT NOT NULL DEFAULT '';
+      ALTER TABLE clients ADD COLUMN secondary_relationship TEXT NOT NULL DEFAULT '';
+      ALTER TABLE clients ADD COLUMN secondary_contact TEXT NOT NULL DEFAULT '';
+      ALTER TABLE clients ADD COLUMN secondary_email TEXT NOT NULL DEFAULT '';
+
+      ALTER TABLE projects ADD COLUMN consultation_date TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN measurement_date TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN first_fitting_date TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN final_fitting_date TEXT NOT NULL DEFAULT '';
+    `);
+  },
+
+  // v7 - the agreed quote, frozen onto the order.
+  //
+  // Until now every quote was recomputed live from the current price list, so
+  // adjusting a price - or deleting an option a client had chosen - silently
+  // rewrote the total on orders that had already been agreed and sent. The
+  // spec was never lost, but the money moved. An order that has left draft now
+  // carries the figures it was agreed at.
+  (d) => {
+    d.exec(`
+      ALTER TABLE projects ADD COLUMN quote_json TEXT NOT NULL DEFAULT '';
+    `);
+  },
+
+  // v8 - the parts of the business that were living in a spreadsheet.
+  //
+  // The Excel workbook carried five sheets - Suit Progress, Current Orders,
+  // Completed, Alterations, Extras - that were really one pipeline with the
+  // same client keyed by name in each. This folds them into the order they
+  // belong to: money, alterations and extras become rows, and the stage an
+  // order sits at becomes one field instead of a column per sheet.
+  (d) => {
+    d.exec(`
+      ALTER TABLE projects ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE projects ADD COLUMN fabric_name TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN fabric_code TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN supplier TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN first_appointment TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN appointment_notes TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN measurement_form_received INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE projects ADD COLUMN form_printed INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE projects ADD COLUMN comments TEXT NOT NULL DEFAULT '';
+
+      -- Money in, against the deposit the shop's terms require.
+      CREATE TABLE IF NOT EXISTS payments (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        kind       TEXT NOT NULL DEFAULT 'deposit',
+        amount     REAL NOT NULL DEFAULT 0,
+        paid_on    TEXT NOT NULL DEFAULT '',
+        method     TEXT NOT NULL DEFAULT '',
+        reference  TEXT NOT NULL DEFAULT '',
+        note       TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_payments_project ON payments(project_id);
+
+      -- Alterations were their own sheet: work that arrives after a fitting,
+      -- with its own due date and its own cost.
+      CREATE TABLE IF NOT EXISTS alterations (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id   INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        garment      TEXT NOT NULL DEFAULT '',
+        description  TEXT NOT NULL DEFAULT '',
+        kind         TEXT NOT NULL DEFAULT '',
+        status       TEXT NOT NULL DEFAULT 'received',
+        received_on  TEXT NOT NULL DEFAULT '',
+        due_on       TEXT NOT NULL DEFAULT '',
+        confirmed_on TEXT NOT NULL DEFAULT '',
+        cost         REAL NOT NULL DEFAULT 0,
+        note         TEXT NOT NULL DEFAULT '',
+        created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_alterations_project ON alterations(project_id);
+
+      -- Extras were tracked per client with a colour, a count and a status of
+      -- their own - a shirt can be outstanding while the suit is finished.
+      CREATE TABLE IF NOT EXISTS order_extras (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        extra_type TEXT NOT NULL DEFAULT '',
+        colour     TEXT NOT NULL DEFAULT '',
+        quantity   INTEGER NOT NULL DEFAULT 1,
+        status     TEXT NOT NULL DEFAULT 'ordered',
+        unit_price REAL NOT NULL DEFAULT 0,
+        note       TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_extras_project ON order_extras(project_id);
+
+      -- One pipeline replacing the sheet-per-stage split. Existing statuses
+      -- map onto it rather than being reset.
+      UPDATE projects SET status = 'enquiry'   WHERE status = 'draft';
+      UPDATE projects SET status = 'quoted'    WHERE status = 'approved';
+    `);
+  },
+  // v9 - what the workbook recorded that the app had no field for.
+  //
+  // These are free text as GD typed them, not selections from the catalogue:
+  // a lining code ("LN 9041"), a design written as a sentence ("PEAK LAPEL
+  // 1B2S, TUXEDO FINISH"), the shirt, and the Google Doc holding the signed
+  // measurement form. They are kept verbatim rather than forced into the
+  // pickers, because a guess at what "TBC" meant would be worse than the note.
+  //
+  // imported_balance is the balance-due figure from the sheet. It is kept
+  // apart from quote/payment arithmetic on purpose: the sheet recorded either
+  // what was owed or what had been paid, never both, so an imported balance
+  // is not a derivable figure and must not masquerade as one.
+  (d) => {
+    d.exec(`
+      ALTER TABLE projects ADD COLUMN lining TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN design TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN shirt TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN form_url TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN imported_balance REAL NOT NULL DEFAULT 0;
+      ALTER TABLE projects ADD COLUMN balance_note TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN import_source TEXT NOT NULL DEFAULT '';
+      CREATE INDEX IF NOT EXISTS idx_projects_source ON projects(import_source);
+    `);
+  },
+  // v10 - an order number a person can say out loud, and a truthful timeline.
+  //
+  // Every order has always had a row id, but an id is an implementation
+  // detail: it is not something GD can quote down the phone or write on an
+  // invoice. order_ref is that number - GD-2026-0043 - unique across the book
+  // and never reused.
+  //
+  // The second half repairs something the workbook import broke. Importing
+  // stamped all 771 rows with the moment they were imported, which made two
+  // years of finished work look like the most recently touched thing in the
+  // business and buried whatever the tailor was actually working on. Each
+  // imported order is dated from the last thing that really happened to it.
+  (d) => {
+    d.exec(`
+      ALTER TABLE projects ADD COLUMN order_ref TEXT NOT NULL DEFAULT '';
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_ref
+        ON projects(order_ref) WHERE order_ref <> '';
+    `);
+
+    // An imported order's real date: the last thing that has actually
+    // happened to it. A fitting booked for next year is not activity - it has
+    // not occurred - so anything in the future is ignored and the most recent
+    // past date wins. MAX() over dates already filtered to the past does that.
+    d.exec(`
+      UPDATE projects
+         SET updated_at = COALESCE(
+               -- Scalar MAX() returns NULL if any argument is NULL, so a
+               -- missing fitting date would wipe out the others. Absent dates
+               -- become '', which sorts below every real date instead.
+               NULLIF(MAX(
+                 CASE WHEN final_fitting_date <= date('now') THEN final_fitting_date ELSE '' END,
+                 CASE WHEN first_fitting_date <= date('now') THEN first_fitting_date ELSE '' END,
+                 CASE WHEN consultation_date  <= date('now') THEN consultation_date  ELSE '' END,
+                 CASE WHEN first_appointment  <= date('now') THEN first_appointment  ELSE '' END,
+                 CASE WHEN event_date         <= date('now') THEN event_date         ELSE '' END
+               ), ''),
+               ''
+             ),
+             created_at = COALESCE(
+               NULLIF(consultation_date, ''),
+               NULLIF(first_appointment, ''),
+               NULLIF(event_date, ''),
+               date(created_at)
+             ) || ' 00:00:00'
+       WHERE import_source <> '';
+    `);
+
+    // Unknown beats wrong: an imported order with nothing dateable on it is
+    // left without a timestamp rather than being stamped with the import,
+    // which would put it at the top of a list sorted by recent activity.
+
+    // Number what is already here. New orders get theirs on creation.
+    assignOrderRefs();
+  },
+  // v11 - the order as GD describes it, after seeing the first build.
+  //
+  // Three things. A client's date of birth and postal address, because a
+  // matric client's age decides whether a parent signs and the postal address
+  // is where the suit goes. A review date, which is the visit after delivery.
+  // And the stages renamed to the words GD actually uses on the phone -
+  // "ready for first fitting" is a different thing from "at the first
+  // fitting", and "completed" splits on whether the money is in.
+  (d) => {
+    d.exec(`
+      ALTER TABLE clients  ADD COLUMN dob TEXT NOT NULL DEFAULT '';
+      ALTER TABLE clients  ADD COLUMN postal_address TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN review_date TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN measurements_done INTEGER NOT NULL DEFAULT 0;
+    `);
+
+    // Old stage -> new stage. "delivered" becomes "completed (paid)": the
+    // workbook's COMPLETED sheet meant the job was finished and settled, and
+    // marking 570 finished orders as still owing money would be worse than
+    // marking the handful that do owe as paid. GD can move those back.
+    const moves = {
+      draft: 'first_consultation',        // the default nothing ever set
+      enquiry: 'first_consultation',
+      first_fitting: 'ready_first_fitting',
+      final_fitting: 'ready_final_fit',
+      delivered: 'completed_paid',
+    };
+    const move = d.prepare('UPDATE projects SET status = ? WHERE status = ?');
+    for (const [from, to] of Object.entries(moves)) move.run(to, from);
+
+    // An order whose measurement form came in has had its measurements taken.
+    d.exec(`UPDATE projects SET measurements_done = 1
+             WHERE measurement_form_received = 1 OR measurement_date <> ''`);
+  },
+  // v12 - the specs, after the garment pages were rebuilt to GD's lists.
+  //
+  // Two fields changed shape rather than name, so a straight rename would not
+  // do it. The waistband was one choice and is now a list of extras, and the
+  // waistcoat's button count split in two because a single-breasted waistcoat
+  // counts 4, 5 or 6 and a double-breasted one counts 6 or 8. Anything already
+  // filed is carried across; nothing is guessed where there was no answer.
+  (d) => {
+    const rows = d.prepare("SELECT id, spec_json FROM projects WHERE spec_json <> '' AND spec_json <> '{}'").all();
+    const save = d.prepare('UPDATE projects SET spec_json = ? WHERE id = ?');
+    for (const row of rows) {
+      let spec;
+      try { spec = JSON.parse(row.spec_json); } catch { continue; }
+      if (!spec || typeof spec !== 'object') continue;
+      let touched = false;
+
+      if (spec.waistband && !spec.waistbandExtras) {
+        spec.waistbandExtras = [spec.waistband];
+        touched = true;
+      }
+      if (spec.wcButtons && !spec.wcButtonsSingle && !spec.wcButtonsDouble) {
+        // A 3-button waistcoat has no place in the new list, so it lands on
+        // the lowest count that does rather than being dropped.
+        if (spec.wcBreast === 'double') spec.wcButtonsDouble = spec.wcButtons === '8' ? '8' : '6';
+        else spec.wcButtonsSingle = ['4', '5', '6'].includes(spec.wcButtons) ? spec.wcButtons : '4';
+        touched = true;
+      }
+      if (touched) save.run(JSON.stringify(spec), row.id);
+    }
+  },
+  // v13 - an order can carry more than one person, and a person more than one
+  // suit.
+  //
+  // A wedding is one order with a groom, his groomsmen and often his father,
+  // each in their own cloth. The spreadsheet handled that by writing the
+  // client once and leaving the rows underneath nameless, which is how twelve
+  // real suits nearly went missing in the import.
+  //
+  // A person here is a client record, not a name on an order. That is the
+  // whole point: a groomsman measured today has a body record, a photograph
+  // and a reference history, and when he comes back on his own next year they
+  // are already there. It also fills the client database GD asked for, from
+  // the work he is doing anyway.
+  //
+  // "garment" was taken - measurements use it for jacket, waistcoat or pants -
+  // so a whole outfit is a suit.
+  (d) => {
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS order_members (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        client_id  INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        role       TEXT NOT NULL DEFAULT '',
+        position   INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(project_id, client_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_members_project ON order_members(project_id);
+
+      CREATE TABLE IF NOT EXISTS suits (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        client_id   INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        label       TEXT NOT NULL DEFAULT '',
+        spec_json   TEXT NOT NULL DEFAULT '{}',
+        fabric_name TEXT NOT NULL DEFAULT '',
+        fabric_code TEXT NOT NULL DEFAULT '',
+        supplier    TEXT NOT NULL DEFAULT '',
+        quantity    INTEGER NOT NULL DEFAULT 1,
+        position    INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_suits_project ON suits(project_id);
+
+      -- What belongs to which suit. Nullable, because a photograph of the
+      -- client belongs to the person rather than to any one suit.
+      ALTER TABLE renders      ADD COLUMN suit_id INTEGER REFERENCES suits(id) ON DELETE SET NULL;
+      ALTER TABLE fittings     ADD COLUMN suit_id INTEGER REFERENCES suits(id) ON DELETE SET NULL;
+      ALTER TABLE measurements ADD COLUMN suit_id INTEGER REFERENCES suits(id) ON DELETE SET NULL;
+      ALTER TABLE photos       ADD COLUMN suit_id INTEGER REFERENCES suits(id) ON DELETE SET NULL;
+      -- And which person a photograph is of.
+      ALTER TABLE photos       ADD COLUMN client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL;
+    `);
+
+    // Every order that exists becomes an order of one person with one suit,
+    // which is what it already was. The spec moves onto the suit; the column
+    // on projects is left where it is rather than dropped, so a database
+    // opened by an older build still finds what it expects.
+    const projects = d.prepare('SELECT id, client_id, spec_json, fabric_name, fabric_code, supplier, quantity FROM projects').all();
+    const addMember = d.prepare(
+      `INSERT OR IGNORE INTO order_members (project_id, client_id, role, position) VALUES (?, ?, 'Client', 0)`
+    );
+    const addSuit = d.prepare(
+      `INSERT INTO suits (project_id, client_id, label, spec_json, fabric_name, fabric_code, supplier, quantity, position)
+       VALUES (@project_id, @client_id, '', @spec_json, @fabric_name, @fabric_code, @supplier, @quantity, 0)`
+    );
+    const claim = {
+      renders: d.prepare('UPDATE renders SET suit_id = ? WHERE project_id = ? AND suit_id IS NULL'),
+      fittings: d.prepare('UPDATE fittings SET suit_id = ? WHERE project_id = ? AND suit_id IS NULL'),
+      measurements: d.prepare('UPDATE measurements SET suit_id = ? WHERE project_id = ? AND suit_id IS NULL'),
+      photos: d.prepare('UPDATE photos SET suit_id = ?, client_id = ? WHERE project_id = ? AND suit_id IS NULL'),
+    };
+
+    for (const p of projects) {
+      addMember.run(p.id, p.client_id);
+      const suitId = addSuit.run({
+        project_id: p.id,
+        client_id: p.client_id,
+        spec_json: p.spec_json || '{}',
+        fabric_name: p.fabric_name || '',
+        fabric_code: p.fabric_code || '',
+        supplier: p.supplier || '',
+        quantity: p.quantity || 1,
+      }).lastInsertRowid;
+      claim.renders.run(suitId, p.id);
+      claim.fittings.run(suitId, p.id);
+      claim.measurements.run(suitId, p.id);
+      claim.photos.run(suitId, p.client_id, p.id);
+    }
+  },
+  // v14 - measurements belong to a suit, not to an order.
+  //
+  // They were keyed (project_id, garment, field_id), which was right while an
+  // order meant one person. With a wedding party on one order the second
+  // man's chest would overwrite the first's, silently, and the only sign
+  // would be two grooms with identical shoulders. A constraint cannot be
+  // altered in SQLite, so the table is rebuilt around the suit.
+  (d) => {
+    d.exec(`
+      CREATE TABLE measurements_by_suit (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        suit_id    INTEGER REFERENCES suits(id) ON DELETE CASCADE,
+        garment    TEXT NOT NULL,
+        field_id   TEXT NOT NULL,
+        value      REAL,
+        unit       TEXT NOT NULL DEFAULT 'cm',
+        source     TEXT NOT NULL DEFAULT 'measured',
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(suit_id, garment, field_id)
+      );
+
+      INSERT INTO measurements_by_suit (project_id, suit_id, garment, field_id, value, unit, source, updated_at)
+        SELECT project_id, suit_id, garment, field_id, value, unit, source, updated_at FROM measurements;
+
+      DROP TABLE measurements;
+      ALTER TABLE measurements_by_suit RENAME TO measurements;
+      CREATE INDEX IF NOT EXISTS idx_measurements_project ON measurements(project_id);
+      CREATE INDEX IF NOT EXISTS idx_measurements_suit ON measurements(suit_id);
+    `);
+  },
+  // v15 - a photograph says whose it is.
+  //
+  // v13 stamped the photographs that existed then, but anything taken between
+  // that migration and the capture page learning about people carries neither
+  // a person nor a suit. On a single-person order a strict filter would then
+  // show an empty capture page with the photographs still sitting on disk.
+  (d) => {
+    d.exec(`
+      UPDATE photos
+         SET suit_id = (SELECT id FROM suits WHERE suits.project_id = photos.project_id ORDER BY position, id LIMIT 1)
+       WHERE suit_id IS NULL;
+
+      UPDATE photos
+         SET client_id = (SELECT client_id FROM projects WHERE projects.id = photos.project_id)
+       WHERE client_id IS NULL;
+    `);
+  },
+
+  /* v16 - renders belong to a suit, and until now none of them said so.
+     The column was added with the party work and backfilled once, but
+     addRender never wrote it, so every render made since has been orphaned.
+     On a single-person order nothing showed; on a wedding party the groom's
+     preview could be showing the best man's jacket. */
+  (d) => {
+    d.exec(`
+      UPDATE renders
+         SET suit_id = (SELECT id FROM suits WHERE suits.project_id = renders.project_id ORDER BY position, id LIMIT 1)
+       WHERE suit_id IS NULL;
+    `);
+  },
+
+  /* v17 - the four views of one press are one render, and need to say which.
+     Everything already stored was made by its own press, so each existing
+     render becomes a batch of one rather than being guessed into groups. */
+  (d) => {
+    d.exec(`
+      ALTER TABLE renders ADD COLUMN batch_id TEXT;
+      UPDATE renders SET batch_id = 'single-' || id WHERE batch_id IS NULL;
+    `);
+  },
+
+  /* v18 - standing emails: wording, a date to count from, and who it is for.
+     Nothing is sent by this app, so mail_sent records what GD has already
+     opened a draft for, which is what stops the same reminder being offered
+     to him every time he opens the page. */
+  (d) => {
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS mail_rules (
+        id          INTEGER PRIMARY KEY,
+        name        TEXT NOT NULL,
+        subject     TEXT NOT NULL DEFAULT '',
+        body        TEXT NOT NULL DEFAULT '',
+        anchor      TEXT NOT NULL DEFAULT 'event_date',
+        offset_days INTEGER NOT NULL DEFAULT -7,
+        audience    TEXT NOT NULL DEFAULT 'all',
+        enabled     INTEGER NOT NULL DEFAULT 1,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS mail_rule_clients (
+        rule_id   INTEGER NOT NULL REFERENCES mail_rules(id) ON DELETE CASCADE,
+        client_id INTEGER NOT NULL REFERENCES clients(id)    ON DELETE CASCADE,
+        PRIMARY KEY (rule_id, client_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS mail_sent (
+        rule_id    INTEGER NOT NULL REFERENCES mail_rules(id) ON DELETE CASCADE,
+        project_id INTEGER NOT NULL REFERENCES projects(id)   ON DELETE CASCADE,
+        sent_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (rule_id, project_id)
+      );
+    `);
+  },
+
+  /* v19 - GD's October notes.
+
+     The first appointment was asked for twice: once as the schedule's first
+     consultation and again on the order page. They are the same visit, so
+     the order page stops asking, and any date only the order page held moves
+     to the schedule rather than vanishing with the field. A date already in
+     the schedule wins - it is the one GD has been looking at.
+
+     An alteration is entered against the measurement list: each change
+     records the measurement, by how much, and the figure before and after,
+     and the measurement itself moves with it - and moves back if the
+     alteration is cancelled or deleted. One alteration is one job, as on
+     GD's sheet, so it can carry several changes.
+
+     And an informal quote - the summary sent to a client by WhatsApp or email
+     before anything is agreed - records what was sent and what came back. */
+  (d) => {
+    d.exec(`
+      UPDATE projects SET consultation_date = first_appointment
+       WHERE consultation_date = '' AND first_appointment <> '';
+
+      ALTER TABLE alterations ADD COLUMN suit_id INTEGER REFERENCES suits(id) ON DELETE SET NULL;
+      ALTER TABLE alterations ADD COLUMN changes_json TEXT NOT NULL DEFAULT '';
+
+      ALTER TABLE projects ADD COLUMN informal_quote_json TEXT NOT NULL DEFAULT '';
+    `);
+  },
+
+  /* v20 - when a date moves.
+
+     A reminder was recorded per rule and order, so once GD had opened it, it
+     was never offered again - even after the fitting it was about had moved
+     to another day. Each record now keeps the date it was sent for. Nothing
+     recorded before this kept one, so those are taken to have been sent for
+     the date the order holds now: the nearest thing to what was sent, and
+     it offers nothing again that is not already offered today.
+
+     And a note the app writes itself - "First fitting moved from ... to ..."
+     - keeps what it says in a form the app can read back, so a date nudged
+     twice in a minute reads as one move rather than two. */
+  (d) => {
+    d.exec(`
+      ALTER TABLE mail_sent ADD COLUMN anchor_date TEXT NOT NULL DEFAULT '';
+      UPDATE mail_sent SET anchor_date = COALESCE((
+        SELECT substr(CASE r.anchor
+                        WHEN 'event_date'         THEN p.event_date
+                        WHEN 'consultation_date'  THEN p.consultation_date
+                        WHEN 'measurement_date'   THEN p.measurement_date
+                        WHEN 'first_fitting_date' THEN p.first_fitting_date
+                        WHEN 'final_fitting_date' THEN p.final_fitting_date
+                        WHEN 'delivery_date'      THEN p.delivery_date
+                        WHEN 'review_date'        THEN p.review_date
+                      END, 1, 10)
+          FROM mail_rules r, projects p
+         WHERE r.id = mail_sent.rule_id AND p.id = mail_sent.project_id
+      ), '');
+
+      ALTER TABLE notes ADD COLUMN meta_json TEXT NOT NULL DEFAULT '';
+    `);
+  },
+];
+
+function open(userDataPath) {
+  const dir = path.join(userDataPath, 'data');
+  fs.mkdirSync(dir, { recursive: true });
+  db = new Database(path.join(dir, 'gdsuits.db'));
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+
+  const current = db.pragma('user_version', { simple: true });
+  for (let v = current; v < MIGRATIONS.length; v++) {
+    MIGRATIONS[v](db);
+    db.pragma(`user_version = ${v + 1}`);
+  }
+  return db;
+}
+
+const get = () => {
+  if (!db) throw new Error('Database not open');
+  return db;
+};
+
+const nowStamp = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
+
+/* ---------------------------------------------------------------- clients */
+
+function getClient(id) {
+  const row = get().prepare('SELECT * FROM clients WHERE id = ?').get(id);
+  if (!row) return null;
+  return { ...row, profile: JSON.parse(row.profile_json || '{}') };
+}
+
+function listClients() {
+  return get()
+    .prepare(
+      `SELECT c.*,
+              (SELECT COUNT(*) FROM projects p WHERE p.client_id = c.id) AS project_count,
+              (SELECT MAX(p.updated_at) FROM projects p WHERE p.client_id = c.id) AS last_activity
+         FROM clients c
+        ORDER BY COALESCE(last_activity, c.updated_at) DESC`
+    )
+    .all();
+}
+
+function upsertClient(client) {
+  const d = get();
+  if (client.id) {
+    const sets = [
+      'name=@name', 'surname=@surname', 'contact=@contact', 'email=@email',
+      'dob=@dob', 'postal_address=@postal_address',
+      'is_minor=@is_minor', 'secondary_name=@secondary_name',
+      'secondary_relationship=@secondary_relationship',
+      'secondary_contact=@secondary_contact', 'secondary_email=@secondary_email',
+    ];
+    const params = {
+      id: client.id,
+      name: client.name ?? '',
+      surname: client.surname ?? '',
+      contact: client.contact ?? '',
+      email: client.email ?? '',
+      dob: client.dob ?? '',
+      postal_address: client.postalAddress ?? '',
+      is_minor: client.isMinor ? 1 : 0,
+      secondary_name: client.secondaryName ?? '',
+      secondary_relationship: client.secondaryRelationship ?? '',
+      secondary_contact: client.secondaryContact ?? '',
+      secondary_email: client.secondaryEmail ?? '',
+      updated_at: nowStamp(),
+    };
+    if (client.profile !== undefined) {
+      sets.push('profile_json=@profile_json');
+      params.profile_json = JSON.stringify(client.profile);
+    }
+    d.prepare(`UPDATE clients SET ${sets.join(', ')}, updated_at=@updated_at WHERE id=@id`).run(params);
+    return client.id;
+  }
+  const info = d
+    .prepare(
+      `INSERT INTO clients
+         (name, surname, contact, email, dob, postal_address, is_minor,
+          secondary_name, secondary_relationship, secondary_contact, secondary_email)
+       VALUES
+         (@name, @surname, @contact, @email, @dob, @postal_address, @is_minor,
+          @secondary_name, @secondary_relationship, @secondary_contact, @secondary_email)`
+    )
+    .run({
+      name: client.name ?? '',
+      surname: client.surname ?? '',
+      contact: client.contact ?? '',
+      email: client.email ?? '',
+      dob: client.dob ?? '',
+      postal_address: client.postalAddress ?? '',
+      is_minor: client.isMinor ? 1 : 0,
+      secondary_name: client.secondaryName ?? '',
+      secondary_relationship: client.secondaryRelationship ?? '',
+      secondary_contact: client.secondaryContact ?? '',
+      secondary_email: client.secondaryEmail ?? '',
+    });
+  return info.lastInsertRowid;
+}
+
+/**
+ * Changes some of a client's details and leaves the rest alone.
+ *
+ * upsertClient rewrites every column from what it is given, which suits the
+ * client page - it always has the whole record - and would blank everything
+ * else from a grid cell that only knows the phone number.
+ */
+function patchClient(id, patch) {
+  const allowed = ['name', 'surname', 'contact', 'email'];
+  const sets = [];
+  const params = { id, updated_at: nowStamp() };
+  for (const key of allowed) {
+    if (patch[key] !== undefined) { sets.push(`${key} = @${key}`); params[key] = patch[key]; }
+  }
+  if (!sets.length) return;
+  get().prepare(`UPDATE clients SET ${sets.join(', ')}, updated_at = @updated_at WHERE id = @id`).run(params);
+}
+
+function deleteClient(id) {
+  get().prepare('DELETE FROM clients WHERE id = ?').run(id);
+}
+
+/* --------------------------------------------------------------- projects */
+
+function listProjects(clientId) {
+  const d = get();
+  // Every suit's spec rides along, so the list can price a whole wedding party
+  // rather than whatever was left in the order's own, long-retired spec
+  // column. One query for the whole list; char(30) cannot occur in JSON text.
+  const sql = `SELECT p.*, c.name, c.surname,
+                      (SELECT group_concat(s.spec_json, char(30)) FROM suits s WHERE s.project_id = p.id) AS suit_specs
+                 FROM projects p JOIN clients c ON c.id = p.client_id
+                ${clientId ? 'WHERE p.client_id = ?' : ''}
+                ORDER BY p.updated_at DESC`;
+  return clientId ? d.prepare(sql).all(clientId) : d.prepare(sql).all();
+}
+
+/* ------------------------------------------------- people and their suits */
+
+/**
+ * The people on an order, in the order GD entered them. Each is a client
+ * record, so what is captured here - measurements, photographs, references -
+ * is theirs and follows them to whatever they order next.
+ */
+function listMembers(projectId) {
+  return get()
+    .prepare(`SELECT m.*, c.name, c.surname, c.contact, c.email, c.dob, c.is_minor
+                FROM order_members m JOIN clients c ON c.id = m.client_id
+               WHERE m.project_id = ? ORDER BY m.position, m.id`)
+    .all(projectId);
+}
+
+function addMember({ projectId, clientId, role = '' }) {
+  const d = get();
+  const next = d.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS n FROM order_members WHERE project_id = ?').get(projectId).n;
+  d.prepare(`INSERT OR IGNORE INTO order_members (project_id, client_id, role, position) VALUES (?, ?, ?, ?)`)
+    .run(projectId, clientId, role, next);
+  return d.prepare('SELECT id FROM order_members WHERE project_id = ? AND client_id = ?').get(projectId, clientId)?.id;
+}
+
+function updateMember(id, { role, position }) {
+  const sets = [];
+  const params = { id };
+  if (role !== undefined) { sets.push('role = @role'); params.role = role; }
+  if (position !== undefined) { sets.push('position = @position'); params.position = position; }
+  if (!sets.length) return;
+  get().prepare(`UPDATE order_members SET ${sets.join(', ')} WHERE id = @id`).run(params);
+}
+
+/**
+ * Takes a person off an order along with the suits they were having. Their
+ * client record stays: the person still exists, they are simply not on this
+ * order any more.
+ */
+function removeMember(id) {
+  const d = get();
+  const row = d.prepare('SELECT project_id, client_id FROM order_members WHERE id = ?').get(id);
+  if (!row) return;
+  d.prepare('DELETE FROM suits WHERE project_id = ? AND client_id = ?').run(row.project_id, row.client_id);
+  d.prepare('DELETE FROM order_members WHERE id = ?').run(id);
+  syncQuantity(row.project_id);
+}
+
+function listSuits(projectId) {
+  return get()
+    .prepare(`SELECT s.*, c.name, c.surname
+                FROM suits s JOIN clients c ON c.id = s.client_id
+               WHERE s.project_id = ? ORDER BY s.position, s.id`)
+    .all(projectId)
+    .map((row) => ({ ...row, spec: JSON.parse(row.spec_json || '{}') }));
+}
+
+/**
+ * The order's suit count follows the suits on it.
+ *
+ * It was a number typed on the order page, beside a list of suits that could
+ * say something different. Adding or removing a suit is now what changes it,
+ * so the dashboard, the analytics and the database sheet count what is
+ * actually being made.
+ */
+function syncQuantity(projectId) {
+  get()
+    .prepare(`UPDATE projects
+                 SET quantity = MAX(1, (SELECT COUNT(*) FROM suits WHERE project_id = @id))
+               WHERE id = @id`)
+    .run({ id: projectId });
+}
+
+function addSuit({ projectId, clientId, label = '' }) {
+  const d = get();
+  const next = d.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS n FROM suits WHERE project_id = ?').get(projectId).n;
+  const id = d
+    .prepare(`INSERT INTO suits (project_id, client_id, label, position) VALUES (?, ?, ?, ?)`)
+    .run(projectId, clientId, label, next).lastInsertRowid;
+  syncQuantity(projectId);
+  return id;
+}
+
+function updateSuit(id, patch) {
+  const allowed = ['label', 'fabric_name', 'fabric_code', 'supplier', 'quantity', 'position', 'client_id'];
+  const sets = [];
+  const params = { id, updated_at: nowStamp() };
+  for (const [k, v] of Object.entries(patch)) {
+    if (allowed.includes(k)) { sets.push(`${k} = @${k}`); params[k] = v; }
+  }
+  if (patch.spec !== undefined) { sets.push('spec_json = @spec_json'); params.spec_json = JSON.stringify(patch.spec); }
+  if (!sets.length) return;
+  const d = get();
+  d.prepare(`UPDATE suits SET ${sets.join(', ')}, updated_at = @updated_at WHERE id = @id`).run(params);
+  // The order is what the tailor sees in the list, and editing one of its
+  // suits is working on it.
+  d.prepare(`UPDATE projects SET updated_at = ?
+              WHERE id = (SELECT project_id FROM suits WHERE id = ?)`).run(nowStamp(), id);
+
+  // The first suit's cloth is the order's cloth as far as the order list, the
+  // analytics and the database sheet are concerned - they read the order's
+  // own columns. updateProject writes those through to the first suit; this
+  // is the same road in the other direction, for an edit made on the suit.
+  const projectId = d.prepare('SELECT project_id FROM suits WHERE id = ?').get(id)?.project_id;
+  if (projectId && primarySuitId(projectId) === id) {
+    const cloth = ['fabric_name', 'fabric_code', 'supplier'].filter((k) => patch[k] !== undefined);
+    if (cloth.length) {
+      d.prepare(`UPDATE projects SET ${cloth.map((k) => `${k} = @${k}`).join(', ')} WHERE id = @projectId`)
+        .run({ projectId, ...Object.fromEntries(cloth.map((k) => [k, patch[k]])) });
+    }
+  }
+}
+
+function removeSuit(id) {
+  const d = get();
+  const projectId = d.prepare('SELECT project_id FROM suits WHERE id = ?').get(id)?.project_id;
+  d.prepare('DELETE FROM suits WHERE id = ?').run(id);
+  if (projectId) syncQuantity(projectId);
+}
+
+/**
+ * Who a photograph belongs to when the caller did not say. Every photograph
+ * has an owner; one that has neither a person nor a suit would sit on disk
+ * and never appear on any page.
+ */
+function defaultPhotoOwner(projectId) {
+  const suit = get()
+    .prepare('SELECT id, client_id FROM suits WHERE project_id = ? ORDER BY position, id LIMIT 1')
+    .get(projectId);
+  if (suit) return { suitId: suit.id, clientId: suit.client_id };
+  const project = get().prepare('SELECT client_id FROM projects WHERE id = ?').get(projectId);
+  return { suitId: null, clientId: project?.client_id ?? null };
+}
+
+/** The suit an order is about when nothing says otherwise - the first one. */
+function primarySuitId(projectId) {
+  return get().prepare('SELECT id FROM suits WHERE project_id = ? ORDER BY position, id LIMIT 1').get(projectId)?.id ?? null;
+}
+
+function getProject(id) {
+  const d = get();
+  const project = d
+    .prepare(`SELECT p.*, c.name, c.surname, c.contact, c.email, c.is_minor,
+                     c.dob, c.postal_address,
+                     c.secondary_name, c.secondary_relationship,
+                     c.secondary_contact, c.secondary_email
+                FROM projects p JOIN clients c ON c.id = p.client_id
+               WHERE p.id = ?`)
+    .get(id);
+  if (!project) return null;
+
+  const suits = listSuits(id);
+  // Until the interface is per-suit, an order still reads as one suit: the
+  // first one. The spec lives on the suit now, so there is one writer and
+  // nothing to drift - `spec_json` on the order is left behind, untouched,
+  // for an older build that still expects to find it.
+  const primary = suits[0] ?? null;
+
+  return {
+    ...project,
+    members: listMembers(id),
+    suits,
+    primarySuitId: primary?.id ?? null,
+    spec: primary ? primary.spec : JSON.parse(project.spec_json || '{}'),
+    analysis: JSON.parse(project.analysis_json || '{}'),
+    quote: project.quote_json ? JSON.parse(project.quote_json) : null,
+    informalQuote: (() => {
+      try { return project.informal_quote_json ? JSON.parse(project.informal_quote_json) : null; } catch { return null; }
+    })(),
+    photos: d.prepare('SELECT * FROM photos WHERE project_id = ? ORDER BY created_at').all(id)
+      .map((p) => ({ ...p, meta: JSON.parse(p.meta_json || '{}') })),
+    notes: d.prepare('SELECT * FROM notes WHERE project_id = ? ORDER BY created_at DESC').all(id),
+    measurements: d.prepare('SELECT * FROM measurements WHERE project_id = ?').all(id),
+    renders: d.prepare('SELECT * FROM renders WHERE project_id = ? ORDER BY created_at DESC').all(id),
+    fittings: d.prepare('SELECT * FROM fittings WHERE project_id = ? ORDER BY session_no').all(id),
+    payments: d.prepare('SELECT * FROM payments WHERE project_id = ? ORDER BY paid_on, id').all(id),
+    alterations: d.prepare('SELECT * FROM alterations WHERE project_id = ? ORDER BY due_on, id').all(id)
+      .map((a) => ({ ...a, changes: readChanges(a) })),
+    extras: d.prepare('SELECT * FROM order_extras WHERE project_id = ? ORDER BY id').all(id),
+  };
+}
+
+/**
+ * The next free order number for a year. Numbers are never reused, so this
+ * takes the highest already issued rather than counting the rows - deleting
+ * an order must not hand its number to the next one.
+ */
+/**
+ * Whether a stored file is one of this order's renders. Asked by the main
+ * process before it stamps anything "Generated by GD Suits", so the answer
+ * comes from the record of what was generated, never from the interface.
+ */
+function isRenderFile(projectId, filename) {
+  return !!get().prepare('SELECT 1 FROM renders WHERE project_id = ? AND filename = ?').get(projectId, filename);
+}
+
+function nextOrderRef(d, year = String(new Date().getFullYear())) {
+  const row = d
+    .prepare(`SELECT MAX(CAST(substr(order_ref, 9) AS INTEGER)) AS top
+                FROM projects WHERE order_ref LIKE ?`)
+    .get(`GD-${year}-%`);
+  return `GD-${year}-${String((row?.top ?? 0) + 1).padStart(4, '0')}`;
+}
+
+/**
+ * Give an order number to anything that has not got one.
+ *
+ * Numbering runs per year of the order's own date and continues from the
+ * highest already issued, so running this again after an import numbers only
+ * the new arrivals and never reissues a number that is already in use.
+ */
+function assignOrderRefs() {
+  const d = get();
+  const top = new Map();
+  for (const r of d.prepare(
+    `SELECT substr(order_ref, 4, 4) AS yr, MAX(CAST(substr(order_ref, 9) AS INTEGER)) AS n
+       FROM projects WHERE order_ref <> '' GROUP BY yr`).all()) {
+    top.set(r.yr, r.n ?? 0);
+  }
+  const rows = d.prepare(
+    `SELECT id, substr(COALESCE(NULLIF(created_at, ''), date('now')), 1, 4) AS yr
+       FROM projects WHERE order_ref = '' ORDER BY created_at, id`).all();
+  const stmt = d.prepare('UPDATE projects SET order_ref = ? WHERE id = ?');
+  let issued = 0;
+  for (const r of rows) {
+    const year = /^\d{4}$/.test(r.yr) ? r.yr : String(new Date().getFullYear());
+    const next = (top.get(year) ?? 0) + 1;
+    top.set(year, next);
+    stmt.run(`GD-${year}-${String(next).padStart(4, '0')}`, r.id);
+    issued++;
+  }
+  return issued;
+}
+
+/**
+ * Date an imported order by what really happened to it, rather than by when
+ * the import ran. Not reachable over IPC: only the importer sets these.
+ *
+ * The order number is cleared at the same time. It is derived from the year
+ * the order was taken, which is only known once these dates are set - the one
+ * handed out at insert was stamped with the year the import ran.
+ */
+function stampImport(id, { createdAt, updatedAt }) {
+  get()
+    .prepare(`UPDATE projects
+                 SET created_at = @createdAt, updated_at = @updatedAt, order_ref = ''
+               WHERE id = @id`)
+    .run({ id, createdAt: createdAt || '', updatedAt: updatedAt || '' });
+}
+
+function createProject({ clientId, title, eventType, eventOther, eventDate, deliveryDate }) {
+  const info = get()
+    .prepare(
+      `INSERT INTO projects (client_id, title, event_type, event_other, event_date, delivery_date, order_ref, status)
+       VALUES (@clientId, @title, @eventType, @eventOther, @eventDate, @deliveryDate, @orderRef, 'first_consultation')`
+    )
+    .run({
+      clientId,
+      title: title || 'New suit',
+      eventType: eventType ?? '',
+      eventOther: eventOther ?? '',
+      eventDate: eventDate ?? '',
+      deliveryDate: deliveryDate ?? '',
+      orderRef: nextOrderRef(get()),
+    });
+  const projectId = info.lastInsertRowid;
+
+  // Every order has at least one person and one suit from the moment it
+  // exists. Without this a new order would have nowhere to put its spec, and
+  // only orders that predate this migration would work - which is exactly the
+  // kind of split that hides until someone starts a real consultation.
+  addMember({ projectId, clientId, role: 'Client' });
+  addSuit({ projectId, clientId });
+  return projectId;
+}
+
+function updateProject(id, patch) {
+  const allowed = [
+    'title', 'event_type', 'event_other', 'event_date', 'delivery_date', 'status',
+    'review_date', 'measurements_done',
+    'consultation_date', 'measurement_date', 'first_fitting_date', 'final_fitting_date',
+    'quantity', 'fabric_name', 'fabric_code', 'supplier',
+    'first_appointment', 'appointment_notes',
+    'measurement_form_received', 'form_printed', 'comments',
+    'lining', 'design', 'shirt', 'form_url',
+    'imported_balance', 'balance_note', 'import_source',
+  ];
+  const d = get();
+  const sets = [];
+  const params = { id, updated_at: nowStamp() };
+
+  for (const [k, v] of Object.entries(patch)) {
+    if (allowed.includes(k)) {
+      sets.push(`${k} = @${k}`);
+      params[k] = v;
+    }
+  }
+  // The spec belongs to a suit. Written there and only there, so the two
+  // cannot disagree; the cloth is written through to the suit as well, so the
+  // per-suit pages arrive with it already correct.
+  const suitId = primarySuitId(id);
+  if (patch.spec !== undefined && suitId) {
+    updateSuit(suitId, { spec: patch.spec });
+  } else if (patch.spec !== undefined) {
+    sets.push('spec_json = @spec_json');
+    params.spec_json = JSON.stringify(patch.spec);
+  }
+  if (suitId) {
+    const throughToSuit = {};
+    for (const key of ['fabric_name', 'fabric_code', 'supplier', 'quantity']) {
+      if (patch[key] !== undefined) throughToSuit[key] = patch[key];
+    }
+    if (Object.keys(throughToSuit).length) updateSuit(suitId, throughToSuit);
+  }
+  if (patch.analysis !== undefined) {
+    sets.push('analysis_json = @analysis_json');
+    params.analysis_json = JSON.stringify(patch.analysis);
+  }
+  // Editing a suit is working on the order, so the order counts as touched
+  // even when nothing on the order row itself changed. Without this a spec
+  // edit would write to the suit and leave the order looking untouched, and
+  // the list that sorts by what was last worked on would be wrong.
+  if (!sets.length) {
+    d.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(nowStamp(), id);
+    return;
+  }
+
+  d.prepare(`UPDATE projects SET ${sets.join(', ')}, updated_at = @updated_at WHERE id = @id`).run(params);
+}
+
+// How long a date can keep being corrected and still count as one move.
+const MOVE_WINDOW = '-10 minutes';
+
+/**
+ * An edit to an order from one of its pages.
+ *
+ * The same as updateProject, except that a date which moves is followed
+ * through: the old date in the imported appointment notes is rewritten, and
+ * the move is written to the order's notes. In one transaction, so the order
+ * never says one date while its notes say another. The workbook import calls
+ * updateProject directly and records nothing - it is not a move.
+ */
+function editProject(id, patch) {
+  return tx(() => {
+    const before = get().prepare('SELECT * FROM projects WHERE id = ?').get(id);
+    if (!before) return updateProject(id, patch);
+    const planned = dateMoves.plan(before, patch);
+    updateProject(id, planned.patch);
+    for (const change of planned.changes) recordMove(id, change);
+  });
+}
+
+/**
+ * Writes one move to the order's notes.
+ *
+ * A date set for the first time is not a move. A date corrected again within
+ * a few minutes is the same move finishing, not a second one: the note is
+ * rewritten to run from where the date started, and dropped if it ends up
+ * back there.
+ */
+function recordMove(projectId, move) {
+  const d = get();
+  const earlier = d
+    .prepare(
+      `SELECT id, meta_json FROM notes
+        WHERE project_id = ? AND author = 'app' AND created_at >= datetime('now', '${MOVE_WINDOW}')
+        ORDER BY id DESC`
+    )
+    .all(projectId)
+    .map((n) => {
+      try { return { id: n.id, meta: n.meta_json ? JSON.parse(n.meta_json) : null }; } catch { return { id: n.id, meta: null }; }
+    })
+    .find((n) => n.meta?.date === move.key);
+  const from = earlier ? String(earlier.meta.from ?? '') : move.from;
+  if (from === move.to || !from) {
+    if (earlier) d.prepare('DELETE FROM notes WHERE id = ?').run(earlier.id);
+    return;
+  }
+  const body = dateMoves.describe({ ...move, from });
+  const meta = JSON.stringify({ date: move.key, from, to: move.to });
+  if (earlier) {
+    d.prepare('UPDATE notes SET body = ?, meta_json = ? WHERE id = ?').run(body, meta, earlier.id);
+  } else {
+    d.prepare(`INSERT INTO notes (project_id, step, body, author, meta_json) VALUES (?, 'client', ?, 'app', ?)`)
+      .run(projectId, body, meta);
+  }
+}
+
+/**
+ * Freezes the agreed figures onto the order. Passing null clears them, which
+ * is what happens when a tailor deliberately re-quotes.
+ */
+function setQuote(projectId, quote) {
+  get()
+    .prepare('UPDATE projects SET quote_json = ?, updated_at = ? WHERE id = ?')
+    .run(quote ? JSON.stringify(quote) : '', nowStamp(), projectId);
+}
+
+/** What was sent as the informal quote, and what came back. */
+function setInformalQuote(projectId, record) {
+  get()
+    .prepare('UPDATE projects SET informal_quote_json = ?, updated_at = ? WHERE id = ?')
+    .run(record ? JSON.stringify(record) : '', nowStamp(), projectId);
+}
+
+function deleteProject(id) {
+  get().prepare('DELETE FROM projects WHERE id = ?').run(id);
+}
+
+/* ----------------------------------------------------------------- photos */
+
+function addPhoto({ projectId, clientId, suitId, slot, filename, mime, garment, fittingId, meta }) {
+  const d = get();
+
+  // A capture slot holds one current photograph, and re-shooting replaces it.
+  // Whose slot, though: a front shot belongs to the person, and a fabric
+  // swatch to the suit. Scoped to the order alone, photographing the best man
+  // would have deleted the groom's front shot without a word. The shoes go
+  // into the render as one pair, so they are one photograph per suit too.
+  const SUBJECT = ['front', 'side', 'back', 'face'];
+  const SWATCH = ['fabric', 'lining', 'shoes'];
+  if (!fittingId && [...SUBJECT, ...SWATCH].includes(slot)) {
+    if (SUBJECT.includes(slot) && clientId) {
+      d.prepare('DELETE FROM photos WHERE project_id = ? AND slot = ? AND fitting_id IS NULL AND client_id = ?')
+        .run(projectId, slot, clientId);
+    } else if (SWATCH.includes(slot) && suitId) {
+      d.prepare('DELETE FROM photos WHERE project_id = ? AND slot = ? AND fitting_id IS NULL AND suit_id = ?')
+        .run(projectId, slot, suitId);
+    } else {
+      d.prepare('DELETE FROM photos WHERE project_id = ? AND slot = ? AND fitting_id IS NULL').run(projectId, slot);
+    }
+  }
+
+  const info = d
+    .prepare(
+      `INSERT INTO photos (project_id, client_id, suit_id, fitting_id, slot, garment, filename, mime, meta_json)
+       VALUES (@projectId, @clientId, @suitId, @fittingId, @slot, @garment, @filename, @mime, @meta)`
+    )
+    .run({
+      projectId,
+      clientId: clientId ?? null,
+      suitId: suitId ?? null,
+      fittingId: fittingId ?? null,
+      slot,
+      garment: garment ?? '',
+      filename,
+      mime: mime ?? 'image/jpeg',
+      meta: JSON.stringify(meta ?? {}),
+    });
+  return info.lastInsertRowid;
+}
+
+function getPhoto(id) {
+  return get().prepare('SELECT * FROM photos WHERE id = ?').get(id);
+}
+
+function deletePhoto(id) {
+  const row = getPhoto(id);
+  get().prepare('DELETE FROM photos WHERE id = ?').run(id);
+  return row;
+}
+
+function updatePhotoMeta(id, meta) {
+  get().prepare('UPDATE photos SET meta_json = ? WHERE id = ?').run(JSON.stringify(meta ?? {}), id);
+}
+
+/* ------------------------------------------------------------------ notes */
+
+function addNote({ projectId, step, body, author }) {
+  const info = get()
+    .prepare('INSERT INTO notes (project_id, step, body, author) VALUES (?, ?, ?, ?)')
+    .run(projectId, step ?? 'general', body, author ?? 'tailor');
+  return info.lastInsertRowid;
+}
+
+function deleteNote(id) {
+  get().prepare('DELETE FROM notes WHERE id = ?').run(id);
+}
+
+/* ----------------------------------------------------------- measurements */
+
+function saveMeasurement({ projectId, suitId, garment, fieldId, value, unit, source }) {
+  // Without a suit named, the order's first one - which is the only one there
+  // is, on the single-person orders that are most of them.
+  const suit = suitId ?? primarySuitId(projectId);
+  get()
+    .prepare(
+      `INSERT INTO measurements (project_id, suit_id, garment, field_id, value, unit, source, updated_at)
+       VALUES (@projectId, @suitId, @garment, @fieldId, @value, @unit, @source, @updated_at)
+       ON CONFLICT(suit_id, garment, field_id)
+       DO UPDATE SET value = @value, unit = @unit, source = @source, updated_at = @updated_at`
+    )
+    .run({
+      projectId,
+      suitId: suit,
+      garment,
+      fieldId,
+      value: value === '' || value === null || value === undefined ? null : Number(value),
+      unit: unit ?? 'cm',
+      source: source ?? 'measured',
+      updated_at: nowStamp(),
+    });
+}
+
+/* ------------------------------------------------------------ mail rules */
+
+function listMailRules() {
+  const d = get();
+  const rules = d.prepare('SELECT * FROM mail_rules ORDER BY name').all();
+  const picked = d.prepare('SELECT rule_id, client_id FROM mail_rule_clients').all();
+  return rules.map((r) => ({
+    ...r,
+    enabled: !!r.enabled,
+    clientIds: picked.filter((p) => p.rule_id === r.id).map((p) => p.client_id),
+  }));
+}
+
+/**
+ * Writes a rule and the clients it names, together.
+ *
+ * In one transaction because the audience is meaningless without its list:
+ * a rule saved as "everyone except these three" with the three lost would
+ * mail all of them.
+ */
+function saveMailRule({ id, name, subject, body, anchor, offsetDays, audience, enabled, clientIds = [] }) {
+  return tx(() => {
+  const d = get();
+  let ruleId = id ?? null;
+  if (ruleId) {
+    d.prepare(
+      `UPDATE mail_rules SET name = @name, subject = @subject, body = @body, anchor = @anchor,
+              offset_days = @offsetDays, audience = @audience, enabled = @enabled,
+              updated_at = datetime('now')
+         WHERE id = @id`
+    ).run({ id: ruleId, name, subject, body, anchor, offsetDays, audience, enabled: enabled ? 1 : 0 });
+  } else {
+    ruleId = d.prepare(
+      `INSERT INTO mail_rules (name, subject, body, anchor, offset_days, audience, enabled)
+       VALUES (@name, @subject, @body, @anchor, @offsetDays, @audience, @enabled)`
+    ).run({ name, subject, body, anchor, offsetDays, audience, enabled: enabled ? 1 : 0 }).lastInsertRowid;
+  }
+  d.prepare('DELETE FROM mail_rule_clients WHERE rule_id = ?').run(ruleId);
+  const add = d.prepare('INSERT OR IGNORE INTO mail_rule_clients (rule_id, client_id) VALUES (?, ?)');
+  for (const cid of clientIds) add.run(ruleId, cid);
+  return ruleId;
+  });
+}
+
+function deleteMailRule(id) {
+  get().prepare('DELETE FROM mail_rules WHERE id = ?').run(id);
+}
+
+/** Records a reminder as sent, and the date it was sent for. */
+function markMailSent(ruleId, projectId, anchorDate = '') {
+  get()
+    .prepare(
+      `INSERT OR REPLACE INTO mail_sent (rule_id, project_id, anchor_date, sent_at)
+       VALUES (?, ?, ?, datetime('now'))`
+    )
+    .run(ruleId, projectId, String(anchorDate ?? ''));
+}
+
+/**
+ * The orders a rule could apply to: open, with an email address. Each says
+ * whether this rule was already sent for it, and for which date (`sent_for`,
+ * null if never) - one sent for a date that has since moved is due again.
+ *
+ * Whether each is actually *due* is decided against the dates by mailRules,
+ * which is where the arithmetic lives. This only narrows the field, and it
+ * does it in one query rather than one per order.
+ */
+function mailCandidates(ruleId) {
+  return get()
+    .prepare(
+      `SELECT p.id, p.order_ref, p.client_id, p.status, p.event_date, p.delivery_date,
+              p.consultation_date, p.measurement_date, p.first_fitting_date,
+              p.final_fitting_date, p.review_date,
+              c.name, c.surname, c.email,
+              m.anchor_date AS sent_for, m.sent_at
+         FROM projects p
+         JOIN clients  c ON c.id = p.client_id
+         LEFT JOIN mail_sent m ON m.rule_id = ? AND m.project_id = p.id
+        WHERE p.status NOT IN ${DONE_SQL}
+          AND COALESCE(c.email, '') <> ''
+        ORDER BY p.event_date`
+    )
+    .all(ruleId);
+}
+
+/* ---------------------------------------------------------------- renders */
+
+/**
+ * A render belongs to one suit, not to the order.
+ *
+ * It was being stored without one, which is invisible on an order for a
+ * single man and wrong on a wedding party: every render landed in a pool
+ * shared by everyone on the order. The fallback is the same one photographs
+ * use, so a render and a photograph taken at the same moment cannot disagree
+ * about whose they are.
+ */
+function addRender({ projectId, suitId, batchId, parentId, view, provider, model, prompt, instruction, filename }) {
+  const info = get()
+    .prepare(
+      `INSERT INTO renders (project_id, suit_id, batch_id, parent_id, view, provider, model, prompt, instruction, filename)
+       VALUES (@projectId, @suitId, @batchId, @parentId, @view, @provider, @model, @prompt, @instruction, @filename)`
+    )
+    .run({
+      projectId,
+      suitId: suitId ?? defaultPhotoOwner(projectId).suitId,
+      // A render made without one is its own: a batch of exactly one view.
+      batchId: batchId ?? `single-${randomUUID()}`,
+      parentId: parentId ?? null,
+      view: view ?? 'front',
+      provider: provider ?? 'gemini',
+      model: model ?? '',
+      prompt: prompt ?? '',
+      instruction: instruction ?? '',
+      filename,
+    });
+  return info.lastInsertRowid;
+}
+
+function getRender(id) {
+  return get().prepare('SELECT * FROM renders WHERE id = ?').get(id);
+}
+
+function setRenderApproved(id, approved) {
+  get().prepare('UPDATE renders SET approved = ? WHERE id = ?').run(approved ? 1 : 0, id);
+}
+
+function deleteRender(id) {
+  const row = getRender(id);
+  get().prepare('DELETE FROM renders WHERE id = ?').run(id);
+  return row;
+}
+
+/* --------------------------------------------------------------- fittings */
+
+function addFitting({ projectId, tailorNotes, clientNotes, kind }) {
+  const d = get();
+  const next =
+    (d.prepare('SELECT MAX(session_no) AS n FROM fittings WHERE project_id = ?').get(projectId)?.n ?? 0) + 1;
+  const info = d
+    .prepare(
+      'INSERT INTO fittings (project_id, session_no, tailor_notes, client_notes, kind) VALUES (?, ?, ?, ?, ?)'
+    )
+    .run(projectId, next, tailorNotes ?? '', clientNotes ?? '', kind ?? (next === 1 ? 'first' : 'final'));
+  return info.lastInsertRowid;
+}
+
+function updateFitting(id, { tailorNotes, clientNotes, kind }) {
+  const d = get();
+  const current = d.prepare('SELECT * FROM fittings WHERE id = ?').get(id);
+  if (!current) return;
+  d.prepare('UPDATE fittings SET tailor_notes = ?, client_notes = ?, kind = ? WHERE id = ?').run(
+    tailorNotes ?? current.tailor_notes,
+    clientNotes ?? current.client_notes,
+    kind ?? current.kind,
+    id
+  );
+}
+
+function deleteFitting(id) {
+  get().prepare('DELETE FROM fittings WHERE id = ?').run(id);
+}
+
+/* --------------------------------------------------------------- settings */
+
+function getSetting(key, fallback = null) {
+  const row = get().prepare('SELECT value FROM settings WHERE key = ?').get(key);
+  if (!row) return fallback;
+  try {
+    return JSON.parse(row.value);
+  } catch {
+    return row.value;
+  }
+}
+
+function setSetting(key, value) {
+  get()
+    .prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+    .run(key, JSON.stringify(value));
+}
+
+
+/* ------------------------------------------------- client style references */
+
+/**
+ * A client's reference images outlive any single order: they are the record of
+ * what this person is drawn to, and they are re-attachable to a future render
+ * or read back as style history.
+ */
+function addReference({ clientId, projectId, filename, mime, kind, title, notes, tags }) {
+  const info = get()
+    .prepare(
+      `INSERT INTO client_references (client_id, project_id, filename, mime, kind, title, notes, tags)
+       VALUES (@clientId, @projectId, @filename, @mime, @kind, @title, @notes, @tags)`
+    )
+    .run({
+      clientId,
+      projectId: projectId ?? null,
+      filename,
+      mime: mime ?? 'image/jpeg',
+      kind: kind ?? 'style',
+      title: title ?? '',
+      notes: notes ?? '',
+      tags: tags ?? '',
+    });
+  return info.lastInsertRowid;
+}
+
+function listReferences(clientId) {
+  return get()
+    .prepare(
+      `SELECT r.*,
+              (SELECT COUNT(*) FROM render_refs rr WHERE rr.reference_id = r.id) AS times_used
+         FROM client_references r
+        WHERE r.client_id = ?
+        ORDER BY r.favourite DESC, r.created_at DESC`
+    )
+    .all(clientId);
+}
+
+function getReference(id) {
+  return get().prepare('SELECT * FROM client_references WHERE id = ?').get(id);
+}
+
+function updateReference(id, { title, notes, tags, kind, favourite }) {
+  const d = get();
+  const current = getReference(id);
+  if (!current) return;
+  d.prepare(
+    `UPDATE client_references SET title=@title, notes=@notes, tags=@tags, kind=@kind, favourite=@favourite WHERE id=@id`
+  ).run({
+    id,
+    title: title ?? current.title,
+    notes: notes ?? current.notes,
+    tags: tags ?? current.tags,
+    kind: kind ?? current.kind,
+    favourite: favourite === undefined ? current.favourite : favourite ? 1 : 0,
+  });
+}
+
+function deleteReference(id) {
+  const row = getReference(id);
+  get().prepare('DELETE FROM client_references WHERE id = ?').run(id);
+  return row;
+}
+
+function linkRenderRefs(renderId, referenceIds = []) {
+  const d = get();
+  const stmt = d.prepare('INSERT OR IGNORE INTO render_refs (render_id, reference_id) VALUES (?, ?)');
+  const tx = d.transaction((ids) => ids.forEach((rid) => stmt.run(renderId, rid)));
+  tx(referenceIds);
+}
+
+/**
+ * Style history for a client: which references they keep coming back to, and
+ * the spec choices they have actually approved across past orders.
+ */
+function styleHistory(clientId) {
+  const d = get();
+  const references = d
+    .prepare(
+      `SELECT r.id, r.filename, r.kind, r.title, r.tags, r.favourite,
+              COUNT(rr.render_id) AS times_used
+         FROM client_references r
+         LEFT JOIN render_refs rr ON rr.reference_id = r.id
+        WHERE r.client_id = ?
+        GROUP BY r.id
+        ORDER BY times_used DESC, r.favourite DESC`
+    )
+    .all(clientId);
+
+  const pastSpecs = d
+    .prepare(
+      `SELECT p.id, p.title, p.event_type, p.event_date, p.status, p.spec_json, p.updated_at,
+              (SELECT COUNT(*) FROM renders x WHERE x.project_id = p.id AND x.approved = 1) AS approved_renders
+         FROM projects p
+        WHERE p.client_id = ?
+        ORDER BY p.updated_at DESC`
+    )
+    .all(clientId)
+    .map((row) => ({ ...row, spec: JSON.parse(row.spec_json || '{}') }));
+
+  return { references, pastSpecs };
+}
+
+/* --------------------------------------------------- client measurements */
+
+function saveClientMeasurement({ clientId, garment, fieldId, value, unit }) {
+  get()
+    .prepare(
+      `INSERT INTO client_measurements (client_id, garment, field_id, value, unit, updated_at)
+       VALUES (@clientId, @garment, @fieldId, @value, @unit, @updated_at)
+       ON CONFLICT(client_id, garment, field_id)
+       DO UPDATE SET value = @value, unit = @unit, updated_at = @updated_at`
+    )
+    .run({
+      clientId,
+      garment,
+      fieldId,
+      value: value === '' || value === null || value === undefined ? null : Number(value),
+      unit: unit ?? 'cm',
+      updated_at: nowStamp(),
+    });
+}
+
+function listClientMeasurements(clientId) {
+  return get().prepare('SELECT * FROM client_measurements WHERE client_id = ?').all(clientId);
+}
+
+/** Copies the client's last known body measurements onto a new order. */
+function seedMeasurementsFromClient(projectId, clientId) {
+  const rows = listClientMeasurements(clientId);
+  for (const row of rows) {
+    saveMeasurement({
+      projectId,
+      garment: row.garment,
+      fieldId: row.field_id,
+      value: row.value,
+      unit: row.unit,
+      source: 'carried-over',
+    });
+  }
+  return rows.length;
+}
+
+
+/* ------------------------------------------------- the tailor's own catalog */
+
+function listCustomCategories() {
+  return get().prepare('SELECT * FROM catalog_categories ORDER BY sort, id').all();
+}
+
+function addCustomCategory({ title, blurb }) {
+  const d = get();
+  const next = (d.prepare('SELECT MAX(sort) AS n FROM catalog_categories').get()?.n ?? 0) + 1;
+  // The key becomes a step key and a spec namespace, so it is generated rather
+  // than derived from the title - a renamed category must not orphan the
+  // selections already saved against it.
+  const key = `custom-${Date.now().toString(36)}`;
+  const info = d
+    .prepare('INSERT INTO catalog_categories (key, title, blurb, sort) VALUES (?, ?, ?, ?)')
+    .run(key, title, blurb ?? '', next);
+  return { id: info.lastInsertRowid, key };
+}
+
+function updateCustomCategory(id, { title, blurb, sort }) {
+  const d = get();
+  const current = d.prepare('SELECT * FROM catalog_categories WHERE id = ?').get(id);
+  if (!current) return;
+  d.prepare('UPDATE catalog_categories SET title = ?, blurb = ?, sort = ? WHERE id = ?').run(
+    title ?? current.title,
+    blurb ?? current.blurb,
+    sort ?? current.sort,
+    id
+  );
+}
+
+/**
+ * Deleting a category takes its items with it. Existing orders keep whatever
+ * was already saved in their spec JSON - a delivered suit should not silently
+ * change because the price list was tidied up later.
+ */
+function deleteCustomCategory(id) {
+  const d = get();
+  const row = d.prepare('SELECT key FROM catalog_categories WHERE id = ?').get(id);
+  if (!row) return;
+  d.prepare('DELETE FROM catalog_items WHERE category = ?').run(row.key);
+  d.prepare('DELETE FROM catalog_categories WHERE id = ?').run(id);
+}
+
+function listCustomItems() {
+  return get()
+    .prepare('SELECT * FROM catalog_items ORDER BY category, sort, id')
+    .all()
+    .map((row) => ({ ...row, options: JSON.parse(row.options_json || '[]') }));
+}
+
+function addCustomItem({ category, label, kind, price, options, description, prompt }) {
+  const d = get();
+  const next =
+    (d.prepare('SELECT MAX(sort) AS n FROM catalog_items WHERE category = ?').get(category)?.n ?? 0) + 1;
+  const fieldId = `custom_${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`;
+  const info = d
+    .prepare(
+      `INSERT INTO catalog_items (field_id, category, label, kind, price, options_json, description, prompt, sort)
+       VALUES (@fieldId, @category, @label, @kind, @price, @options, @description, @prompt, @sort)`
+    )
+    .run({
+      fieldId,
+      category,
+      label,
+      kind: kind ?? 'toggle',
+      price: Number(price) || 0,
+      options: JSON.stringify(options ?? []),
+      description: description ?? '',
+      prompt: prompt ?? '',
+      sort: next,
+    });
+  return { id: info.lastInsertRowid, fieldId };
+}
+
+function updateCustomItem(id, patch) {
+  const d = get();
+  const current = d.prepare('SELECT * FROM catalog_items WHERE id = ?').get(id);
+  if (!current) return;
+  d.prepare(
+    `UPDATE catalog_items
+        SET label = @label, kind = @kind, price = @price, options_json = @options,
+            description = @description, prompt = @prompt, active = @active, category = @category
+      WHERE id = @id`
+  ).run({
+    id,
+    label: patch.label ?? current.label,
+    kind: patch.kind ?? current.kind,
+    price: patch.price === undefined ? current.price : Number(patch.price) || 0,
+    options: patch.options === undefined ? current.options_json : JSON.stringify(patch.options),
+    description: patch.description ?? current.description,
+    prompt: patch.prompt ?? current.prompt,
+    active: patch.active === undefined ? current.active : patch.active ? 1 : 0,
+    category: patch.category ?? current.category,
+  });
+}
+
+function deleteCustomItem(id) {
+  get().prepare('DELETE FROM catalog_items WHERE id = ?').run(id);
+}
+
+
+function listCustomOptions() {
+  return get().prepare('SELECT * FROM catalog_options ORDER BY field_id, sort, id').all();
+}
+
+function addCustomOption({ fieldId, label, description, price, prompt }) {
+  const d = get();
+  const next =
+    (d.prepare('SELECT MAX(sort) AS n FROM catalog_options WHERE field_id = ?').get(fieldId)?.n ?? 0) + 1;
+  // The key is generated, never derived from the label: renaming an option
+  // must not orphan the orders already saved against it.
+  const optionKey = `opt_${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`;
+  const info = d
+    .prepare(
+      `INSERT INTO catalog_options (field_id, option_key, label, description, price, prompt, sort)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(fieldId, optionKey, label, description ?? '', Number(price) || 0, prompt ?? '', next);
+  return { id: info.lastInsertRowid, optionKey };
+}
+
+function updateCustomOption(id, patch) {
+  const d = get();
+  const current = d.prepare('SELECT * FROM catalog_options WHERE id = ?').get(id);
+  if (!current) return;
+  d.prepare(
+    'UPDATE catalog_options SET label = ?, description = ?, price = ?, prompt = ?, active = ? WHERE id = ?'
+  ).run(
+    patch.label ?? current.label,
+    patch.description ?? current.description,
+    patch.price === undefined ? current.price : Number(patch.price) || 0,
+    patch.prompt ?? current.prompt,
+    patch.active === undefined ? current.active : patch.active ? 1 : 0,
+    id
+  );
+}
+
+function deleteCustomOption(id) {
+  get().prepare('DELETE FROM catalog_options WHERE id = ?').run(id);
+}
+
+
+/* ------------------------------------------------ money, alterations, extras */
+
+const rowCrud = (table, columns) => ({
+  add(row) {
+    const cols = columns.join(', ');
+    const vals = columns.map((c) => `@${c}`).join(', ');
+    const info = get().prepare(`INSERT INTO ${table} (${cols}) VALUES (${vals})`).run(row);
+    return info.lastInsertRowid;
+  },
+  update(id, patch) {
+    const d = get();
+    const current = d.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
+    if (!current) return;
+    const merged = { id };
+    for (const c of columns) merged[c] = patch[c] === undefined ? current[c] : patch[c];
+    d.prepare(`UPDATE ${table} SET ${columns.map((c) => `${c} = @${c}`).join(', ')} WHERE id = @id`).run(merged);
+  },
+  remove(id) {
+    get().prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
+  },
+});
+
+const paymentsCrud = rowCrud('payments', ['project_id', 'kind', 'amount', 'paid_on', 'method', 'reference', 'note']);
+const alterationsCrud = rowCrud('alterations', ['project_id', 'garment', 'description', 'kind', 'status', 'received_on', 'due_on', 'confirmed_on', 'cost', 'note', 'suit_id', 'changes_json']);
+const extrasCrud = rowCrud('order_extras', ['project_id', 'extra_type', 'colour', 'quantity', 'status', 'unit_price', 'note']);
+
+const addPayment = (row) => paymentsCrud.add(row);
+const updatePayment = (id, patch) => paymentsCrud.update(id, patch);
+const deletePayment = (id) => paymentsCrud.remove(id);
+
+/* An alteration that changes measurements moves them, and puts them back. */
+
+const readChanges = (row) => {
+  try {
+    const list = JSON.parse(row?.changes_json || '[]');
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+};
+
+function measurementValue(suitId, garment, fieldId) {
+  const row = get()
+    .prepare('SELECT value FROM measurements WHERE suit_id IS ? AND garment = ? AND field_id = ?')
+    .get(suitId, garment, fieldId);
+  return row?.value ?? null;
+}
+
+/**
+ * Sets one measurement on the suit and on its wearer's body record - the same
+ * two places the measurement page writes - but only if it still reads `from`.
+ * A figure someone has changed since the alteration was logged is theirs, and
+ * is not overwritten by putting the alteration back.
+ */
+function moveMeasurement({ projectId, suitId, garment, fieldId }, from, to) {
+  const now = measurementValue(suitId, garment, fieldId);
+  if (from !== null && (now === null || Math.abs(now - from) > 0.001)) return false;
+  saveMeasurement({ projectId, suitId, garment, fieldId, value: to, source: 'alteration' });
+  const wearer = get().prepare('SELECT client_id FROM suits WHERE id = ?').get(suitId)?.client_id;
+  if (wearer) saveClientMeasurement({ clientId: wearer, garment, fieldId, value: to });
+  return true;
+}
+
+/**
+ * Logs an alteration, applying each measurement change it carries.
+ *
+ * A change is "take the waist in 2cm": the figure on file is read, the change
+ * applied, and both kept on the alteration, so the log reads "100 -> 98" and
+ * the measurement page shows 98. A change to a measurement that was never
+ * taken has nothing to apply to; it is kept as written and moves nothing.
+ */
+function addAlteration(row) {
+  return tx(() => {
+    const projectId = row.project_id;
+    const suitId = row.suit_id ?? primarySuitId(projectId);
+    // The suit has to be on this order: an alteration moves measurements, and
+    // must not be able to reach into someone else's.
+    if (suitId !== null && !get().prepare('SELECT 1 FROM suits WHERE id = ? AND project_id = ?').get(suitId, projectId)) {
+      throw new Error('That suit is not on this order');
+    }
+    const changes = (Array.isArray(row.changes) ? row.changes : []).map((c) => {
+      const before = measurementValue(suitId, row.garment, c.fieldId);
+      const after = before === null ? null : Math.round((before + c.change) * 100) / 100;
+      if (after !== null && row.status !== 'cancelled') {
+        moveMeasurement({ projectId, suitId, garment: row.garment, fieldId: c.fieldId }, before, after);
+      }
+      return { fieldId: c.fieldId, label: c.label, change: c.change, before, after };
+    });
+    const { changes: _ignored, ...columns } = row;
+    return alterationsCrud.add({
+      note: '', confirmed_on: '', ...columns,
+      suit_id: suitId,
+      changes_json: changes.length ? JSON.stringify(changes) : '',
+    });
+  });
+}
+
+/** Every change on an alteration, moved from one side to the other. */
+function shiftChanges(alt, direction) {
+  for (const c of readChanges(alt)) {
+    if (c.before === null || c.after === null) continue;
+    const [from, to] = direction === 'undo' ? [c.after, c.before] : [c.before, c.after];
+    moveMeasurement({ projectId: alt.project_id, suitId: alt.suit_id, garment: alt.garment, fieldId: c.fieldId }, from, to);
+  }
+}
+
+/** Cancelling puts the measurements back; un-cancelling applies them again. */
+function updateAlteration(id, patch) {
+  return tx(() => {
+    const current = get().prepare('SELECT * FROM alterations WHERE id = ?').get(id);
+    if (!current) return;
+    alterationsCrud.update(id, patch);
+    if (patch.status === undefined || patch.status === current.status) return;
+    if (patch.status === 'cancelled') shiftChanges(current, 'undo');
+    else if (current.status === 'cancelled') shiftChanges(current, 'redo');
+  });
+}
+
+/** Deleting one that was still going ahead puts its measurements back. */
+function deleteAlteration(id) {
+  return tx(() => {
+    const current = get().prepare('SELECT * FROM alterations WHERE id = ?').get(id);
+    if (!current) return;
+    if (current.status !== 'cancelled') shiftChanges(current, 'undo');
+    alterationsCrud.remove(id);
+  });
+}
+
+const addOrderExtra = (row) => extrasCrud.add(row);
+const updateOrderExtra = (id, patch) => extrasCrud.update(id, patch);
+const deleteOrderExtra = (id) => extrasCrud.remove(id);
+
+
+/* ---------------------------------------------------------------- analytics */
+
+/**
+ * Business metrics, computed in SQL rather than by loading every order into
+ * the renderer. The figures GD kept by eye across five sheets - what is owed,
+ * what is in production, what is late - come out of one pass.
+ *
+ * Quoted values come from the frozen quote where there is one; an order still
+ * at enquiry has no agreed figure and is deliberately excluded from revenue.
+ */
+/**
+ * Run a batch of writes as one unit. A bulk import that fails halfway would
+ * leave the tailor with a database that is neither the old one nor the new,
+ * so the whole thing lands or none of it does.
+ */
+function tx(fn) {
+  return get().transaction(fn)();
+}
+
+// Work finished, whatever the money is doing. Named once so a stage rename
+// cannot leave half the dashboard counting the old word.
+const DONE = ['completed_paid', 'completed_due'];
+const DONE_SQL = `('${DONE.join("','")}')`;
+const isDone = (status) => DONE.includes(status);
+
+function analytics({ from = '0000-01-01', to = '9999-12-31' } = {}) {
+  const d = get();
+
+  const orders = d
+    .prepare(
+      `SELECT p.id, p.status, p.quantity, p.event_date, p.delivery_date, p.created_at,
+              p.fabric_name, p.fabric_code, p.event_type, p.quote_json, p.client_id,
+              p.imported_balance AS legacy_balance,
+              c.name, c.surname,
+              (SELECT COALESCE(SUM(CASE WHEN kind = 'refund' THEN -amount ELSE amount END), 0)
+                 FROM payments y WHERE y.project_id = p.id) AS paid
+         FROM projects p JOIN clients c ON c.id = p.client_id
+        WHERE date(COALESCE(NULLIF(p.created_at,''), '0000-01-01')) BETWEEN date(@from) AND date(@to)`
+    )
+    .all({ from, to })
+    .map((row) => {
+      let quoted = 0;
+      try {
+        quoted = row.quote_json ? JSON.parse(row.quote_json).total ?? 0 : 0;
+      } catch { /* an unreadable quote counts as unquoted */ }
+      return { ...row, quoted, outstanding: Math.max(0, quoted - row.paid) };
+    });
+
+  const open = orders.filter((o) => !isDone(o.status));
+  const sum = (rows, key) => rows.reduce((t, r) => t + (Number(r[key]) || 0), 0);
+
+  const byStage = {};
+  for (const o of orders) {
+    byStage[o.status] ??= { orders: 0, suits: 0, quoted: 0, outstanding: 0 };
+    byStage[o.status].orders += 1;
+    byStage[o.status].suits += o.quantity || 1;
+    byStage[o.status].quoted += o.quoted;
+    byStage[o.status].outstanding += o.outstanding;
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const dueSoon = open
+    .filter((o) => o.event_date && o.event_date >= today)
+    .sort((a, b) => a.event_date.localeCompare(b.event_date))
+    .slice(0, 8);
+  const overdue = open.filter((o) => o.event_date && o.event_date < today);
+
+  // The terms require a deposit up front before cutting - how much is the
+  // shop's own setting, not a number written into the app.
+  const depositFraction = (() => {
+    try {
+      const b = JSON.parse(d.prepare("SELECT value FROM settings WHERE key = 'business'").get()?.value ?? 'null');
+      const f = Number(b?.depositFraction);
+      return Number.isFinite(f) && f >= 0 && f <= 1 ? f : 0.5;
+    } catch { return 0.5; }
+  })();
+
+  // Anything already in
+  // production without it is money at risk, which is worth surfacing.
+  const depositShortfall = open
+    .filter((o) => ['in_production', 'first_fitting', 'alterations', 'final_fitting'].includes(o.status))
+    .filter((o) => o.quoted > 0 && o.paid < o.quoted * depositFraction)
+    .map((o) => ({ ...o, shortfall: o.quoted * depositFraction - o.paid }));
+
+  // By the date the suit is needed, not the date the row was typed: imported
+  // orders all carry the same import timestamp, which would stack two years of
+  // work into a single bar.
+  const monthly = d
+    .prepare(
+      `SELECT substr(event_date, 1, 7) AS month, COUNT(*) AS orders, COALESCE(SUM(quantity),0) AS suits
+         FROM projects
+        WHERE event_date <> '' AND length(event_date) >= 7
+        GROUP BY month ORDER BY month DESC LIMIT 12`
+    )
+    .all();
+
+  const topBy = (column) =>
+    d
+      .prepare(
+        `SELECT ${column} AS value, COUNT(*) AS orders, COALESCE(SUM(quantity),0) AS suits
+           FROM projects WHERE ${column} <> '' GROUP BY ${column} ORDER BY orders DESC LIMIT 8`
+      )
+      .all();
+
+  const alterations = d
+    .prepare(
+      `SELECT status, COUNT(*) AS n, COALESCE(SUM(cost),0) AS cost FROM alterations GROUP BY status`
+    )
+    .all();
+  const alterationsOverdue = d
+    .prepare(`SELECT COUNT(*) AS n FROM alterations WHERE due_on <> '' AND due_on < date('now') AND status NOT IN ('collected','cancelled')`)
+    .get().n;
+
+  const extras = d
+    .prepare(`SELECT extra_type, status, COUNT(*) AS n, COALESCE(SUM(quantity),0) AS units FROM order_extras GROUP BY extra_type, status`)
+    .all();
+
+  // Lead time: how long an order actually takes from first contact to delivery.
+  const leadTimes = d
+    .prepare(
+      `SELECT julianday(final_fitting_date) - julianday(consultation_date) AS days
+         FROM projects
+        WHERE status IN ${DONE_SQL} AND consultation_date <> '' AND final_fitting_date <> ''`
+    )
+    .all()
+    .map((r) => r.days)
+    .filter((n) => Number.isFinite(n) && n >= 0);
+
+  const delivered = orders.filter((o) => isDone(o.status));
+
+  // Balances carried over from the spreadsheet. The sheet recorded either what
+  // was owed or what had been paid, never both, so these cannot be folded into
+  // quoted-minus-paid without inventing a quote. They are reported on their
+  // own, and split, because a balance sitting on an order delivered a year ago
+  // was almost certainly settled off-sheet - only the open ones are a question.
+  const legacy = d
+    .prepare(
+      `SELECT CASE WHEN status IN ${DONE_SQL} THEN 'settledLikely' ELSE 'open' END AS bucket,
+              COUNT(*) AS orders, COALESCE(SUM(imported_balance), 0) AS total
+         FROM projects WHERE imported_balance > 0 GROUP BY bucket`
+    )
+    .all()
+    .reduce((acc, r) => ({ ...acc, [r.bucket]: { orders: r.orders, total: r.total } }), {});
+
+  return {
+    generatedAt: new Date().toISOString(),
+    totals: {
+      clients: d.prepare('SELECT COUNT(*) n FROM clients').get().n,
+      orders: orders.length,
+      openOrders: open.length,
+      suitsInProgress: sum(open, 'quantity'),
+      quoted: sum(orders, 'quoted'),
+      paid: sum(orders, 'paid'),
+      outstanding: sum(orders, 'outstanding'),
+      delivered: delivered.length,
+      deliveredValue: sum(delivered, 'quoted'),
+      averageOrder: orders.filter((o) => o.quoted > 0).length
+        ? sum(orders, 'quoted') / orders.filter((o) => o.quoted > 0).length
+        : 0,
+    },
+    byStage,
+    dueSoon,
+    overdue,
+    depositShortfall,
+    monthly,
+    legacy: {
+      open: legacy.open ?? { orders: 0, total: 0 },
+      settledLikely: legacy.settledLikely ?? { orders: 0, total: 0 },
+      imported: d.prepare(`SELECT COUNT(*) n FROM projects WHERE import_source <> ''`).get().n,
+    },
+    topFabrics: topBy('fabric_name'),
+    topEvents: topBy('event_type'),
+    alterations: {
+      byStatus: alterations,
+      overdue: alterationsOverdue,
+      revenue: alterations.reduce((t, r) => t + r.cost, 0),
+    },
+    extras,
+    leadTime: {
+      samples: leadTimes.length,
+      averageDays: leadTimes.length ? leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length : null,
+    },
+  };
+}
+
+/* ------------------------------------------------------------ the sheet */
+
+/**
+ * Everything the database page shows, in three queries however many orders
+ * there are: the orders with their client, every suit's spec and what has
+ * been paid; the alterations; and the extras - the workbook's sheets.
+ */
+function sheet() {
+  const d = get();
+  const orders = d.prepare(
+    `SELECT p.id, p.order_ref, p.status, p.title, p.event_date, p.quantity,
+            p.fabric_name, p.fabric_code, p.supplier, p.design, p.lining, p.shirt,
+            p.measurement_form_received, p.form_printed, p.form_url,
+            p.appointment_notes, p.consultation_date, p.first_appointment, p.comments,
+            p.measurement_date, p.first_fitting_date, p.final_fitting_date, p.review_date,
+            p.quote_json, p.imported_balance, p.import_source, p.updated_at,
+            p.client_id, c.name, c.surname, c.contact, c.email,
+            (SELECT group_concat(s.spec_json, char(30)) FROM suits s WHERE s.project_id = p.id) AS suit_specs,
+            (SELECT COUNT(*) FROM suits s WHERE s.project_id = p.id) AS suit_count,
+            (SELECT COALESCE(SUM(CASE WHEN y.kind = 'refund' THEN -y.amount ELSE y.amount END), 0)
+               FROM payments y WHERE y.project_id = p.id) AS paid
+       FROM projects p JOIN clients c ON c.id = p.client_id
+      ORDER BY p.updated_at DESC, p.id DESC`
+  ).all();
+
+  const alterations = d.prepare(
+    `SELECT a.*, p.order_ref, c.name, c.surname
+       FROM alterations a JOIN projects p ON p.id = a.project_id JOIN clients c ON c.id = p.client_id
+      ORDER BY COALESCE(NULLIF(a.received_on, ''), a.created_at) DESC, a.id DESC`
+  ).all().map((a) => ({ ...a, changes: readChanges(a) }));
+
+  const extras = d.prepare(
+    `SELECT e.*, p.order_ref, c.name, c.surname
+       FROM order_extras e JOIN projects p ON p.id = e.project_id JOIN clients c ON c.id = p.client_id
+      ORDER BY e.id DESC`
+  ).all();
+
+  return { orders, alterations, extras };
+}
+
+/**
+ * How many rows this connection has written since it opened. A call that
+ * moved it changed something, which is how the spreadsheet copy knows to look
+ * again without a list of every handler that writes.
+ */
+function changeCount() {
+  return get().prepare('SELECT total_changes() AS n').get().n;
+}
+
+/**
+ * The tables the Google spreadsheet copies, one query each however many
+ * rows there are. Only the columns sheetsMirror lists are read - what is not
+ * selected here cannot be sent - plus the stored quote, which is reduced to
+ * its agreed total before it leaves.
+ */
+function mirror() {
+  const d = get();
+  return {
+    clients: d.prepare(
+      'SELECT id, name, surname, contact, email, created_at, updated_at FROM clients ORDER BY id'
+    ).all(),
+    orders: d.prepare(
+      `SELECT id, order_ref, client_id, status, title, event_type, event_other, event_date,
+              quantity, fabric_name, fabric_code, supplier, design, lining, shirt,
+              consultation_date, first_appointment, measurement_date, first_fitting_date,
+              final_fitting_date, delivery_date, review_date, measurements_done,
+              measurement_form_received, form_printed, quote_json, imported_balance,
+              comments, appointment_notes, created_at, updated_at
+         FROM projects ORDER BY id`
+    ).all(),
+    payments: d.prepare(
+      'SELECT id, project_id, kind, amount, paid_on, method, reference, note, created_at FROM payments ORDER BY id'
+    ).all(),
+    alterations: d.prepare(
+      `SELECT id, project_id, suit_id, garment, kind, description, status,
+              received_on, due_on, confirmed_on, cost, note, created_at
+         FROM alterations ORDER BY id`
+    ).all(),
+    extras: d.prepare(
+      `SELECT id, project_id, extra_type, colour, quantity, status, unit_price, note, created_at
+         FROM order_extras ORDER BY id`
+    ).all(),
+  };
+}
+
+module.exports = {
+  open,
+  MIGRATIONS,
+  SCHEMA_VERSION: MIGRATIONS.length,
+  listClients, getClient, upsertClient, patchClient, deleteClient,
+  addReference, listReferences, getReference, updateReference, deleteReference,
+  linkRenderRefs, styleHistory,
+  saveClientMeasurement, listClientMeasurements, seedMeasurementsFromClient,
+  listProjects, getProject, createProject, updateProject, editProject, deleteProject, setQuote, setInformalQuote,
+  addPayment, updatePayment, deletePayment,
+  addAlteration, updateAlteration, deleteAlteration,
+  addOrderExtra, updateOrderExtra, deleteOrderExtra,
+  listMembers, addMember, updateMember, removeMember,
+  listSuits, addSuit, updateSuit, removeSuit, primarySuitId, defaultPhotoOwner,
+  analytics,
+  sheet, mirror, changeCount,
+  tx,
+  nextOrderRef, assignOrderRefs, stampImport, isRenderFile,
+  addPhoto, getPhoto, deletePhoto, updatePhotoMeta,
+  addNote, deleteNote,
+  saveMeasurement,
+  listMailRules, saveMailRule, deleteMailRule, markMailSent, mailCandidates,
+  addRender, getRender, setRenderApproved, deleteRender,
+  addFitting, updateFitting, deleteFitting,
+  listCustomCategories, addCustomCategory, updateCustomCategory, deleteCustomCategory,
+  listCustomItems, addCustomItem, updateCustomItem, deleteCustomItem,
+  listCustomOptions, addCustomOption, updateCustomOption, deleteCustomOption,
+  getSetting, setSetting,
+};

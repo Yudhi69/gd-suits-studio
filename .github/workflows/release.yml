@@ -1,0 +1,278 @@
+# Builds and publishes a release every time something lands on main.
+#
+# The app checks this repository's releases for updates, so a merge that never
+# becomes a release is a change GD cannot get. Cutting one by hand meant there
+# were none at all for the first eighteen pull requests.
+#
+# Each release is <major>.<minor>.<run number> taken from package.json, which
+# gives a number that always goes up without anything committing back to main
+# and triggering itself. The version is written into package.json inside the
+# job, before building, so the app reports the same version the release is
+# tagged with - the updater compares those two and would offer an endless
+# update if they disagreed.
+#
+# Put [skip release] in a merge commit message for a change that does not
+# deserve 290MB of installers.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+  # So the build can be proved on a branch before it is merged. A workflow
+  # cannot be tested any other way, and the first run of this one failed on
+  # both platforms - which is a poor thing to discover on main.
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a release (off by default - a dry run just builds)
+        type: boolean
+        default: false
+
+# Read-only by default. Only the publish job below can write to the repo:
+# the build jobs run npm packages and electron-builder, and none of that
+# third-party code should hold a token that can cut a release every
+# installed copy would trust.
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: pick
+        run: |
+          base=$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')")
+          echo "version=$base.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The runner images are pinned, not "-latest".
+          #
+          # The first run failed on both platforms for the same reason: npm
+          # ships node-gyp 9.4.1 with Node 20, and both images had moved past
+          # what it understands. Windows had Visual Studio 18, which it cannot
+          # recognise ("could not find a version of Visual Studio 2017 or
+          # newer"); macOS had Python 3.14, which its bundled gyp cannot run.
+          # Neither has anything to do with this code, and both would come
+          # back on a random morning when GitHub rolls the images forward.
+          #
+          # windows-2022 carries Visual Studio 2022, which node-gyp 9 knows.
+          #
+          # Pinning does not settle macOS on its own - macos-14 ships the same
+          # Python 3.14 as the latest image - so the Python is chosen below as
+          # well. Checked rather than assumed: I pinned the image first,
+          # thinking that was the fix, and reading what the image actually
+          # contains is what stopped a second broken merge.
+          #
+          # These will be retired eventually and the sign will be exactly this
+          # failure again; the fix then is a newer Node here, which brings a
+          # newer node-gyp with it.
+          - os: macos-14
+            name: macOS
+            # Each architecture is built in its own pass on purpose: in one
+            # pass electron-builder runs them in parallel and they collide in
+            # a shared temp directory, and you silently get only one DMG.
+            build: npm run build && npx electron-builder --mac --arm64 --publish never && npx electron-builder --mac --x64 --publish never
+            artifacts: release/*.dmg
+          - os: windows-2022
+            name: Windows
+            build: npm run build && npx electron-builder --win --x64 --publish never
+            artifacts: release/*Setup*.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      # No token left in .git/config for the build to find.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      # Python 3.11, and not a digit higher.
+      #
+      # better-sqlite3 ships no prebuilt binary for this target, so it is
+      # compiled here, by node-gyp 9.4.1 - the version @electron/rebuild pins,
+      # so electron-builder uses it too and there is no escaping it.
+      #
+      # That node-gyp bundles a gyp that does `from distutils.version import
+      # StrictVersion`, and distutils was removed from the standard library in
+      # Python 3.12. It accepts any Python >=3.6.0, so a newer one is taken
+      # happily and then dies inside with `configure error`, which names
+      # neither Python nor distutils.
+      #
+      # Reproduced locally before being changed again: 3.12 fails exactly as
+      # the runner did, and an interpreter that still has distutils configures
+      # cleanly. 3.11 is the last release that has it.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile native modules with that Python
+        shell: bash
+        run: echo "npm_config_python=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
+      - run: npm ci
+      - name: Stamp the version being released
+        run: npm version ${{ needs.version.outputs.version }} --no-git-tag-version --allow-same-version
+      # The certificate every Mac release is signed with, put in a keychain of
+      # its own for afterPack to sign from. Installed copies take an update
+      # only if it carries this certificate, so a Mac build without it stops
+      # here rather than ship a release nothing installed would accept.
+      #
+      # The secrets hold the .p12 (base64) and its password. The key exists
+      # nowhere else but the owner's own backup - see build/mac-keychain.sh.
+      #
+      # On the runner the keychain also goes on the search list. codesign on
+      # macOS 14 does not find an identity in a keychain that is not on it,
+      # even when named with --keychain: the first release built this way
+      # found the certificate here and then failed to sign with "The
+      # specified item could not be found in the keychain". The runner is
+      # thrown away after the job; on a laptop the list is never touched.
+      - name: Signing certificate
+        if: runner.os == 'macOS'
+        env:
+          MAC_SIGNING_P12: ${{ secrets.MAC_SIGNING_P12 }}
+          P12_PASSWORD: ${{ secrets.MAC_SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$MAC_SIGNING_P12" ] || [ -z "$P12_PASSWORD" ]; then
+            echo "::error::MAC_SIGNING_P12 and MAC_SIGNING_PASSWORD have to be set in this repository's Actions secrets."
+            exit 1
+          fi
+          umask 077
+          p12="$RUNNER_TEMP/signing.p12"
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          trap 'rm -f "$p12"' EXIT
+          node -e "process.stdout.write(Buffer.from(process.env.MAC_SIGNING_P12, 'base64'))" > "$p12"
+          # Assigned first: inside an echo, a failure here would go unnoticed.
+          identity=$(build/mac-keychain.sh "$p12" "$keychain")
+          expected=$(node -p "require('./electron/installer.js').SIGNER")
+          if [ "$(echo "$identity" | tr A-F a-f)" != "$expected" ]; then
+            echo "::error::The certificate in MAC_SIGNING_P12 is $identity, not the one installed copies insist on ($expected)."
+            exit 1
+          fi
+          searchlist=()
+          while IFS= read -r line; do
+            line=${line#*\"}
+            searchlist+=("${line%\"*}")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$keychain" ${searchlist[@]+"${searchlist[@]}"}
+          # Sign something small now, so a certificate codesign cannot use
+          # stops the job here and not after the whole build.
+          probe="$RUNNER_TEMP/signing-probe"
+          cp /usr/bin/true "$probe"
+          codesign --force --sign "$identity" --keychain "$keychain" --timestamp=none "$probe" ||
+            { echo "::error::codesign cannot sign with the certificate in $keychain."; exit 1; }
+          codesign -d -r- "$probe" 2>&1 | grep -i "certificate leaf = H\"$expected\"" >/dev/null ||
+            { echo "::error::A test signature does not name the project's certificate."; exit 1; }
+          rm -f "$probe"
+          echo "signing as $identity"
+          echo "GD_MAC_SIGN_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+      # --publish never on every call above, not just here: on CI
+      # electron-builder decides by itself to publish, then stops the build
+      # because there is no GH_TOKEN. The release is cut by the job below,
+      # from artifacts, which is the only place that should be doing it.
+      - run: ${{ matrix.build }}
+        env:
+          # electron-builder must not go looking for an Apple Developer ID:
+          # there is none, and it fails the build rather than fall back.
+          # afterPack signs with the project's certificate instead.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Remove the signing keychain
+        if: always() && runner.os == 'macOS'
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.name }}
+          path: ${{ matrix.artifacts }}
+          retention-days: 3
+
+  publish:
+    needs: [version, build]
+    # A dry run builds both platforms and stops, leaving the installers as
+    # artifacts to download and check without cutting a release.
+    if: ${{ github.event_name == 'push' || inputs.publish }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      - name: Build the page that ships beside the installers
+        run: node scripts/make-install-note.js "installers/Read me first.html"
+      - name: Notes, from the commit that caused this
+        run: |
+          {
+            echo "What landed:"
+            echo
+            git log -1 --pretty=%B
+            echo
+            echo "---"
+            echo
+            echo "**Intel MacBook** - the .dmg without \`arm64\` in its name."
+            echo "**Apple-chip MacBook** - the \`-arm64.dmg\`."
+            echo "**Windows** - the \`.exe\`."
+            echo
+            echo "Both systems warn on first launch because the app is not signed with a paid"
+            echo "certificate. On a Mac, hold Control and click the icon, then choose Open."
+            echo "On Windows, click More info then Run anyway. See \`Read me first.html\`."
+            echo
+            echo "Your orders, clients, photographs and measurements are never touched by an update."
+          } > notes.md
+      # Whether this is really the newest version, rather than merely the
+      # newest release.
+      #
+      # Run numbers only ever go up, but the runs do not finish in that order:
+      # 0.1.10 published at 13:37 and 0.1.9 at 13:42, so GitHub marked 0.1.9
+      # as Latest because it was created last. The app asks for
+      # /releases/latest, so a copy on 0.1.10 would have been offered 0.1.9 -
+      # a downgrade it would go on being offered forever.
+      #
+      # So the comparison is against the highest tag that exists, by version
+      # and not by date, and this release claims Latest only if it wins.
+      - name: Is this actually the newest version?
+        id: newest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          new='${{ needs.version.outputs.version }}'
+          highest=$(gh release list --limit 200 --json tagName -q '.[].tagName' \
+                      | sed 's/^v//' | sort -V | tail -1)
+          echo "highest published: ${highest:-none}, this one: $new"
+          if [ -z "$highest" ] || [ "$(printf '%s\n%s\n' "$highest" "$new" | sort -V | tail -1)" = "$new" ]; then
+            echo 'make=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'make=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      # Pinned to the commit, not the tag: a tag can be moved to other code,
+      # and this step holds the token that publishes the release.
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: v${{ needs.version.outputs.version }}
+          name: GD Suits Studio ${{ needs.version.outputs.version }}
+          body_path: notes.md
+          files: installers/*
+          fail_on_unmatched_files: true
+          make_latest: ${{ steps.newest.outputs.make }}

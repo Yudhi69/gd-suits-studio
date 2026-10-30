@@ -1,0 +1,965 @@
+/* GD Suits Studio - black, white and gold.
+   Chrome is near-black with gold accents; the working canvas stays a neutral
+   off-white because fabric and skin tone have to be judged against a colour
+   that does not lie. */
+
+/* ---------------------------------------------------------------- tokens
+
+   Two themes off one set of semantic names. `:root` is light; the dark values
+   are redefined under [data-theme="dark"], which App.jsx stamps on <html> from
+   the saved preference (and from the OS when that preference is "system").
+
+   One deliberate exception runs through both themes: the surfaces used to
+   JUDGE colour - the photo frames, the swatch previews and the sampler - are
+   strictly neutral grey, never the warm off-white used elsewhere. A warm cast
+   behind a fabric swatch or a client's face biases exactly the judgement this
+   app exists to support, so those surfaces are held neutral in light and dark
+   alike.
+*/
+
+:root {
+  color-scheme: light;
+
+  --gold:        #c9a227;
+  --gold-bright: #e3c566;
+  --gold-deep:   #8a6d14;
+  --gold-wash:   #faf4e0;
+
+  --paper:       #f4f2ee;
+  --card:        #ffffff;
+  --surface-2:   #fbfaf7;
+  --surface-3:   #ebe8e1;
+  --line:        #e2ded5;
+  --line-soft:   #eeebe4;
+
+  --text:        #14120f;
+  --text-soft:   #5d574c;
+  --text-faint:  #8d867a;
+
+  --topbar-bg:   rgba(244, 242, 238, .92);
+  --selected-bg: linear-gradient(180deg, #fffdf6, #fdf9ed);
+  --carried-bg:  #fffdf4;
+  --track:       #d8d3c8;
+  --scroll:      #d3cec3;
+  --scroll-hover:#bdb7a9;
+  --overlay:     rgba(14, 13, 11, .55);
+
+  /* Brand chrome stays dark in both themes - black is a company colour. */
+  --sidebar-bg:     #0e0d0b;
+  --sidebar-2:      #17150f;
+  --sidebar-3:      #241f16;
+  --sidebar-line:   #322b1e;
+  --sidebar-text:   #f5f2ea;
+  --sidebar-soft:   #a79f8d;
+
+  /* Colour-judgement surfaces: neutral by design, never warm. */
+  --judge-bg:    #ededed;
+  --judge-check: #e0e0e0;
+
+  --ok:     #2e7d52;
+  --warn:   #a8700f;
+  --danger: #a3342a;
+
+  --ok-bg:     #eaf5ef;   --ok-line:     #c8e5d5;
+  --warn-bg:   #fdf6e6;   --warn-line:   #ecdcb4;
+  --danger-bg: #fdf3f2;   --danger-line: #eecac5;
+  --info-bg:   #f1f4f8;   --info-line:   #d6dfea;  --info-text: #33445c;
+  --quiet-bg:  #f2f0ec;
+
+  --radius:    10px;
+  --radius-lg: 14px;
+  --shadow:    0 1px 2px rgba(20,18,15,.06), 0 4px 16px rgba(20,18,15,.06);
+  --shadow-lg: 0 8px 40px rgba(20,18,15,.16);
+
+  --serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif;
+  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --gold-wash:   #2b2414;
+
+  --paper:       #121110;
+  --card:        #1b1917;
+  --surface-2:   #211e1b;
+  --surface-3:   #26221d;
+  --line:        #322d26;
+  --line-soft:   #262218;
+
+  --text:        #efeae0;
+  --text-soft:   #b3ab9c;
+  --text-faint:  #857d70;
+
+  --topbar-bg:   rgba(18, 17, 16, .92);
+  --selected-bg: linear-gradient(180deg, #2a2316, #221d13);
+  --carried-bg:  #2a2415;
+  --track:       #3a352d;
+  --scroll:      #3a352d;
+  --scroll-hover:#4b453b;
+  --overlay:     rgba(0, 0, 0, .66);
+
+  --sidebar-bg:   #0a0908;
+  --sidebar-2:    #141210;
+  --sidebar-3:    #201c15;
+  --sidebar-line: #262019;
+
+  /* Still neutral, just darker - no warm cast behind a fabric swatch. */
+  --judge-bg:    #4c4c4c;
+  --judge-check: #444444;
+
+  --ok:     #6bbf90;
+  --warn:   #d9a441;
+  --danger: #e08379;
+
+  --ok-bg:     #16281f;   --ok-line:     #24503a;
+  --warn-bg:   #2e2413;   --warn-line:   #57451f;
+  --danger-bg: #2e1a18;   --danger-line: #5a2f2a;
+  --info-bg:   #191f28;   --info-line:   #2c3a4c;  --info-text: #a8bcd4;
+  --quiet-bg:  #242019;
+
+  --shadow:    0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.32);
+  --shadow-lg: 0 8px 40px rgba(0,0,0,.55);
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--paper);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 { font-family: var(--serif); font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+h1 { font-size: 28px; }
+h2 { font-size: 20px; }
+h3 { font-size: 16px; }
+
+button, input, select, textarea { font: inherit; color: inherit; }
+
+/* ------------------------------------------------------------------ shell */
+
+.app { display: grid; grid-template-columns: 232px 1fr; height: 100vh; overflow: hidden; }
+
+.sidebar {
+  background: var(--sidebar-bg);
+  color: var(--sidebar-text);
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--sidebar-line);
+  overflow: hidden;
+}
+
+.brand {
+  padding: 44px 20px 22px;
+  border-bottom: 1px solid var(--sidebar-line);
+}
+/* The supplied logo already carries the wordmark and the tagline, so it is
+   used whole rather than rebuilt in type. */
+.brand-logo {
+  display: block;
+  width: 100%;
+  max-width: 176px;
+  height: auto;
+}
+
+/* Password and API-key fields: room for the reveal button inside the field. */
+.secret-field { position: relative; flex: 1; display: flex; }
+.secret-field .input { padding-right: 40px; }
+.secret-reveal {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  width: 30px; height: 30px; padding: 0;
+  display: grid; place-items: center;
+  background: none; border: 0; border-radius: 6px;
+  color: var(--text-faint); cursor: pointer;
+}
+.secret-reveal:hover { background: var(--surface-3); color: var(--text-soft); }
+
+.nav { padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: 8px;
+  background: none; border: 0; width: 100%; text-align: left; cursor: pointer;
+  color: var(--sidebar-soft); font-size: 13.5px;
+}
+.nav-item:hover { background: var(--sidebar-2); color: var(--sidebar-text); }
+.nav-item.active { background: var(--sidebar-3); color: var(--gold-bright); }
+.nav-item .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .8; }
+
+.sidebar-foot {
+  margin-top: auto; padding: 14px 18px;
+  border-top: 1px solid var(--sidebar-line);
+  font-size: 11px; color: var(--sidebar-soft);
+  display: flex; flex-direction: column; gap: 6px;
+}
+
+.update-flag {
+  width: 100%; padding: 6px 9px; margin-bottom: 4px;
+  border-radius: 7px; cursor: pointer; text-align: left;
+  border: 1px solid var(--gold-deep);
+  background: linear-gradient(135deg, var(--gold-bright), var(--gold));
+  color: #241d05; font-size: 11.5px; font-weight: 700;
+}
+.update-flag:hover { filter: brightness(1.06); }
+
+.theme-switch {
+  display: flex; gap: 2px; padding: 2px; margin-bottom: 4px;
+  background: var(--sidebar-2); border-radius: 8px;
+  border: 1px solid var(--sidebar-line);
+}
+.theme-switch button {
+  flex: 1; padding: 5px 0; border: 0; border-radius: 6px;
+  background: none; color: var(--sidebar-soft);
+  font-size: 11px; cursor: pointer;
+}
+.theme-switch button:hover { color: var(--sidebar-text); }
+.theme-switch button.active { background: var(--sidebar-3); color: var(--gold-bright); font-weight: 600; }
+
+.main { overflow-y: auto; display: flex; flex-direction: column; }
+
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  background: var(--topbar-bg);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+  padding: 14px 28px;
+  display: flex; align-items: center; gap: 16px;
+}
+.topbar .spacer { flex: 1; }
+
+.content { padding: 24px 28px 80px; max-width: 1180px; width: 100%; }
+.content.wide { max-width: none; }
+
+/* ----------------------------------------------------------- primitives */
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+.card-pad { padding: 20px; }
+.card-head {
+  padding: 16px 20px; border-bottom: 1px solid var(--line-soft);
+  display: flex; align-items: center; gap: 12px;
+}
+.card-head .spacer { flex: 1; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 9px 16px; border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--card); color: var(--text);
+  cursor: pointer; font-size: 13.5px; font-weight: 500;
+  transition: background .12s, border-color .12s, transform .06s;
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) { border-color: var(--track); background: var(--surface-2); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+.btn-primary {
+  background: var(--sidebar-bg); border-color: var(--sidebar-bg); color: var(--gold-bright);
+}
+.btn-primary:hover:not(:disabled) { background: var(--sidebar-2); border-color: var(--sidebar-2); }
+
+.btn-gold {
+  background: linear-gradient(135deg, var(--gold-bright), var(--gold));
+  border-color: var(--gold-deep); color: #241d05; font-weight: 600;
+}
+.btn-gold:hover:not(:disabled) { filter: brightness(1.05); }
+
+.btn-ghost { background: transparent; border-color: transparent; color: var(--text-soft); }
+.btn-ghost:hover:not(:disabled) { background: var(--surface-3); border-color: transparent; }
+
+.btn-danger { color: var(--danger); }
+.btn-danger:hover:not(:disabled) { background: var(--danger-bg); border-color: var(--danger-line); }
+
+.btn-sm { padding: 5px 10px; font-size: 12.5px; }
+
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.field > label { font-size: 12.5px; font-weight: 600; color: var(--text-soft); }
+.field .hint { font-size: 12px; color: var(--text-faint); }
+
+.input, .textarea, .select {
+  width: 100%; padding: 9px 11px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--card); outline: none;
+  transition: border-color .12s, box-shadow .12s;
+}
+.input:focus, .textarea:focus, .select:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(201,162,39,.16);
+}
+.textarea { resize: vertical; min-height: 76px; line-height: 1.55; }
+
+.row { display: flex; gap: 14px; flex-wrap: wrap; }
+.row > * { flex: 1; min-width: 180px; }
+.grid { display: grid; gap: 14px; }
+.grid-2 { grid-template-columns: repeat(2, 1fr); }
+.grid-3 { grid-template-columns: repeat(3, 1fr); }
+.grid-4 { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 1100px) { .grid-4 { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 860px)  { .grid-3, .grid-4 { grid-template-columns: repeat(2, 1fr); } }
+
+.stack { display: flex; flex-direction: column; gap: 14px; }
+.inline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+.muted { color: var(--text-soft); }
+.faint { color: var(--text-faint); }
+.small { font-size: 12.5px; }
+.tiny { font-size: 11.5px; }
+.mono { font-family: var(--mono); font-size: 12px; }
+.center { text-align: center; }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  /* One line, always. A pill is a label; wrapped, it becomes a rounded blob
+     twice the height of the one beside it - which is what the order list's
+     status column did as soon as the window was not wide. */
+  white-space: nowrap;
+  padding: 3px 9px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 600;
+  background: var(--gold-wash); color: var(--gold-deep);
+  border: 1px solid #eadfb8;
+}
+.pill-quiet { background: var(--quiet-bg); color: var(--text-soft); border-color: var(--line); }
+.pill-ok { background: var(--ok-bg); color: var(--ok); border-color: var(--ok-line); }
+.pill-warn { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-line); }
+.pill-danger { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-line); }
+
+.divider { height: 1px; background: var(--line-soft); margin: 18px 0; border: 0; }
+
+.empty {
+  padding: 44px 24px; text-align: center;
+  color: var(--text-faint); border: 1px dashed var(--line);
+  border-radius: var(--radius-lg); background: var(--surface-2);
+}
+
+.banner {
+  padding: 11px 14px; border-radius: 8px; font-size: 13px;
+  display: flex; align-items: flex-start; gap: 9px;
+}
+.banner-warn { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn); }
+.banner-danger { background: var(--danger-bg); border: 1px solid var(--danger-line); color: var(--danger); }
+.banner-info { background: var(--info-bg); border: 1px solid var(--info-line); color: var(--info-text); }
+
+/* --------------------------------------------------------- option cards */
+
+.options { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+/* Every row the height of the tallest tile, not just every tile in a row.
+   A choose-several list has one "Other" with a line under it; left to the
+   grid's default, it sits alone on the last row at a height of its own. */
+.options-even { grid-auto-rows: 1fr; }
+
+.option {
+  position: relative; text-align: left; cursor: pointer;
+  padding: 13px 14px; border-radius: var(--radius);
+  border: 1.5px solid var(--line); background: var(--card);
+  transition: border-color .12s, box-shadow .12s, background .12s;
+}
+.option:hover { border-color: var(--track); }
+.option.selected {
+  border-color: var(--gold);
+  background: var(--selected-bg);
+  box-shadow: 0 0 0 3px rgba(201,162,39,.14);
+}
+/* Lapel drawings on the option tiles.
+   They are drawn in currentColor, so they take the tile's own ink and follow
+   the theme without a second set of colours to keep in step. */
+.sketch {
+  display: block; width: 100%; max-width: 88px; height: auto; margin: 2px auto 8px;
+  fill: none; stroke: currentColor; stroke-width: 2.2;
+  stroke-linejoin: round; stroke-linecap: round;
+  color: var(--text-soft);
+}
+.option.selected .sketch { color: var(--gold-deep); }
+.sketch-lapel { fill: currentColor; fill-opacity: .15; }
+.sketch-collar { fill: currentColor; fill-opacity: .32; }
+.sketch-button { fill: currentColor; stroke: none; }
+/* The same drawings beside a switch - the third pocket. */
+.toggle-row .sketch { width: 64px; margin: 0 14px 0 0; flex: none; }
+.toggle-row-click { cursor: pointer; }
+.toggle-row.on .sketch { color: var(--gold-deep); }
+
+.option-label { font-weight: 600; font-size: 13.5px; padding-right: 46px; }
+.option-desc { font-size: 12px; color: var(--text-faint); margin-top: 2px; padding-right: 46px; }
+.option-price {
+  position: absolute; top: 10px; right: 11px;
+  font-size: 11px; font-weight: 700; color: var(--gold-deep);
+}
+.option.selected .option-price { color: var(--gold-deep); }
+
+.option-add {
+  border-style: dashed; display: flex; align-items: center; gap: 9px;
+  color: var(--text-soft); background: transparent;
+}
+.option-add:hover { border-color: var(--gold); color: var(--text); background: var(--surface-2); }
+.option-add-plus { font-size: 17px; line-height: 1; color: var(--gold-deep); font-weight: 700; }
+.option-add .option-label { padding-right: 0; font-weight: 500; }
+
+.option-edit {
+  position: absolute; bottom: 7px; right: 10px;
+  font-size: 10.5px; color: var(--text-faint);
+  border-bottom: 1px dotted currentColor; cursor: pointer;
+}
+.option-edit:hover { color: var(--gold-deep); }
+.recalled {
+  border-left: 3px solid var(--line); padding: 2px 0 2px 14px; margin-bottom: 14px;
+}
+.recalled .field:last-child { margin-bottom: 0; }
+.option-edit-inline { position: static; margin: 0 14px 0 8px; }
+
+.toggle-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px; border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--card);
+}
+
+.switch {
+  position: relative; width: 42px; height: 24px; flex: none;
+  border-radius: 999px; border: 0; cursor: pointer;
+  background: var(--track); transition: background .15s;
+}
+.switch::after {
+  content: ''; position: absolute; top: 3px; left: 3px;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2);
+  transition: transform .15s;
+}
+.switch.on { background: var(--gold); }
+.switch.on::after { transform: translateX(18px); }
+
+/* -------------------------------------------------------------- stepper */
+
+.stepper-shell { display: flex; align-items: stretch; gap: 6px; min-width: 0; }
+.stepper-shell .stepper { flex: 1; min-width: 0; }
+
+.stepper-arrow {
+  flex: none; width: 30px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--surface-3);
+  color: var(--text-soft); cursor: pointer;
+  display: grid; place-items: center;
+  transition: background .12s, color .12s, opacity .12s;
+}
+.stepper-arrow:hover:not(:disabled) { background: var(--card); color: var(--text); border-color: var(--gold); }
+.stepper-arrow:disabled { opacity: .3; cursor: default; }
+
+.stepper {
+  display: flex; gap: 4px; overflow-x: auto; padding: 4px;
+  background: var(--surface-3); border-radius: 10px; border: 1px solid var(--line);
+  scroll-behavior: smooth;
+}
+/* A soft edge so a half-visible tab reads as "there is more this way". */
+.stepper.fade-left { mask-image: linear-gradient(90deg, transparent 0, #000 26px); }
+.stepper.fade-right { mask-image: linear-gradient(270deg, transparent 0, #000 26px); }
+.stepper.fade-left.fade-right {
+  mask-image: linear-gradient(90deg, transparent 0, #000 26px, #000 calc(100% - 26px), transparent 100%);
+}
+.stepper::-webkit-scrollbar { height: 0; }
+.step-tab {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 13px; border-radius: 7px; border: 0;
+  background: transparent; cursor: pointer;
+  font-size: 12.5px; color: var(--text-soft); white-space: nowrap;
+}
+.step-tab:hover { background: var(--card); }
+.step-tab.active { background: var(--sidebar-bg); color: var(--gold-bright); font-weight: 600; }
+.step-tab .num {
+  width: 18px; height: 18px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 10.5px; font-weight: 700;
+  background: var(--track);
+}
+.step-tab.active .num { background: rgba(227,197,102,.22); }
+.step-tab.done .num { background: var(--ok); color: #fff; }
+
+/* --------------------------------------------------------------- photos */
+
+.photo-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); }
+
+.photo-slot {
+  /* The theme's own card, not a fixed off-white: in dark mode the fixed one
+     put light captions on a light strip, and "Front" all but disappeared. The
+     frame itself stays the neutral judging grey. */
+  border: 1.5px dashed var(--line); border-radius: var(--radius);
+  background: var(--card); overflow: hidden;
+  display: flex; flex-direction: column;
+  transition: border-color .12s;
+}
+.photo-slot:hover { border-color: var(--gold); }
+.photo-slot.filled { border-style: solid; border-color: var(--line); background: var(--card); }
+.sampler-stage { background: var(--judge-bg); border-radius: var(--radius); padding: 10px; }
+.photo-slot.dragging { border-color: var(--gold); background: var(--gold-wash); }
+
+.photo-frame {
+  position: relative; aspect-ratio: 3 / 4;
+  /* Neutral grey in both themes - a warm ground would bias how the
+     tailor reads skin tone and cloth colour. */
+  background:
+    linear-gradient(45deg, var(--judge-check) 25%, transparent 25%) 0 0/16px 16px,
+    linear-gradient(-45deg, var(--judge-check) 25%, transparent 25%) 0 8px/16px 16px,
+    linear-gradient(45deg, transparent 75%, var(--judge-check) 75%) 8px -8px/16px 16px,
+    linear-gradient(-45deg, transparent 75%, var(--judge-check) 75%) -8px 0/16px 16px,
+    var(--judge-bg);
+  display: grid; place-items: center; cursor: pointer;
+}
+.photo-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-frame .placeholder { text-align: center; color: var(--text-faint); padding: 12px; }
+.photo-frame .placeholder .big { font-size: 26px; opacity: .5; }
+
+.photo-meta { padding: 9px 11px; border-top: 1px solid var(--line-soft); }
+.photo-actions { display: flex; gap: 5px; padding: 0 9px 9px; }
+
+.sampler-canvas { max-width: 100%; cursor: crosshair; border-radius: var(--radius); display: block; }
+
+.input-invalid { border-color: var(--danger) !important; }
+
+.swatch {
+  width: 34px; height: 34px; border-radius: 7px; flex: none;
+  border: 1px solid rgba(0,0,0,.14);
+  box-shadow: inset 0 1px 2px rgba(255,255,255,.35);
+}
+.swatch-lg { width: 62px; height: 62px; border-radius: 9px; }
+.swatch-row { display: flex; gap: 7px; flex-wrap: wrap; }
+.swatch-sm { width: 18px; height: 18px; border-radius: 5px; }
+
+.measured-cloth { display: grid; gap: 8px; margin-top: 16px; }
+.measured-cloth-row { display: flex; gap: 8px 16px; flex-wrap: wrap; }
+.measured-cloth-colour { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; white-space: nowrap; }
+
+/* -------------------------------------------------------------- renders */
+
+.render-stage {
+  background: #1a1815; border-radius: var(--radius-lg);
+  display: grid; place-items: center; min-height: 460px;
+  position: relative; overflow: hidden; padding: 16px;
+}
+.render-stage img { max-width: 100%; max-height: 620px; border-radius: 6px; display: block; }
+
+.render-strip { display: flex; gap: 9px; overflow-x: auto; padding: 4px 2px 8px; }
+.render-thumb {
+  width: 78px; height: 104px; flex: none; border-radius: 7px;
+  border: 2px solid transparent; overflow: hidden; cursor: pointer;
+  background: #201d19; padding: 0;
+}
+.render-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.render-thumb.active { border-color: var(--gold); }
+
+.spinner {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 2px solid rgba(227,197,102,.25); border-top-color: var(--gold-bright);
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* The update download. A determinate bar, because the release states its size. */
+.progress-track { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.progress-fill { height: 100%; border-radius: 999px; background: var(--gold); transition: width .2s ease; }
+
+.progress-note { color: var(--sidebar-soft); font-size: 13px; margin-top: 12px; text-align: center; }
+
+/* ---------------------------------------------------------------- notes */
+
+.note {
+  padding: 11px 13px; border-radius: 9px;
+  background: var(--surface-2); border: 1px solid var(--line-soft);
+}
+.note + .note { margin-top: 8px; }
+/* The informal quote exactly as it will be sent - line breaks and all. */
+.informal-compare { border-top: 1px solid var(--line); padding-top: 12px; }
+.compare-grid { border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+.compare-grid th, .compare-grid td { padding: 5px 14px 5px 0; text-align: left; }
+.compare-grid thead th { font-size: 12px; color: var(--text-soft); font-weight: 600; }
+.compare-grid tbody th { font-weight: 500; }
+.informal-message { white-space: pre-wrap; max-height: 320px; overflow-y: auto; font-size: 13px; line-height: 1.5; }
+/* GD's figures, each one editable, before the informal quote goes. */
+.informal-line { align-items: center; padding: 3px 0; }
+.informal-line > .input { flex: 1; min-width: 0; }
+.informal-amount { width: 110px; text-align: right; }
+.informal-renders { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; margin-top: 8px; }
+.informal-renders img { width: 100%; aspect-ratio: 4 / 5; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); }
+.note-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+
+/* --------------------------------------------------------------- prices */
+
+.price-bar {
+  position: sticky; bottom: 0; z-index: 15;
+  background: var(--sidebar-bg); color: var(--sidebar-text);
+  border-radius: 12px; padding: 13px 18px;
+  display: flex; align-items: center; gap: 16px;
+  box-shadow: var(--shadow-lg);
+}
+.price-total { font-family: var(--serif); font-size: 24px; color: var(--gold-bright); }
+
+.price-line {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 6px 0; border-bottom: 1px dashed var(--line-soft);
+}
+.price-line:last-child { border-bottom: 0; }
+.price-group-title {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--text-faint); margin: 14px 0 2px; font-weight: 700;
+}
+/* A heading inside a builder page - "Add to the order", "Shirt" - with a rule
+   above it, so a long page reads as a few groups rather than one list. */
+.field-section { margin: 22px 0 12px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
+.card-pad > .field-section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+
+/* --------------------------------------------------------------- tables */
+
+.table { width: 100%; border-collapse: collapse; }
+/* Somewhere for a wide table to go. The order list was already wider than
+   its card on a narrow window and ran straight out through the card's edge;
+   now it scrolls inside it, and the other columns are left to wrap first. */
+.table-scroll { overflow-x: auto; }
+
+/* ------------------------------------------------------------ database */
+
+/* GD's workbook as a grid. Cells are text until clicked, so eight hundred
+   rows are eight hundred rows of text, not sixteen thousand live inputs. */
+.db-sheet { max-height: calc(100vh - 240px); overflow: auto; }
+.db-table { font-size: 12.5px; }
+.db-table th { position: sticky; top: 0; background: var(--card); z-index: 1; white-space: nowrap; }
+.db-table td { vertical-align: top; padding: 5px 8px; min-width: 110px; }
+.db-table td.tick, .db-table td.num { min-width: 0; }
+.db-table td.nowrap { white-space: nowrap; min-width: 0; }
+.db-table .num { text-align: right; white-space: nowrap; }
+.db-table .center-cell { text-align: center; }
+.db-table .wide-cell { min-width: 240px; max-width: 340px; }
+.db-cell {
+  display: block; width: 100%; min-height: 24px; padding: 3px 5px; margin: -3px -5px;
+  background: none; border: 1px solid transparent; border-radius: 6px;
+  color: inherit; font: inherit; text-align: left; cursor: text; white-space: pre-wrap; overflow-wrap: break-word;
+}
+.db-cell:hover { border-color: var(--line); background: var(--surface-2); }
+.db-cell.derived { color: var(--text-faint); font-style: italic; }
+.db-cell.strong { font-weight: 600; }
+.db-edit { min-width: 140px; padding: 4px 6px; font-size: 12.5px; }
+textarea.db-edit { min-height: 70px; }
+.select-sm { padding: 4px 6px; font-size: 12px; min-width: 150px; }
+.link {
+  background: none; border: 0; padding: 0; color: var(--gold-deep); font: inherit;
+  cursor: pointer; text-decoration: underline; text-underline-offset: 2px; text-align: left;
+}
+.progress-mark {
+  width: 30px; height: 26px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--card); color: var(--gold-deep); font-weight: 800; cursor: pointer;
+}
+.progress-mark:hover { border-color: var(--gold); }
+.progress-mark.on { background: var(--gold-wash); border-color: var(--gold); }
+.table th, .table td { padding: 9px 10px; text-align: left; border-bottom: 1px solid var(--line-soft); }
+.table th { font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); font-weight: 700; }
+.table tr:last-child td { border-bottom: 0; }
+.table tbody tr:hover { background: var(--surface-2); }
+.clickable { cursor: pointer; }
+
+/* --------------------------------------------------------------- modals */
+
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 100;
+  background: var(--overlay); backdrop-filter: blur(3px);
+  display: grid; place-items: center; padding: 24px;
+}
+.modal {
+  background: var(--card); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg); width: min(620px, 100%);
+  max-height: 86vh; overflow-y: auto;
+}
+.modal-wide { width: min(940px, 100%); }
+
+.toast-wrap {
+  position: fixed; bottom: 22px; right: 22px; z-index: 200;
+  display: flex; flex-direction: column; gap: 8px; max-width: 380px;
+}
+.toast {
+  background: var(--sidebar-bg); color: var(--sidebar-text);
+  padding: 11px 15px; border-radius: 9px; box-shadow: var(--shadow-lg);
+  font-size: 13px; display: flex; gap: 9px; align-items: flex-start;
+}
+.toast.err { background: #6d201a; }
+.toast.ok { background: #1f5c3f; }
+
+/* --------------------------------------------------------- measurements */
+
+.collapsible { border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 8px; background: var(--card); }
+.collapsible.open { background: var(--surface-2); }
+.collapsible-head {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 11px 14px; border: 0; background: none; cursor: pointer;
+  text-align: left; color: inherit; border-radius: var(--radius);
+}
+.collapsible-head:hover { background: var(--surface-3); }
+.collapsible-caret { display: grid; place-items: center; color: var(--text-faint); transition: transform .15s; }
+.collapsible.open .collapsible-caret { transform: rotate(90deg); color: var(--gold-deep); }
+.collapsible-title { font-weight: 600; font-size: 13.5px; text-transform: capitalize; }
+.collapsible-summary { margin-left: auto; font-size: 12px; color: var(--text-faint); }
+.collapsible-body { padding: 2px 14px 12px; border-top: 1px solid var(--line-soft); }
+
+.unit-switch {
+  display: flex; gap: 2px; padding: 2px;
+  background: var(--surface-3); border-radius: 8px; border: 1px solid var(--line);
+}
+.unit-switch button {
+  padding: 4px 11px; border: 0; border-radius: 6px;
+  background: none; color: var(--text-soft);
+  font-size: 12px; cursor: pointer;
+}
+.unit-switch button:hover { color: var(--text); }
+.unit-switch button.active { background: var(--sidebar-bg); color: var(--gold-bright); font-weight: 600; }
+
+.measure-entry { display: flex; align-items: center; gap: 7px; justify-content: flex-end; }
+.measure-unit { font-size: 11.5px; color: var(--text-faint); width: 18px; }
+
+.overdue { color: var(--danger); font-weight: 600; }
+
+/* Logging an alteration against the measurement list. */
+.alteration-form { margin-top: 16px; padding-top: 4px; border-top: 1px solid var(--line-soft); }
+.alteration-rows { display: grid; gap: 2px; }
+.alteration-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 90px 92px 110px; gap: 10px;
+  align-items: center; padding: 4px 0; border-bottom: 1px dashed var(--line-soft);
+}
+.row-cancelled td { opacity: .55; }
+
+.measure-row {
+  display: grid; grid-template-columns: 1fr 118px; gap: 12px;
+  align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line-soft);
+}
+.measure-row:last-child { border-bottom: 0; }
+/* Two figures for one measurement - left and right bicep - side by side. */
+.measure-row-pair { grid-template-columns: 1fr 340px; }
+.measure-pair { display: flex; gap: 10px; }
+.measure-pair > .measure-entry { flex: 1; min-width: 0; }
+.measure-side { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .05em; }
+.measure-input { text-align: right; font-family: var(--mono); }
+.carried { border-color: var(--gold) !important; background: var(--carried-bg); }
+
+/* ------------------------------------------------------------ reference */
+
+.ref-card {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  overflow: hidden; background: var(--card); position: relative;
+}
+.ref-card.picked { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(201,162,39,.16); }
+.ref-thumb { aspect-ratio: 1; background: var(--judge-bg); cursor: pointer; position: relative; }
+.ref-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ref-body { padding: 9px 11px; }
+.ref-star {
+  position: absolute; top: 7px; right: 7px;
+  background: rgba(14,13,11,.6); border: 0; color: #fff;
+  width: 26px; height: 26px; border-radius: 50%; cursor: pointer;
+  display: grid; place-items: center; font-size: 13px;
+}
+.ref-star.on { background: var(--gold); color: #241d05; }
+.ref-badge {
+  position: absolute; top: 7px; left: 7px;
+  background: rgba(14,13,11,.72); color: var(--gold-bright);
+  padding: 2px 7px; border-radius: 999px; font-size: 10px; font-weight: 700;
+}
+
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 6px; border: 3px solid var(--paper); }
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-hover); }
+
+
+/* ------------------------------------------------------------- analytics */
+/* One accent per mode, both validated at >=3:1 against their surface. The
+   light end of a gold ramp is invisible on a light surface, so the two modes
+   take different steps rather than one being flipped into the other. */
+:root {
+  --chart-accent: #8a6d14;
+  --chart-track: #eeebe4;
+  --status-good: #2e7d52;
+  --status-warning: #a8700f;
+  --status-serious: #a3342a;
+}
+:root[data-theme="dark"], :root:not([data-theme="light"]) {
+  --chart-accent: #e3c566;
+  --chart-track: #262119;
+  --status-good: #5fbb8a;
+  --status-warning: #d8a33c;
+  --status-serious: #e0796d;
+}
+
+.stat-value { font-family: var(--serif); font-size: 30px; margin-top: 4px; line-height: 1.1; }
+.stat-good { color: var(--status-good); }
+.stat-warn { color: var(--status-warning); }
+
+.status-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  margin-right: 7px; vertical-align: baseline;
+}
+.status-good { background: var(--status-good); }
+.status-warning { background: var(--status-warning); }
+.status-serious { background: var(--status-serious); }
+.status-critical { background: var(--status-serious); }
+
+.bars { display: flex; flex-direction: column; gap: 8px; }
+.bar-row { display: grid; grid-template-columns: 140px 1fr 150px; align-items: center; gap: 12px; }
+.bar-label { font-size: 12.5px; color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar-track { background: var(--chart-track); border-radius: 4px; height: 14px; overflow: hidden; }
+/* 4px rounded data-end, anchored to the baseline. */
+.bar-fill { height: 100%; background: var(--chart-accent); border-radius: 0 4px 4px 0; min-width: 2px; }
+.bar-value { font-family: var(--mono); font-size: 12.5px; text-align: right; line-height: 1.3; }
+
+.month-bars { display: flex; gap: 6px; align-items: flex-end; height: 150px; }
+.month-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; }
+.month-value { font-family: var(--mono); font-size: 11px; color: var(--text-soft); height: 16px; }
+.month-track { flex: 1; width: 100%; display: flex; align-items: flex-end; }
+.month-fill { width: 100%; background: var(--chart-accent); border-radius: 4px 4px 0 0; min-height: 2px; }
+.month-label { font-size: 10.5px; color: var(--text-faint); margin-top: 5px; }
+
+/* Sortable column headings. The button carries the header's own type so the
+   row still reads as a header, not as a toolbar. */
+.th-sort {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; letter-spacing: inherit; text-transform: inherit;
+  color: inherit; display: inline-flex; align-items: center; gap: 5px;
+}
+.th-sort:hover { color: var(--text); }
+.th-sort.is-active { color: var(--text); }
+.th-sort:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; border-radius: 3px; }
+.th-arrow { font-size: 10px; line-height: 1; opacity: .85; }
+
+/* An order number is read as one token, so it never breaks across lines. */
+.order-ref { white-space: nowrap; }
+.th-sort { white-space: nowrap; }
+
+/* Save-a-copy on thumbnails. Bottom-right, because the top corners already
+   carry the pin, the remove button and the "used" count. Always visible
+   rather than on hover, so it can be found on a touchscreen too. */
+.dl-chip {
+  position: absolute; bottom: 5px; right: 5px;
+  width: 24px; height: 24px; border-radius: 50%; border: 0;
+  background: rgba(14, 13, 11, .66); color: #fff;
+  display: grid; place-items: center; font-size: 13px; line-height: 1;
+  cursor: pointer; transition: background .12s ease;
+}
+.dl-chip:hover { background: var(--gold); color: #241d05; }
+.dl-chip:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.dl-chip:disabled { opacity: .6; cursor: progress; }
+
+/* Which suit is being worked on. Only drawn when there is more than one. */
+.suit-strip {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; margin-bottom: 14px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+}
+.suit-strip-label {
+  font-size: 11px; font-weight: 700; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-faint); white-space: nowrap;
+}
+.suit-strip-tabs { display: flex; gap: 8px; overflow-x: auto; flex: 1; }
+.suit-tab {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  padding: 6px 12px; border-radius: 9px; cursor: pointer; white-space: nowrap;
+  background: transparent; border: 1px solid var(--line); color: var(--text-soft);
+}
+.suit-tab:hover { border-color: var(--gold); }
+.suit-tab.active { background: var(--gold-wash); border-color: var(--gold); color: var(--text); }
+.suit-tab-person { font-size: 12.5px; font-weight: 600; }
+.suit-tab-what { font-size: 10.5px; color: var(--text-faint); }
+.suit-tab.active .suit-tab-what { color: var(--gold-deep); }
+
+/* People on an order, and what each is having made.
+   One block per person, folded shut until opened. The fields inside sit on a
+   two-column grid so every label and every input line up down the panel,
+   rather than each row finding its own width. */
+.party-person-block { border-bottom: 1px solid var(--line); }
+.party-person-block:last-of-type { border-bottom: 0; }
+
+.party-head {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 11px 4px; background: none; border: 0; cursor: pointer;
+  text-align: left; color: inherit; font: inherit; border-radius: var(--radius);
+}
+.party-head:hover { background: var(--surface-2); }
+.party-caret { width: 12px; color: var(--text-faint); font-size: 11px; }
+.party-name { font-weight: 600; }
+.party-role { color: var(--text-faint); font-size: 12.5px; }
+.party-head .spacer { flex: 1; }
+
+.party-body {
+  display: grid; grid-template-columns: 68px minmax(0, 320px) auto;
+  gap: 8px 10px; align-items: center;
+  padding: 2px 4px 14px 26px;
+}
+.party-field { display: contents; }
+/* Every label starts a row of its own. Left to auto-placement, the "Suit"
+   label after the role took the free third cell on the role's row - beside
+   the role's input, under nothing - and its input dropped to the row below,
+   which is the "suit line in the wrong place" GD saw. */
+.party-label { grid-column: 1; font-size: 12px; color: var(--text-faint); }
+/* The third column is the remove button; a row without one leaves it empty
+   rather than letting the input stretch across it. */
+.party-field > .input { grid-column: 2; }
+.party-actions { grid-column: 2 / -1; display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.party-actions .select { max-width: 230px; }
+
+/* The order page's suits, each with its own cloth. */
+.order-suit { padding-bottom: 4px; }
+.order-suit + .order-suit { border-top: 1px dashed var(--line-soft); padding-top: 12px; }
+.order-suit-head { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; }
+.order-suit-head .spacer { flex: 1; }
+.order-suit-num {
+  width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 11.5px; font-weight: 700; background: var(--gold-wash); color: var(--gold-deep);
+}
+
+/* The row under a render. One height for every button in it: it carried
+   three, and wrapped the approve/delete pair onto a line of their own behind
+   a flex spacer - which put them at the *left* of that line, not the right.
+   They sit together in their own group now, pushed right only while the row
+   fits on one line. */
+.render-actions {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px;
+}
+.render-actions-end {
+  display: inline-flex; align-items: center; gap: 8px; margin-left: auto;
+}
+
+/* A service that cannot run until the gate above it is open. Dimmed rather
+   than hidden, so what is configurable is still visible while it is off. */
+.card-dim { opacity: .62; }
+.radio-row { display: flex; align-items: flex-start; gap: 10px; padding: 6px 0; cursor: pointer; }
+.radio-row input { margin-top: 3px; }
+
+/* Standing emails. One row per rule, the wording on the left and what to do
+   with it on the right, so a column of rules reads down rather than across. */
+.mail-rule {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 0; border-bottom: 1px solid var(--line);
+}
+.mail-rule:last-child { border-bottom: 0; }
+.mail-rule-main { flex: 1; min-width: 0; }
+
+.mail-clients { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+/* Capped and scrolling: there are hundreds of clients and this is a picker,
+   not a directory. */
+.mail-client-list {
+  max-height: 210px; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 8px;
+}
+.mail-client { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; }
+
+/* A square button for a single glyph, so a column of them lines up. */
+.btn-icon {
+  width: 28px; height: 28px; padding: 0; display: inline-flex;
+  align-items: center; justify-content: center; font-size: 16px; line-height: 1;
+}
+.input-bare {
+  background: transparent; border: 1px dashed var(--line); padding: 3px 7px;
+}
+.input-bare:focus { border-style: solid; border-color: var(--gold); }
+
+/* Renaming a built-in option on the price list. */
+.rename-option { margin-top: 8px; }
